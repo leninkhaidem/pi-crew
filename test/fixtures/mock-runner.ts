@@ -1,5 +1,6 @@
 // test/fixtures/mock-runner.ts
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -19,6 +20,10 @@ export interface MockSpawnResult {
 
 const MOCK_PI_PATH = path.resolve("test/fixtures/mock-pi.ts");
 
+// Resolve tsx to an absolute path so the wrapper works regardless of CWD.
+const req = createRequire(import.meta.url);
+const TSX_LOADER_PATH = req.resolve("tsx");
+
 export function prepareMockPi(script: MockScript): MockSpawnResult {
 	const dir = mkdtempSync(path.join(tmpdir(), "pi-crew-mockpi-"));
 	const scriptPath = path.join(dir, "script.json");
@@ -26,7 +31,7 @@ export function prepareMockPi(script: MockScript): MockSpawnResult {
 
 	const wrapperPath = path.join(dir, "pi");
 	const wrapperBody = `#!/usr/bin/env bash
-exec "${process.execPath}" --import tsx "${MOCK_PI_PATH}" "$@"
+exec "${process.execPath}" --import "${TSX_LOADER_PATH}" "${MOCK_PI_PATH}" "$@"
 `;
 	writeFileSync(wrapperPath, wrapperBody);
 	chmodSync(wrapperPath, 0o755);
