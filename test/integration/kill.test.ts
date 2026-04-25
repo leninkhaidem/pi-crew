@@ -105,6 +105,70 @@ describe("kill flow", () => {
 		}
 	}, 20_000);
 
+	it("preserves detached status when external writer finalizes state before subprocess close", async () => {
+		const mock = prepareMockPi({
+			events: [
+				{ type: "agent_start" },
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "step 1" }],
+						usage: {
+							input: 10,
+							output: 5,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 15,
+							cost: { total: 0 },
+						},
+						stopReason: "stop",
+						model: "mock",
+					},
+				},
+				{
+					type: "agent_end",
+					messages: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
+				},
+			],
+			exitCode: 0,
+			delayMs: 100,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock" },
+					options: { agent: "explore", task: "test detached" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-detached",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+
+			// Simulate session_shutdown writing detached to disk while subprocess still runs.
+			await new Promise((r) => setTimeout(r, 50));
+			const current = await readState(handle.state.paths.state);
+			expect(current).not.toBeNull();
+			const detached: SubagentState = {
+				...(current as SubagentState),
+				status: "detached",
+				lastUpdate: Date.now(),
+			};
+			await writeState(detached);
+
+			const final = await handle.donePromise;
+			expect(final.status).toBe("detached");
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
 	it("normal failure path still writes 'failed' when no external override", async () => {
 		const mock = prepareMockPi({
 			events: [{ type: "agent_start" }],

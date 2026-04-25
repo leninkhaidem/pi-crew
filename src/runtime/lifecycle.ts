@@ -138,7 +138,11 @@ export async function dispatch(
 			try {
 				// Guard: skip write if the on-disk state has been externally finalized (e.g., subagent_kill).
 				const diskState = await readState(paths.state);
-				if (diskState && (diskState.status === "aborted" || diskState.status === "orphaned")) return;
+				if (
+					diskState &&
+					(diskState.status === "aborted" || diskState.status === "orphaned" || diskState.status === "detached")
+				)
+					return;
 				await writeState(snapshot);
 				hooks.onStateUpdate?.(snapshot);
 			} catch {
@@ -217,7 +221,8 @@ export async function dispatch(
 			const stderrText = await tryReadTail(paths.stderr);
 
 			const finalState: SubagentState =
-				currentDisk && (currentDisk.status === "aborted" || currentDisk.status === "orphaned")
+				currentDisk &&
+				(currentDisk.status === "aborted" || currentDisk.status === "orphaned" || currentDisk.status === "detached")
 					? {
 							...currentDisk,
 							exitCode: code,

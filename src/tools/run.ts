@@ -91,10 +91,16 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 				}
 				if (tasks) {
 					const slice = tasks.slice(0, config.global.maxParallelTasksPerCall);
-					const results = await Promise.all(
+					const settled = await Promise.allSettled(
 						slice.map((t) => rt.concurrency.pool.run(() => oneShot(t.agent, t.task, t.cwd, t.maxTurns))),
 					);
-					return toolResultBatch(results);
+					const states: SubagentState[] = [];
+					const errors: string[] = [];
+					for (const r of settled) {
+						if (r.status === "fulfilled") states.push(r.value);
+						else errors.push((r.reason as Error).message);
+					}
+					return toolResultBatch(states, errors.length > 0, errors);
 				}
 				if (chain) {
 					const results: SubagentState[] = [];
@@ -132,14 +138,20 @@ function toolResult(state: SubagentState) {
 	};
 }
 
-function toolResultBatch(states: SubagentState[], _partial = false) {
-	const text = states
-		.map((s) => `[${s.agent} #${s.agentId}] ${s.status}\n${s.finalOutput ?? "(no output)"}`)
-		.join("\n\n");
+function toolResultBatch(states: SubagentState[], partial = false, errors: string[] = []) {
+	const stateLines = states.map((s) => `[${s.agent} #${s.agentId}] ${s.status}\n${s.finalOutput ?? "(no output)"}`);
+	const errLines = errors.map((e) => `[error] ${e}`);
+	const text = [...stateLines, ...errLines].join("\n\n");
 	return {
 		content: [{ type: "text" as const, text }],
 		details: {
-			results: states.map((s) => ({ agentId: s.agentId, status: s.status, paths: s.paths })),
+			results: states.map((s) => ({
+				agentId: s.agentId,
+				status: s.status,
+				paths: s.paths,
+			})),
+			...(partial ? { partial: true } : {}),
+			...(errors.length > 0 ? { errors } : {}),
 		},
 	};
 }
