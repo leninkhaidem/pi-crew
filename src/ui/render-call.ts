@@ -1,12 +1,8 @@
 // src/ui/render-call.ts
+import type { Theme } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 
-interface ThemeLike {
-	fg: (color: string, text: string) => string;
-	bold: (text: string) => string;
-}
-
-export function renderDispatchCall(args: { agent?: string; task?: string }, theme: ThemeLike) {
+export function renderDispatchCall(args: { agent?: string; task?: string }, theme: Theme) {
 	const agent = args?.agent ?? "?";
 	const task = args?.task ?? "?";
 	const preview = task.length > 60 ? `${task.slice(0, 60)}…` : task;
@@ -16,7 +12,7 @@ export function renderDispatchCall(args: { agent?: string; task?: string }, them
 
 export function renderRunCall(
 	args: { agent?: string; task?: string; tasks?: unknown[]; chain?: unknown[] },
-	theme: ThemeLike,
+	theme: Theme,
 ) {
 	if (Array.isArray(args?.chain)) {
 		return new Text(theme.fg("toolTitle", `subagent_run chain (${args.chain.length} steps)`), 0, 0);

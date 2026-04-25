@@ -11,4 +11,6 @@ export interface ExtensionRuntime {
 	lifecycleHooks(): LifecycleHooks;
 	trackHandle(handle: DispatchHandle): void;
 	getConfig(): Promise<PiCrewConfig>;
+	/** Resolve the current session id consistently across tools/commands/UI. */
+	resolveSessionId(ctx: ExtensionContext): string;
 }

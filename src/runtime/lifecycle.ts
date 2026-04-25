@@ -10,7 +10,7 @@ import { tailJsonl } from "./tail.js";
 export interface LifecycleEnv {
 	agentDir: string;
 	cwd: string;
-	sessionId: string | undefined;
+	sessionId: string;
 	parentAgentId: string | null;
 	binary?: string;
 	branch?: string | null;
@@ -41,7 +41,7 @@ export async function dispatch(
 	hooks: LifecycleHooks = {},
 ): Promise<DispatchHandle> {
 	const agentId = generateAgentId();
-	const sessionIdResolved = env.sessionId ?? `ephemeral-${Date.now()}`;
+	const sessionIdResolved = env.sessionId;
 	const paths = computePaths({
 		agentDir: env.agentDir,
 		sessionId: sessionIdResolved,

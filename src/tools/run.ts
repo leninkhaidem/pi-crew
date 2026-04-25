@@ -5,6 +5,8 @@ import { discoverAgents } from "../agents/discovery.js";
 import { dispatch as runDispatch } from "../runtime/lifecycle.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import type { SubagentState } from "../types.js";
+import { renderRunCall } from "../ui/render-call.js";
+import { renderDispatchResult } from "../ui/render-result.js";
 import { ChainItemSchema, TaskItemSchema } from "./shared.js";
 
 export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
@@ -97,6 +99,12 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 				};
 			}
 			return { content: [{ type: "text" as const, text: "(unreachable)" }], details: { error: "unreachable" } };
+		},
+		renderCall(args, theme, _context) {
+			return renderRunCall(args as { agent?: string; task?: string; tasks?: unknown[]; chain?: unknown[] }, theme);
+		},
+		renderResult(result, options, theme, _context) {
+			return renderDispatchResult(result as Parameters<typeof renderDispatchResult>[0], options, theme);
 		},
 	});
 }

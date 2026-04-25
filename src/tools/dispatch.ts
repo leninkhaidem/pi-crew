@@ -4,6 +4,8 @@ import { Type } from "typebox";
 import { discoverAgents } from "../agents/discovery.js";
 import { dispatch as runDispatch } from "../runtime/lifecycle.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
+import { renderDispatchCall } from "../ui/render-call.js";
+import { renderDispatchResult } from "../ui/render-result.js";
 
 export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 	pi.registerTool({
@@ -85,6 +87,12 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 					paths: handle.state.paths,
 				},
 			};
+		},
+		renderCall(args, theme, _context) {
+			return renderDispatchCall(args as { agent?: string; task?: string }, theme);
+		},
+		renderResult(result, options, theme, _context) {
+			return renderDispatchResult(result as Parameters<typeof renderDispatchResult>[0], options, theme);
 		},
 	});
 }

@@ -26,8 +26,7 @@ export function registerStatusTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 			includeDetached: Type.Optional(Type.Boolean()),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
-			const sessionFile = ctx.sessionManager.getSessionFile();
-			const sessionId = sessionFile ? path.basename(sessionFile, ".jsonl") : "ephemeral";
+			const sessionId = rt.resolveSessionId(ctx);
 			const root = getRoot({ agentDir: rt.agentDir });
 			const scope = params.scope ?? "active";
 			let states: SubagentState[] = [];

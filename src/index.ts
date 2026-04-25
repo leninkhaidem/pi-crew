@@ -10,8 +10,9 @@ import { getGlobalConfigPath, loadConfig } from "./config/store.js";
 import { createCompletionDispatcher } from "./notify/batcher.js";
 import { createEmitter } from "./notify/events.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./runtime/lifecycle.js";
-import { launchTmuxView } from "./runtime/tmux.js";
+import { killTmuxWindow, launchTmuxView } from "./runtime/tmux.js";
 import type { ExtensionRuntime } from "./runtime/types.js";
+import { readState, writeState } from "./state/store.js";
 import { sweep } from "./state/sweep.js";
 import { buildSystemPromptBlock } from "./system-prompt.js";
 import { registerDispatchTool } from "./tools/dispatch.js";
@@ -43,17 +44,26 @@ export default function (pi: ExtensionAPI) {
 		return cachedConfig;
 	};
 
+	let cachedEphemeralId: string | null = null;
+	const ephemeralSessionId = (): string => {
+		if (!cachedEphemeralId) cachedEphemeralId = `ephemeral-${Date.now()}`;
+		return cachedEphemeralId;
+	};
+
+	const resolveSessionId = (ctx: ExtensionContext): string => {
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		return sessionFile ? path.basename(sessionFile, ".jsonl") : ephemeralSessionId();
+	};
+
 	const rt: ExtensionRuntime = {
 		userAgentsDir,
 		bundledAgentsDir: BUNDLED_AGENTS_DIR,
 		agentDir,
 		envFor(ctx: ExtensionContext): LifecycleEnv {
-			const sessionFile = ctx.sessionManager.getSessionFile();
-			const sessionId = sessionFile ? path.basename(sessionFile, ".jsonl") : undefined;
 			return {
 				agentDir,
 				cwd: ctx.cwd,
-				sessionId,
+				sessionId: resolveSessionId(ctx),
 				parentAgentId: process.env.PI_SUBAGENT_PARENT_ID ?? null,
 			};
 		},
@@ -90,6 +100,11 @@ export default function (pi: ExtensionAPI) {
 					});
 					void getConfig().then((c) => {
 						if (c.global.notifyOnCompletion) dispatcher.push(state);
+						if (c.tmux.killOnComplete === "after-grace") {
+							setTimeout(() => {
+								killTmuxWindow(state, c.tmux);
+							}, c.tmux.graceSeconds * 1000);
+						}
 					});
 				},
 			};
@@ -99,6 +114,7 @@ export default function (pi: ExtensionAPI) {
 			void h.donePromise.finally(() => handles.delete(h));
 		},
 		getConfig,
+		resolveSessionId,
 	};
 
 	registerDispatchTool(pi, rt);
@@ -117,8 +133,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		const config = await getConfig();
 		await sweep({ agentDir, retentionDays: config.global.retentionDays }).catch(() => undefined);
-		const sessionFile = ctx.sessionManager.getSessionFile();
-		const sessionId = sessionFile ? path.basename(sessionFile, ".jsonl") : `ephemeral-${Date.now()}`;
+		const sessionId = rt.resolveSessionId(ctx);
 		const sessionDir = path.join(agentDir, "subagents", sessionId);
 		widget = mountWidget(ctx);
 		footer = mountFooter(ctx);
@@ -132,6 +147,21 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
+		// Mark running sub-agents as detached.
+		for (const h of handles) {
+			try {
+				const current = await readState(h.state.paths.state);
+				if (current && (current.status === "running" || current.status === "starting")) {
+					const detached = { ...current, status: "detached" as const, lastUpdate: Date.now() };
+					await writeState(detached);
+					emitter.detached({ agentId: current.agentId });
+				}
+			} catch {
+				// best effort
+			}
+		}
+		// Reset cached ephemeral id so next session_start gets a fresh one.
+		cachedEphemeralId = null;
 		try {
 			dispatcher.flush();
 		} catch {
@@ -170,6 +200,9 @@ export default function (pi: ExtensionAPI) {
 
 // Programmatic API re-exports
 export { dispatch as dispatchSubagent } from "./runtime/lifecycle.js";
+export { readState as getSubagentState, listStates as listSubagentStates } from "./state/store.js";
+export type { LifecycleEnv, LifecycleHooks, DispatchPlan, DispatchHandle } from "./runtime/lifecycle.js";
+export type { AgentDiscoveryResult, AgentScope, DiscoverArgs } from "./agents/discovery.js";
 export type {
 	AgentConfig,
 	AgentSlot,
