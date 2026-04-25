@@ -46,14 +46,14 @@ const theme = {
 };
 
 describe("renderActiveAgentsPanel", () => {
-	it("renders active sub-agents as a bordered panel", () => {
+	it("renders active sub-agents like the reference above-editor tracker", () => {
 		const lines = renderActiveAgentsPanel({ states: [stateOf({})], width: 80, theme: theme as never });
 
-		expect(lines[0]).toContain("╭");
-		expect(lines.at(-1)).toContain("╰");
-		expect(lines.join("\n")).toContain("pi-crew agents");
-		expect(lines.join("\n")).toContain("explore #abc12345");
-		expect(lines.join("\n")).toContain("low");
+		expect(lines[0]).toBe("● Agents");
+		expect(lines.join("\n")).toContain("└─");
+		expect(lines.join("\n")).toContain("explore");
+		expect(lines.join("\n")).toContain("find auth");
+		expect(lines.join("\n")).toContain("⎿");
 		expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
 	});
 });
@@ -70,14 +70,14 @@ describe("mountWidget", () => {
 		widget.update([stateOf({ status: "running" })]);
 		widget.update([stateOf({ status: "done", finishedAt: Date.now(), exitCode: 0, finalOutput: "done" })]);
 
-		expect(calls.at(-1)).toEqual({ id: "pi-crew", value: undefined });
+		expect(calls.at(-1)).toEqual({ id: "agents", value: undefined });
 	});
 
-	it("does not redraw the same active snapshot on every poll", () => {
-		const calls: Array<{ id: string; value: unknown }> = [];
+	it("registers once above the editor and does not redraw the same active snapshot on every poll", () => {
+		const calls: Array<{ id: string; value: unknown; options: unknown }> = [];
 		const widget = mountWidget({
 			ui: {
-				setWidget: (id: string, value: unknown) => calls.push({ id, value }),
+				setWidget: (id: string, value: unknown, options: unknown) => calls.push({ id, value, options }),
 			},
 		} as never);
 		const state = stateOf({ status: "running" });
@@ -86,5 +86,7 @@ describe("mountWidget", () => {
 		widget.update([state]);
 
 		expect(calls).toHaveLength(1);
+		expect(calls[0]?.id).toBe("agents");
+		expect(calls[0]?.options).toEqual({ placement: "aboveEditor" });
 	});
 });

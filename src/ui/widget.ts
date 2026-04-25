@@ -1,10 +1,10 @@
 // src/ui/widget.ts
 import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
-import { type Component, type OverlayHandle, type TUI, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { type Component, type TUI, truncateToWidth } from "@mariozechner/pi-tui";
 import type { SubagentState } from "../types.js";
 import { formatToolCall, formatUsageStats } from "./format.js";
 
-const MAX_ROWS = 4;
+const MAX_WIDGET_LINES = 12;
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 export interface WidgetController {
@@ -21,129 +21,126 @@ interface ActivePanelArgs {
 
 export function mountWidget(ctx: ExtensionContext): WidgetController {
 	let lastSignature: string | null = null;
-	let host: ActiveAgentsOverlayHost | null = null;
+	let component: ActiveAgentsWidget | null = null;
+	let tuiRef: TUI | null = null;
 	let latestActive: SubagentState[] = [];
-	let visible = false;
+	let registered = false;
+	let frame = 0;
+	let timer: NodeJS.Timeout | null = null;
+
+	const ensureTimer = () => {
+		if (timer) return;
+		timer = setInterval(() => {
+			frame++;
+			component?.setFrame(frame);
+			tuiRef?.requestRender();
+		}, 80);
+	};
+
+	const clearTimer = () => {
+		if (!timer) return;
+		clearInterval(timer);
+		timer = null;
+	};
 
 	const show = () => {
-		visible = true;
-		ctx.ui.setWidget("pi-crew", (tui, theme) => {
-			host = new ActiveAgentsOverlayHost(tui, theme, latestActive);
-			return host;
-		});
+		registered = true;
+		ctx.ui.setWidget(
+			"agents",
+			(tui, theme) => {
+				tuiRef = tui;
+				component = new ActiveAgentsWidget(tui, theme, latestActive, frame);
+				return component;
+			},
+			{ placement: "aboveEditor" },
+		);
+		ensureTimer();
 	};
 
 	const hide = () => {
-		host?.dispose();
-		host = null;
+		clearTimer();
+		component?.dispose?.();
+		component = null;
+		tuiRef = null;
 		lastSignature = null;
-		visible = false;
-		ctx.ui.setWidget("pi-crew", undefined);
+		registered = false;
+		ctx.ui.setWidget("agents", undefined);
 	};
 
 	return {
 		update(states) {
 			const active = sortActive(states.filter((s) => s.status === "running" || s.status === "starting"));
 			if (active.length === 0) {
-				if (visible) hide();
+				if (registered) hide();
 				return;
 			}
 
+			latestActive = active;
 			const signature = signatureFor(active);
+			if (!registered) {
+				lastSignature = signature;
+				show();
+				return;
+			}
 			if (signature === lastSignature) return;
 			lastSignature = signature;
-			latestActive = active;
-			if (host) host.update(active);
-			else show();
+			component?.update(active);
+			tuiRef?.requestRender();
 		},
 		stop: hide,
 	};
 }
 
-class ActiveAgentsOverlayHost implements Component {
-	private panel: ActiveAgentsPanel;
-	private handle: OverlayHandle;
-	private timer: NodeJS.Timeout;
-
+class ActiveAgentsWidget implements Component {
 	constructor(
 		private tui: TUI,
-		theme: Theme,
-		states: SubagentState[],
-	) {
-		this.panel = new ActiveAgentsPanel(theme, states);
-		this.timer = setInterval(() => {
-			this.panel.tick();
-			this.tui.requestRender();
-		}, 80);
-		this.handle = tui.showOverlay(this.panel, {
-			nonCapturing: true,
-			anchor: "top-right",
-			width: "42%",
-			minWidth: 56,
-			maxHeight: "55%",
-			margin: { top: 2, right: 2 },
-		});
-	}
-
-	update(states: SubagentState[]): void {
-		this.panel.update(states);
-		this.tui.requestRender();
-	}
-
-	render(): string[] {
-		return [];
-	}
-
-	invalidate(): void {
-		this.panel.invalidate();
-	}
-
-	dispose(): void {
-		clearInterval(this.timer);
-		this.handle.hide();
-	}
-}
-
-class ActiveAgentsPanel implements Component {
-	constructor(
 		private theme: Theme,
 		private states: SubagentState[],
+		private frame: number,
 	) {}
-
-	private frame = 0;
 
 	update(states: SubagentState[]): void {
 		this.states = states;
 	}
 
-	tick(): void {
-		this.frame++;
+	setFrame(frame: number): void {
+		this.frame = frame;
 	}
 
-	render(width: number): string[] {
-		return renderActiveAgentsPanel({ states: this.states, width, theme: this.theme, frame: this.frame });
+	render(width?: number): string[] {
+		return renderActiveAgentsPanel({
+			states: this.states,
+			width: width ?? this.tui.terminal.columns,
+			theme: this.theme,
+			frame: this.frame,
+		});
 	}
 
 	invalidate(): void {
 		// no cached state
 	}
+
+	dispose(): void {
+		// no resources owned by this component
+	}
 }
 
 export function renderActiveAgentsPanel(args: ActivePanelArgs): string[] {
-	const width = Math.max(40, args.width);
-	const visible = args.states.slice(0, MAX_ROWS);
-	const overflow = args.states.length - visible.length;
-	const lines = [border("╭", "╮", ` ✻ pi-crew agents · ${args.states.length} active `, width, args.theme)];
-	lines.push(
-		row(" Claude-Code-style live tracker. Open /subagents for transcripts and controls.", width, args.theme, "dim"),
-	);
-	lines.push(border("├", "┤", "", width, args.theme));
-	visible.forEach((state, index) =>
-		appendAgent(lines, state, width, args.theme, args.frame ?? 0, index === visible.length - 1 && overflow <= 0),
-	);
-	if (overflow > 0)
-		lines.push(row(` … ${overflow} more active sub-agent${overflow === 1 ? "" : "s"}`, width, args.theme, "muted"));
-	lines.push(border("╰", "╯", "", width, args.theme));
+	const width = Math.max(20, args.width);
+	const visibleStates = args.states.slice(0, Math.floor((MAX_WIDGET_LINES - 2) / 2));
+	const overflow = args.states.length - visibleStates.length;
+	const heading = `${args.theme.fg("accent", "●")} ${args.theme.fg("accent", "Agents")}`;
+	const lines = [truncateToWidth(heading, width)];
+
+	visibleStates.forEach((state, index) => {
+		const isLast = index === visibleStates.length - 1 && overflow <= 0;
+		appendAgent(lines, state, width, args.theme, args.frame ?? 0, isLast);
+	});
+	if (overflow > 0) {
+		lines.push(
+			truncateToWidth(`${args.theme.fg("dim", "└─")} ${args.theme.fg("dim", `+${overflow} more running`)}`, width),
+		);
+	}
 	return lines;
 }
 
@@ -156,23 +153,25 @@ function appendAgent(
 	isLast: boolean,
 ): void {
 	const connector = isLast ? "└─" : "├─";
-	const stem = isLast ? "  " : "│ ";
+	const stem = isLast ? "   " : "│  ";
 	const spinner = state.status === "starting" ? "◌" : (SPINNER[frame % SPINNER.length] ?? "⠋");
-	const title = `${theme.fg("accent", spinner)} ${theme.bold(state.agent)} #${state.agentId}  ${state.task}`;
-	lines.push(row(` ${connector} ${title}`, width, theme));
 	const stats = compactStats(state);
-	lines.push(row(` ${stem}   ${stats}`, width, theme, "dim"));
-	lines.push(row(` ${stem}   ⎿  ${activityFor(state)}`, width, theme, "dim"));
+	lines.push(
+		truncateToWidth(
+			`${theme.fg("dim", connector)} ${theme.fg("accent", spinner)} ${theme.bold(state.agent)}  ${theme.fg("muted", state.task)} ${theme.fg("dim", "·")} ${theme.fg("dim", stats)}`,
+			width,
+		),
+	);
+	lines.push(truncateToWidth(`${theme.fg("dim", stem)}  ${theme.fg("dim", `⎿  ${activityFor(state)}`)}`, width));
 }
 
 function compactStats(state: SubagentState): string {
-	const parts = [state.model, state.thinking, formatTurns(state.turns, state.maxTurns)];
+	const parts = [formatTurns(state.turns, state.maxTurns)];
 	const toolUses = state.toolUses ?? 0;
 	if (toolUses > 0) parts.push(`${toolUses} tool use${toolUses === 1 ? "" : "s"}`);
 	const usage = formatUsageStats(state.usage);
 	if (usage) parts.push(usage);
 	parts.push(formatDuration(Date.now() - state.startedAt));
-	if (state.executionMode) parts.push(state.executionMode);
 	return parts.join(" · ");
 }
 
@@ -195,19 +194,6 @@ function formatDuration(ms: number): string {
 	return `${minutes}m ${Math.floor(seconds % 60)}s`;
 }
 
-function border(left: string, right: string, title: string, width: number, theme: Theme): string {
-	const fill = Math.max(0, width - visibleWidth(left) - visibleWidth(right) - visibleWidth(title));
-	return theme.fg("borderAccent", `${left}${title}${"─".repeat(fill)}${right}`);
-}
-
-function row(content: string, width: number, theme: Theme, color: "text" | "muted" | "dim" = "text"): string {
-	const innerWidth = Math.max(0, width - 2);
-	const styled = theme.fg(color, content);
-	const trimmed = truncateToWidth(styled, innerWidth, "…");
-	const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(trimmed)));
-	return `${theme.fg("borderMuted", "│")}${trimmed}${padding}${theme.fg("borderMuted", "│")}`;
-}
-
 function sortActive(states: SubagentState[]): SubagentState[] {
 	return [...states].sort((a, b) => a.startedAt - b.startedAt);
 }
@@ -219,10 +205,7 @@ function signatureFor(states: SubagentState[]): string {
 			agent: state.agent,
 			status: state.status,
 			task: state.task,
-			cwd: state.cwd,
-			branch: state.branch,
 			model: state.model,
-			thinking: state.thinking,
 			turns: state.turns,
 			usage: state.usage,
 			lastText: state.lastText,
@@ -230,12 +213,6 @@ function signatureFor(states: SubagentState[]): string {
 			activeTools: state.activeTools,
 			toolUses: state.toolUses,
 			activity: state.activity,
-			executionMode: state.executionMode,
 		})),
 	);
-}
-
-function shorten(p: string): string {
-	if (p.length > 32) return `…${p.slice(-30)}`;
-	return p;
 }
