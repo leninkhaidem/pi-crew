@@ -10,6 +10,8 @@ import { getGlobalConfigPath, loadConfig } from "./config/store.js";
 import { createCompletionDispatcher } from "./notify/batcher.js";
 import { createEmitter } from "./notify/events.js";
 import { createApprovalGate } from "./runtime/approval.js";
+import { createActiveCounter, createPoolLimiter } from "./runtime/concurrency.js";
+import type { ActiveCounter, PoolLimiter } from "./runtime/concurrency.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./runtime/lifecycle.js";
 import { killTmuxWindow, launchTmuxView } from "./runtime/tmux.js";
 import type { ExtensionRuntime } from "./runtime/types.js";
@@ -59,6 +61,26 @@ export default function (pi: ExtensionAPI) {
 	const approvalGate = createApprovalGate({
 		isConfirmEnabled: async () => (await getConfig()).global.confirmProjectAgents,
 	});
+
+	// Concurrency primitives — initialised with defaults, refreshed once config loads.
+	// Indirection via wrapper objects lets us swap underlying instances after the async
+	// config load without invalidating references held by tools.
+	let pool = createPoolLimiter(4);
+	let activeCounter = createActiveCounter(16);
+
+	void getConfig().then((c) => {
+		pool = createPoolLimiter(c.global.maxConcurrent);
+		activeCounter = createActiveCounter(c.global.maxActive);
+	});
+
+	const poolProxy: PoolLimiter = {
+		run: (fn) => pool.run(fn),
+	};
+	const activeProxy: ActiveCounter = {
+		tryAcquire: () => activeCounter.tryAcquire(),
+		release: () => activeCounter.release(),
+		current: () => activeCounter.current(),
+	};
 
 	const rt: ExtensionRuntime = {
 		userAgentsDir,
@@ -127,6 +149,10 @@ export default function (pi: ExtensionAPI) {
 				hasUI: args.ctx.hasUI,
 				confirm: (title, message) => args.ctx.ui.confirm(title, message),
 			}),
+		concurrency: {
+			pool: poolProxy,
+			active: activeProxy,
+		},
 	};
 
 	registerDispatchTool(pi, rt);

@@ -52,29 +52,36 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 				cwd: string | undefined,
 				maxTurns: number | undefined,
 			): Promise<SubagentState> => {
-				const slot = config.agents[agentName];
-				if (!slot) {
-					throw new Error(`Configuration required for "${agentName}". Run /subagent-config.`);
+				if (!rt.concurrency.active.tryAcquire()) {
+					throw new Error(`Active sub-agent limit reached (${rt.concurrency.active.current()}). Wait or kill some.`);
 				}
-				const agent = discovered.agents.find((a) => a.name === agentName);
-				if (!agent) throw new Error(`Unknown agent "${agentName}".`);
-				const approved = await rt.ensureProjectAgentApproved({
-					agentName: agent.name,
-					agentSource: agent.source,
-					ctx,
-				});
-				if (!approved) {
-					throw new Error(
-						`Project agent "${agent.name}" not approved. Set confirmProjectAgents: false in /subagent-config to disable prompts.`,
+				try {
+					const slot = config.agents[agentName];
+					if (!slot) {
+						throw new Error(`Configuration required for "${agentName}". Run /subagent-config.`);
+					}
+					const agent = discovered.agents.find((a) => a.name === agentName);
+					if (!agent) throw new Error(`Unknown agent "${agentName}".`);
+					const approved = await rt.ensureProjectAgentApproved({
+						agentName: agent.name,
+						agentSource: agent.source,
+						ctx,
+					});
+					if (!approved) {
+						throw new Error(
+							`Project agent "${agent.name}" not approved. Set confirmProjectAgents: false in /subagent-config to disable prompts.`,
+						);
+					}
+					const handle = await runDispatch(
+						{ agent, model: slot, options: { agent: agentName, task, cwd, maxTurns } },
+						rt.envFor(ctx),
+						rt.lifecycleHooks(),
 					);
+					rt.trackHandle(handle);
+					return await handle.donePromise;
+				} finally {
+					rt.concurrency.active.release();
 				}
-				const handle = await runDispatch(
-					{ agent, model: slot, options: { agent: agentName, task, cwd, maxTurns } },
-					rt.envFor(ctx),
-					rt.lifecycleHooks(),
-				);
-				rt.trackHandle(handle);
-				return await handle.donePromise;
 			};
 
 			try {
@@ -83,10 +90,9 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					return toolResult(final);
 				}
 				if (tasks) {
+					const slice = tasks.slice(0, config.global.maxParallelTasksPerCall);
 					const results = await Promise.all(
-						tasks
-							.slice(0, config.global.maxParallelTasksPerCall)
-							.map((t) => oneShot(t.agent, t.task, t.cwd, t.maxTurns)),
+						slice.map((t) => rt.concurrency.pool.run(() => oneShot(t.agent, t.task, t.cwd, t.maxTurns))),
 					);
 					return toolResultBatch(results);
 				}

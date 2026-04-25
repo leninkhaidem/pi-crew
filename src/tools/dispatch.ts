@@ -69,21 +69,39 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 					details: { error: "project_agent_declined" },
 				};
 			}
-			const handle = await runDispatch(
-				{
-					agent,
-					model: slot,
-					options: {
-						agent: params.agent,
-						task: params.task,
-						cwd: params.cwd,
-						maxTurns: params.maxTurns,
+			if (!rt.concurrency.active.tryAcquire()) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Active sub-agent limit reached (${rt.concurrency.active.current()}). Wait for some to finish or kill them.`,
+						},
+					],
+					details: { error: "max_active_reached" },
+				};
+			}
+			let handle: Awaited<ReturnType<typeof runDispatch>>;
+			try {
+				handle = await runDispatch(
+					{
+						agent,
+						model: slot,
+						options: {
+							agent: params.agent,
+							task: params.task,
+							cwd: params.cwd,
+							maxTurns: params.maxTurns,
+						},
 					},
-				},
-				rt.envFor(ctx),
-				rt.lifecycleHooks(),
-			);
+					rt.envFor(ctx),
+					rt.lifecycleHooks(),
+				);
+			} catch (err) {
+				rt.concurrency.active.release();
+				throw err;
+			}
 			rt.trackHandle(handle);
+			void handle.donePromise.finally(() => rt.concurrency.active.release());
 			return {
 				content: [
 					{
