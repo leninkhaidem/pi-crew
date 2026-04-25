@@ -1,0 +1,90 @@
+import { visibleWidth } from "@mariozechner/pi-tui";
+import { describe, expect, it } from "vitest";
+import type { SubagentState } from "../../src/types.js";
+import { mountWidget, renderActiveAgentsPanel } from "../../src/ui/widget.js";
+
+const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
+	schemaVersion: 1,
+	agentId: "abc12345",
+	parentAgentId: null,
+	sessionId: "sess",
+	agent: "explore",
+	agentSource: "bundled",
+	task: "find auth",
+	cwd: "/proj",
+	branch: null,
+	model: "gpt-5.4-mini",
+	provider: "openai-codex",
+	thinking: "low",
+	tools: null,
+	maxTurns: null,
+	pid: 1234,
+	startedAt: 0,
+	finishedAt: null,
+	lastUpdate: 1,
+	status: "running",
+	exitCode: null,
+	stopReason: null,
+	errorMessage: null,
+	turns: 1,
+	usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.0021, contextTokens: 150 },
+	lastText: null,
+	lastToolCall: null,
+	finalOutput: null,
+	paths: {
+		state: "/p/state.json",
+		output: "/p/output.jsonl",
+		stderr: "/p/stderr.log",
+		prompt: "/p/prompt.md",
+	},
+	...overrides,
+});
+
+const theme = {
+	bold: (s: string) => s,
+	fg: (_token: string, s: string) => s,
+};
+
+describe("renderActiveAgentsPanel", () => {
+	it("renders active sub-agents as a bordered panel", () => {
+		const lines = renderActiveAgentsPanel({ states: [stateOf({})], width: 80, theme: theme as never });
+
+		expect(lines[0]).toContain("╭");
+		expect(lines.at(-1)).toContain("╰");
+		expect(lines.join("\n")).toContain("pi-crew active agents");
+		expect(lines.join("\n")).toContain("explore #abc12345");
+		expect(lines.join("\n")).toContain("thinking low");
+		expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
+	});
+});
+
+describe("mountWidget", () => {
+	it("clears the widget as soon as no sub-agents are active", () => {
+		const calls: Array<{ id: string; value: unknown }> = [];
+		const widget = mountWidget({
+			ui: {
+				setWidget: (id: string, value: unknown) => calls.push({ id, value }),
+			},
+		} as never);
+
+		widget.update([stateOf({ status: "running" })]);
+		widget.update([stateOf({ status: "done", finishedAt: Date.now(), exitCode: 0, finalOutput: "done" })]);
+
+		expect(calls.at(-1)).toEqual({ id: "pi-crew", value: undefined });
+	});
+
+	it("does not redraw the same active snapshot on every poll", () => {
+		const calls: Array<{ id: string; value: unknown }> = [];
+		const widget = mountWidget({
+			ui: {
+				setWidget: (id: string, value: unknown) => calls.push({ id, value }),
+			},
+		} as never);
+		const state = stateOf({ status: "running" });
+
+		widget.update([state]);
+		widget.update([state]);
+
+		expect(calls).toHaveLength(1);
+	});
+});

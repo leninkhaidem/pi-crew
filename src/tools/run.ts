@@ -26,7 +26,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 			cwd: Type.Optional(Type.String()),
 			maxTurns: Type.Optional(Type.Integer({ minimum: 1 })),
 		}),
-		async execute(_id, params, _signal, _onUpdate, ctx) {
+		async execute(_id, params, signal, _onUpdate, ctx) {
 			const config = await rt.getConfig();
 			const discovered = discoverAgents({
 				cwd: ctx.cwd,
@@ -52,6 +52,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 				cwd: string | undefined,
 				maxTurns: number | undefined,
 			): Promise<SubagentState> => {
+				if (signal?.aborted) throw new Error("Interrupted before sub-agent launch.");
 				if (!rt.concurrency.active.tryAcquire()) {
 					throw new Error(`Active sub-agent limit reached (${rt.concurrency.active.current()}). Wait or kill some.`);
 				}
@@ -78,6 +79,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 						rt.lifecycleHooks(),
 					);
 					rt.trackHandle(handle);
+					rt.trackParentAbort(signal, handle);
 					return await handle.donePromise;
 				} finally {
 					rt.concurrency.active.release();
@@ -133,13 +135,13 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 
 function toolResult(state: SubagentState) {
 	return {
-		content: [{ type: "text" as const, text: state.finalOutput ?? "(no output)" }],
+		content: [{ type: "text" as const, text: formatRunStateResult(state, { single: true }) }],
 		details: { agentId: state.agentId, status: state.status, paths: state.paths, usage: state.usage },
 	};
 }
 
 function toolResultBatch(states: SubagentState[], partial = false, errors: string[] = []) {
-	const stateLines = states.map((s) => `[${s.agent} #${s.agentId}] ${s.status}\n${s.finalOutput ?? "(no output)"}`);
+	const stateLines = states.map((s) => formatRunStateResult(s));
 	const errLines = errors.map((e) => `[error] ${e}`);
 	const text = [...stateLines, ...errLines].join("\n\n");
 	return {
@@ -154,4 +156,14 @@ function toolResultBatch(states: SubagentState[], partial = false, errors: strin
 			...(errors.length > 0 ? { errors } : {}),
 		},
 	};
+}
+
+export function formatRunStateResult(state: SubagentState, options: { single?: boolean } = {}): string {
+	const output = state.finalOutput?.trim() || "(no output)";
+	if (state.status === "done") {
+		return options.single ? output : `[${state.agent} #${state.agentId}] done\n${output}`;
+	}
+	const reason = state.errorMessage ?? (state.exitCode !== null ? `exit ${state.exitCode}` : "no error");
+	const header = `[${state.agent} #${state.agentId}] ${state.status} — ${reason}`;
+	return state.finalOutput?.trim() ? `${header}\n${state.finalOutput.trim()}` : header;
 }

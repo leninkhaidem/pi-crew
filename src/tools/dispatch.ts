@@ -25,7 +25,7 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 			cwd: Type.Optional(Type.String()),
 			maxTurns: Type.Optional(Type.Integer({ minimum: 1 })),
 		}),
-		async execute(_id, params, _signal, _onUpdate, ctx) {
+		async execute(_id, params, signal, _onUpdate, ctx) {
 			const config = await rt.getConfig();
 			const slot = config.agents[params.agent];
 			if (!slot) {
@@ -101,6 +101,7 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 				throw err;
 			}
 			rt.trackHandle(handle);
+			rt.trackParentAbort(signal, handle);
 			void handle.donePromise.finally(() => rt.concurrency.active.release());
 			return {
 				content: [

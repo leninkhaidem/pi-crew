@@ -12,6 +12,7 @@ import { createEmitter } from "./notify/events.js";
 import { createApprovalGate } from "./runtime/approval.js";
 import { createActiveCounter, createPoolLimiter } from "./runtime/concurrency.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./runtime/lifecycle.js";
+import { createParentAbortTracker } from "./runtime/parent-abort.js";
 import { killTmuxWindow, launchTmuxView } from "./runtime/tmux.js";
 import type { ExtensionRuntime } from "./runtime/types.js";
 import { readState, writeState } from "./state/store.js";
@@ -60,6 +61,7 @@ export default function (pi: ExtensionAPI) {
 	const approvalGate = createApprovalGate({
 		isConfirmEnabled: async () => (await getConfig()).global.confirmProjectAgents,
 	});
+	const parentAbortTracker = createParentAbortTracker();
 
 	// Concurrency primitives — initialised with defaults, updated via setMax once config loads.
 	// Using setMax avoids swapping instances, which would invalidate references held by in-flight tools.
@@ -129,6 +131,7 @@ export default function (pi: ExtensionAPI) {
 			handles.add(h);
 			void h.donePromise.finally(() => handles.delete(h));
 		},
+		trackParentAbort: (signal, handle) => parentAbortTracker.track(signal, handle),
 		getConfig,
 		resolveSessionId,
 		ensureProjectAgentApproved: async (args) =>
@@ -187,6 +190,7 @@ export default function (pi: ExtensionAPI) {
 				// best effort
 			}
 		}
+		parentAbortTracker.clear();
 		// Reset cached ephemeral id so next session_start gets a fresh one.
 		cachedEphemeralId = null;
 		// Reset project-agent approvals so each new session re-prompts.

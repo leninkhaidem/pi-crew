@@ -11,6 +11,7 @@ export interface ExtensionRuntime {
 	envFor(ctx: ExtensionContext): LifecycleEnv;
 	lifecycleHooks(): LifecycleHooks;
 	trackHandle(handle: DispatchHandle): void;
+	trackParentAbort(signal: AbortSignal | undefined, handle: DispatchHandle): void;
 	getConfig(): Promise<PiCrewConfig>;
 	concurrency: {
 		pool: PoolLimiter;

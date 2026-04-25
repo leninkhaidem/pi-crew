@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { abortSubagentByStatePath } from "../../src/runtime/kill.js";
 import { dispatch } from "../../src/runtime/lifecycle.js";
 import { readState, writeState } from "../../src/state/store.js";
 import type { AgentConfig, SubagentState } from "../../src/types.js";
@@ -26,6 +27,51 @@ const fakeAgent: AgentConfig = {
 };
 
 describe("kill flow", () => {
+	it("kills a running process and preserves the interrupted status", async () => {
+		const mock = prepareMockPi({
+			events: [
+				{ type: "agent_start" },
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "still working" }],
+						usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { total: 0 } },
+						stopReason: "stop",
+						model: "mock",
+					},
+				},
+			],
+			exitCode: 0,
+			delayMs: 1000,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock", thinking: "low" },
+					options: { agent: "explore", task: "test parent interrupt" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-parent-interrupt",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+
+			const result = await abortSubagentByStatePath(handle.state.paths.state, "parent ask interrupted");
+			expect(result.ok).toBe(true);
+			const final = await handle.donePromise;
+			expect(final.status).toBe("aborted");
+			expect(final.errorMessage).toBe("parent ask interrupted");
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
 	it("preserves aborted status when external writer finalizes state before subprocess close", async () => {
 		// Mock pi: emits a few events spaced 100ms apart, then exits 0.
 		// Plenty of time for our test to write "aborted" status mid-flight.
