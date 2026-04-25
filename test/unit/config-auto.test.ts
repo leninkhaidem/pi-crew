@@ -38,6 +38,15 @@ describe("suggestDefaults", () => {
 		expect(r.agents["general-purpose"]?.modelId).toBe("claude-sonnet-4-5");
 	});
 
+	it("sets per-slot thinking defaults", () => {
+		const models = [M("anthropic", "claude-sonnet-4-5", true, 3)];
+		const r = suggestDefaults(models);
+		expect((r.agents.explore as { thinking?: string } | undefined)?.thinking).toBe("low");
+		expect((r.agents["general-purpose"] as { thinking?: string } | undefined)?.thinking).toBe("medium");
+		expect((r.agents.plan as { thinking?: string } | undefined)?.thinking).toBe("high");
+		expect((r.agents["code-reviewer"] as { thinking?: string } | undefined)?.thinking).toBe("high");
+	});
+
 	it("returns empty agents when no models authenticated", () => {
 		const r = suggestDefaults([]);
 		expect(r.agents).toEqual({});

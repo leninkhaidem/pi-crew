@@ -24,7 +24,7 @@ describe("config store", () => {
 		const target = path.join(tmp, "pi-crew.json");
 		await saveConfig(target, {
 			version: 1,
-			agents: { explore: { provider: "anthropic", modelId: "claude-haiku-4-5" } },
+			agents: { explore: { provider: "anthropic", modelId: "claude-haiku-4-5", thinking: "low" } },
 			global: {
 				maxConcurrent: 4,
 				maxActive: 16,

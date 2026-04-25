@@ -1,10 +1,26 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
-import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_TMUX_SETTINGS, type PiCrewConfig } from "../types.js";
+import {
+	type AgentSlot,
+	DEFAULT_GLOBAL_SETTINGS,
+	DEFAULT_TMUX_SETTINGS,
+	type PiCrewConfig,
+	defaultThinkingForAgent,
+} from "../types.js";
+
+const ThinkingLevelSchema = Type.Union([
+	Type.Literal("off"),
+	Type.Literal("minimal"),
+	Type.Literal("low"),
+	Type.Literal("medium"),
+	Type.Literal("high"),
+	Type.Literal("xhigh"),
+]);
 
 const AgentSlotSchema = Type.Object({
 	provider: Type.String({ minLength: 1 }),
 	modelId: Type.String({ minLength: 1 }),
+	thinking: Type.Optional(ThinkingLevelSchema),
 });
 
 const GlobalSettingsSchema = Type.Object({
@@ -42,11 +58,18 @@ export function parsePiCrewConfig(input: unknown): ParseResult {
 		return { ok: false, errors };
 	}
 	const parsed = input as Static<typeof RawSchema>;
+	const agents: Record<string, AgentSlot> = {};
+	for (const [name, slot] of Object.entries(parsed.agents)) {
+		agents[name] = {
+			...slot,
+			thinking: slot.thinking ?? defaultThinkingForAgent(name),
+		};
+	}
 	return {
 		ok: true,
 		value: {
 			version: 1,
-			agents: parsed.agents,
+			agents,
 			global: { ...DEFAULT_GLOBAL_SETTINGS, ...parsed.global },
 			tmux: { ...DEFAULT_TMUX_SETTINGS, ...parsed.tmux },
 		},

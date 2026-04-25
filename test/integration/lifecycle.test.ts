@@ -64,7 +64,7 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 			const handle = await dispatch(
 				{
 					agent: fakeAgent,
-					model: { provider: "mock", modelId: "mock-haiku" },
+					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
 					options: { agent: "explore", task: "find auth" },
 				},
 				{
@@ -89,6 +89,42 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 		}
 	}, 20_000);
 
+	it("defaults thinking for legacy dispatch plans", async () => {
+		const mock = prepareMockPi({
+			events: [
+				{
+					type: "agent_end",
+					messages: [{ role: "assistant", content: [{ type: "text", text: "ok" }] }],
+				},
+			],
+			exitCode: 0,
+			delayMs: 5,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock-haiku" } as Parameters<typeof dispatch>[0]["model"],
+					options: { agent: "explore", task: "legacy plan" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-legacy",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+
+			const final = await handle.donePromise;
+			expect(final.status).toBe("done");
+			expect(final.thinking).toBe("low");
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
 	it("captures failure when subprocess exits non-zero", async () => {
 		const mock = prepareMockPi({
 			events: [{ type: "agent_start" }],
@@ -101,7 +137,7 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 			const handle = await dispatch(
 				{
 					agent: fakeAgent,
-					model: { provider: "mock", modelId: "mock-haiku" },
+					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
 					options: { agent: "explore", task: "should fail" },
 				},
 				{

@@ -1,10 +1,12 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
+import type { ThinkingLevel } from "../types.js";
 import { resolvePiInvocation } from "./invocation.js";
 
 export interface SpawnArgs {
 	binary?: string;
 	model: string; // "<provider>/<modelId>" or "<modelId>" depending on caller
+	thinking: ThinkingLevel;
 	tools: string[] | null;
 	systemPromptPath: string;
 	task: string;
@@ -31,6 +33,8 @@ export function spawnSubagent(args: SpawnArgs): SpawnedSubagent {
 		"--no-session",
 		"--model",
 		args.model,
+		"--thinking",
+		args.thinking,
 		...(args.tools && args.tools.length > 0 ? ["--tools", args.tools.join(",")] : []),
 		"--append-system-prompt",
 		args.systemPromptPath,

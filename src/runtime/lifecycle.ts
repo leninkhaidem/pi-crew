@@ -3,7 +3,14 @@ import path from "node:path";
 import { generateAgentId } from "../state/id.js";
 import { computePaths } from "../state/paths.js";
 import { readState, writeState } from "../state/store.js";
-import type { AgentConfig, DispatchOptions, SubagentState, SubagentUsage } from "../types.js";
+import {
+	type AgentConfig,
+	type AgentSlot,
+	type DispatchOptions,
+	type SubagentState,
+	type SubagentUsage,
+	defaultThinkingForAgent,
+} from "../types.js";
 import { type SpawnedSubagent, closeSpawnFds, spawnSubagent } from "./spawn.js";
 import { tailJsonl } from "./tail.js";
 
@@ -23,7 +30,7 @@ export interface LifecycleHooks {
 
 export interface DispatchPlan {
 	agent: AgentConfig;
-	model: { provider: string; modelId: string };
+	model: AgentSlot;
 	options: DispatchOptions;
 }
 
@@ -49,6 +56,7 @@ export async function dispatch(
 	});
 
 	const cwd = plan.options.cwd ?? env.cwd;
+	const thinking = plan.model.thinking ?? defaultThinkingForAgent(plan.agent.name);
 
 	const initialState: SubagentState = {
 		schemaVersion: 1,
@@ -62,6 +70,7 @@ export async function dispatch(
 		branch: env.branch ?? null,
 		model: plan.model.modelId,
 		provider: plan.model.provider,
+		thinking,
 		tools: plan.agent.tools,
 		maxTurns: plan.options.maxTurns ?? null,
 		pid: null,
@@ -93,6 +102,7 @@ export async function dispatch(
 		spawned = spawnSubagent({
 			binary: env.binary,
 			model: `${plan.model.provider}/${plan.model.modelId}`,
+			thinking,
 			tools: plan.agent.tools,
 			systemPromptPath: paths.prompt,
 			task: plan.options.task,

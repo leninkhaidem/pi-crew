@@ -29,6 +29,7 @@ const writeStateFile = (sessionId: string, agentId: string, partial: Record<stri
 			branch: null,
 			model: "haiku",
 			provider: "anthropic",
+			thinking: "low",
 			tools: null,
 			maxTurns: null,
 			pid: null,

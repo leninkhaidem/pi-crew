@@ -77,6 +77,7 @@ function stubMissing(id: string): SubagentState {
 		branch: null,
 		model: "",
 		provider: "",
+		thinking: "off",
 		tools: null,
 		maxTurns: null,
 		pid: null,

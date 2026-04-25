@@ -30,6 +30,20 @@ export interface SubagentPaths {
 	prompt: string;
 }
 
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
+export const DEFAULT_AGENT_THINKING: Record<string, ThinkingLevel> = {
+	explore: "low",
+	"general-purpose": "medium",
+	plan: "high",
+	"code-reviewer": "high",
+};
+
+export function defaultThinkingForAgent(agentName: string): ThinkingLevel {
+	return DEFAULT_AGENT_THINKING[agentName] ?? "medium";
+}
+
 export interface SubagentState {
 	schemaVersion: 1;
 	agentId: string;
@@ -42,6 +56,7 @@ export interface SubagentState {
 	branch: string | null;
 	model: string;
 	provider: string;
+	thinking: ThinkingLevel;
 	tools: string[] | null;
 	maxTurns: number | null;
 	pid: number | null;
@@ -76,6 +91,7 @@ export interface AgentConfig {
 export interface AgentSlot {
 	provider: string;
 	modelId: string;
+	thinking?: ThinkingLevel;
 }
 
 export interface GlobalSettings {

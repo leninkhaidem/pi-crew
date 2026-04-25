@@ -65,7 +65,7 @@ describe("kill flow", () => {
 			const handle = await dispatch(
 				{
 					agent: fakeAgent,
-					model: { provider: "mock", modelId: "mock" },
+					model: { provider: "mock", modelId: "mock", thinking: "low" },
 					options: { agent: "explore", task: "test kill" },
 				},
 				{
@@ -139,7 +139,7 @@ describe("kill flow", () => {
 			const handle = await dispatch(
 				{
 					agent: fakeAgent,
-					model: { provider: "mock", modelId: "mock" },
+					model: { provider: "mock", modelId: "mock", thinking: "low" },
 					options: { agent: "explore", task: "test detached" },
 				},
 				{
@@ -180,7 +180,7 @@ describe("kill flow", () => {
 			const handle = await dispatch(
 				{
 					agent: fakeAgent,
-					model: { provider: "mock", modelId: "mock" },
+					model: { provider: "mock", modelId: "mock", thinking: "low" },
 					options: { agent: "explore", task: "test fail" },
 				},
 				{

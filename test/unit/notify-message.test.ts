@@ -14,6 +14,7 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 	branch: null,
 	model: "claude-haiku-4-5",
 	provider: "anthropic",
+	thinking: "low",
 	tools: null,
 	maxTurns: null,
 	pid: 1234,

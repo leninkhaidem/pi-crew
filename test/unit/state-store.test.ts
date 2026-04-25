@@ -26,6 +26,7 @@ const baseState = (agentId: string): SubagentState => ({
 	branch: null,
 	model: "haiku",
 	provider: "anthropic",
+	thinking: "low",
 	tools: ["read"],
 	maxTurns: null,
 	pid: null,
@@ -60,6 +61,14 @@ describe("state store", () => {
 	it("readState returns null for missing file", async () => {
 		const got = await readState(path.join(tmp, "nope.json"));
 		expect(got).toBeNull();
+	});
+
+	it("readState fills thinking for legacy state files", async () => {
+		const s = baseState("legacy01");
+		const { thinking: _thinking, ...legacy } = s;
+		await writeState(legacy as SubagentState);
+		const back = await readState(s.paths.state);
+		expect(back?.thinking).toBe("low");
 	});
 
 	it("readState retries on torn read (SyntaxError) up to 3 times", async () => {

@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { SubagentState } from "../types.js";
+import { type SubagentState, defaultThinkingForAgent } from "../types.js";
 
 const READ_RETRIES = 3;
 const READ_RETRY_DELAY_MS = 50;
@@ -17,7 +17,7 @@ export async function readState(p: string): Promise<SubagentState | null> {
 	for (let attempt = 0; attempt < READ_RETRIES; attempt++) {
 		try {
 			const raw = await fs.readFile(p, "utf-8");
-			return JSON.parse(raw) as SubagentState;
+			return normalizeState(JSON.parse(raw));
 		} catch (err) {
 			const e = err as NodeJS.ErrnoException;
 			if (e.code === "ENOENT") {
@@ -32,6 +32,14 @@ export async function readState(p: string): Promise<SubagentState | null> {
 		}
 	}
 	return null;
+}
+
+function normalizeState(input: unknown): SubagentState {
+	const state = input as SubagentState & { thinking?: SubagentState["thinking"] };
+	return {
+		...state,
+		thinking: state.thinking ?? defaultThinkingForAgent(state.agent),
+	};
 }
 
 export interface ListOptions {
