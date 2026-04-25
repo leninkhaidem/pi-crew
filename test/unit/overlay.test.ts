@@ -70,4 +70,23 @@ describe("renderSubagentsPanel", () => {
 		expect(lines.join("\n")).toContain("esc close");
 		expect(lines.every((line) => visibleWidth(line) <= 72)).toBe(true);
 	});
+
+	it("does not emit embedded newlines for multiline state fields", () => {
+		const lines = renderSubagentsPanel({
+			states: [
+				stateOf({
+					task: "Task headline\n\nRequirements:\n- a",
+					lastText: "line one\nline two",
+					lastToolCall: { name: "bash", args: { command: "npm test\nnpm run lint" } },
+				}),
+			],
+			selectedIdx: 0,
+			expanded: new Set(["abc12345"]),
+			width: 72,
+			theme: theme as never,
+		});
+
+		expect(lines.every((line) => !line.includes("\n") && visibleWidth(line) <= 72)).toBe(true);
+		expect(lines.join("\n")).toContain("Task headline Requirements:");
+	});
 });

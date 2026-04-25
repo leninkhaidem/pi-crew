@@ -126,7 +126,7 @@ class ActiveAgentsWidget implements Component {
 }
 
 export function renderActiveAgentsPanel(args: ActivePanelArgs): string[] {
-	const width = Math.max(20, args.width);
+	const width = Math.max(1, args.width);
 	const visibleStates = args.states.slice(0, Math.floor((MAX_WIDGET_LINES - 2) / 2));
 	const overflow = args.states.length - visibleStates.length;
 	const heading = `${args.theme.fg("accent", "●")} ${args.theme.fg("accent", "Agents")}`;
@@ -156,13 +156,15 @@ function appendAgent(
 	const stem = isLast ? "   " : "│  ";
 	const spinner = state.status === "starting" ? "◌" : (SPINNER[frame % SPINNER.length] ?? "⠋");
 	const stats = compactStats(state);
+	const task = oneLine(state.task);
+	const activity = oneLine(activityFor(state));
 	lines.push(
 		truncateToWidth(
-			`${theme.fg("dim", connector)} ${theme.fg("accent", spinner)} ${theme.bold(state.agent)}  ${theme.fg("muted", state.task)} ${theme.fg("dim", "·")} ${theme.fg("dim", stats)}`,
+			`${theme.fg("dim", connector)} ${theme.fg("accent", spinner)} ${theme.bold(state.agent)}  ${theme.fg("muted", task)} ${theme.fg("dim", "·")} ${theme.fg("dim", stats)}`,
 			width,
 		),
 	);
-	lines.push(truncateToWidth(`${theme.fg("dim", stem)}  ${theme.fg("dim", `⎿  ${activityFor(state)}`)}`, width));
+	lines.push(truncateToWidth(`${theme.fg("dim", stem)}  ${theme.fg("dim", `⎿  ${activity}`)}`, width));
 }
 
 function compactStats(state: SubagentState): string {
@@ -181,6 +183,10 @@ function activityFor(state: SubagentState): string {
 	if (state.lastToolCall) return `tool ${formatToolCall(state.lastToolCall.name, state.lastToolCall.args)}`;
 	if (state.lastText) return state.lastText;
 	return "thinking…";
+}
+
+function oneLine(value: string): string {
+	return value.replace(/\s+/g, " ").trim();
 }
 
 function formatTurns(turns: number, maxTurns: number | null): string {

@@ -56,6 +56,24 @@ describe("renderActiveAgentsPanel", () => {
 		expect(lines.join("\n")).toContain("⎿");
 		expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
 	});
+
+	it("never emits embedded newlines from multiline task or activity text", () => {
+		const lines = renderActiveAgentsPanel({
+			states: [
+				stateOf({
+					task: "Implement thing\n\nRequirements:\n- one\n- two",
+					activity: "running command\nwith multiple lines",
+					lastToolCall: { name: "bash", args: { command: "npm test\nnpm run lint" } },
+				}),
+			],
+			width: 50,
+			theme: theme as never,
+		});
+
+		expect(lines).toHaveLength(3);
+		expect(lines.every((line) => !line.includes("\n") && visibleWidth(line) <= 50)).toBe(true);
+		expect(lines.join("\n")).toContain("Implement thing Requirements:");
+	});
 });
 
 describe("mountWidget", () => {

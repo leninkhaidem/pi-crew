@@ -232,7 +232,8 @@ function border(left: string, right: string, title: string, width: number, theme
 
 function row(content: string, width: number, theme: Theme, color: "text" | "muted" | "dim" = "text"): string {
 	const innerWidth = Math.max(0, width - 2);
-	const trimmed = truncateToWidth(theme.fg(color, content), innerWidth, "…");
+	const singleLine = content.replace(/\s+/g, " ").trim();
+	const trimmed = truncateToWidth(theme.fg(color, singleLine), innerWidth, "…");
 	const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(trimmed)));
 	return `${theme.fg("borderMuted", "│")}${trimmed}${padding}${theme.fg("borderMuted", "│")}`;
 }
