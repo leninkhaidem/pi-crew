@@ -22,7 +22,8 @@ describe("resolvePiInvocation", () => {
 			expect(r.command).toBe("/custom/pi");
 		} finally {
 			if (prev) process.env.PI_CREW_PI_BINARY = prev;
-			else process.env.PI_CREW_PI_BINARY = undefined;
+			// biome-ignore lint/performance/noDelete: env var must actually be removed
+			else delete process.env.PI_CREW_PI_BINARY;
 		}
 	});
 });

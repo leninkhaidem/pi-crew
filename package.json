@@ -20,7 +20,7 @@
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",
-		"build": "tsc -p tsconfig.build.json",
+		"build": "tsc -p tsconfig.build.json && chmod +x dist/cli/tail.js",
 		"prepare": "npm run build",
 		"lint": "biome check .",
 		"format": "biome format --write .",

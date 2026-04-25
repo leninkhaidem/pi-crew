@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // src/cli/tail.ts
 /**
  * pi-crew tail — render a sub-agent's output.jsonl as it streams.

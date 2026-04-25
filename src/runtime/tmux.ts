@@ -8,13 +8,22 @@ export function tmuxAvailable(): boolean {
 	return r.status === 0;
 }
 
+function shQuote(s: string): string {
+	return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function safeWindowName(name: string): string {
+	// tmux window names: keep alphanumerics, dash, dot, underscore. Replace others with '-'.
+	return name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 80) || "agent";
+}
+
 export function launchTmuxView(state: SubagentState, settings: TmuxSettings, packageRoot: string): boolean {
 	if (settings.mode === "off") return false;
 	if (!tmuxAvailable()) return false;
 	const tailScript = path.join(packageRoot, "dist", "cli", "tail.js");
-	const winName = `${state.agent}-${state.agentId}`;
-	const sessionName = `pi-crew-${state.sessionId}`;
-	const cmd = `node ${tailScript} ${state.paths.output}`;
+	const winName = safeWindowName(`${state.agent}-${state.agentId}`);
+	const sessionName = safeWindowName(`pi-crew-${state.sessionId}`);
+	const cmd = `node ${shQuote(tailScript)} ${shQuote(state.paths.output)}`;
 
 	if (settings.mode === "window") {
 		if (!process.env.TMUX) {
@@ -32,7 +41,8 @@ export function launchTmuxView(state: SubagentState, settings: TmuxSettings, pac
 
 export function killTmuxWindow(state: SubagentState, settings: TmuxSettings): void {
 	if (settings.mode === "off") return;
-	const winName = `${state.agent}-${state.agentId}`;
-	const target = settings.mode === "external-session" ? `pi-crew-${state.sessionId}:${winName}` : winName;
+	const winName = safeWindowName(`${state.agent}-${state.agentId}`);
+	const sessionName = safeWindowName(`pi-crew-${state.sessionId}`);
+	const target = settings.mode === "external-session" ? `${sessionName}:${winName}` : winName;
 	spawnSync("tmux", ["kill-window", "-t", target]);
 }

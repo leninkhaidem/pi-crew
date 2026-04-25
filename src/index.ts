@@ -132,7 +132,11 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
-		dispatcher.flush();
+		try {
+			dispatcher.flush();
+		} catch {
+			// best effort — session may already be gone
+		}
 		watcher?.stop();
 		widget?.stop();
 		footer?.stop();
