@@ -36,7 +36,8 @@ export function parsePiCrewConfig(input: unknown): ParseResult {
 	if (!Value.Check(RawSchema, input)) {
 		const errors: string[] = [];
 		for (const err of Value.Errors(RawSchema, input)) {
-			errors.push(`${err.path}: ${err.message}`);
+			const errPath = (err as { path?: string }).path ?? "";
+			errors.push(`${errPath}: ${err.message}`);
 		}
 		return { ok: false, errors };
 	}

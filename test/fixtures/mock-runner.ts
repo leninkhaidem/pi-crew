@@ -37,6 +37,7 @@ exec "${process.execPath}" --import tsx "${MOCK_PI_PATH}" "$@"
 		scriptPath,
 		dir,
 		cleanup: () => {
+			// biome-ignore lint/performance/noDelete: env var must actually be removed
 			delete process.env.MOCK_PI_SCRIPT;
 			try {
 				rmSync(dir, { recursive: true, force: true });

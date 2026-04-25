@@ -29,7 +29,7 @@ export function suggestDefaults(models: Model<Api>[]): PiCrewConfig {
 	const cfg = emptyConfig();
 	if (models.length === 0) return cfg;
 
-	const explore = pickCheapestNonReasoning(models) ?? models[0];
+	const explore = pickCheapestNonReasoning(models) ?? models[0] ?? null;
 	const plan = pickMostCapableReasoning(models);
 	const reviewer = pickMostCapableReasoning(models);
 	const gp = pickGeneralPurpose(models);

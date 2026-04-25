@@ -4,11 +4,7 @@
 	"description": "Sub-agent extension for the pi coding assistant",
 	"license": "MIT",
 	"repository": "github:leninkhaidem/pi-crew",
-	"keywords": [
-		"pi-package",
-		"pi-extension",
-		"subagent"
-	],
+	"keywords": ["pi-package", "pi-extension", "subagent"],
 	"type": "module",
 	"main": "src/index.ts",
 	"exports": {
@@ -18,17 +14,9 @@
 	"bin": {
 		"pi-crew-tail": "./dist/cli/tail.js"
 	},
-	"files": [
-		"src",
-		"dist",
-		"README.md",
-		"LICENSE",
-		"CHANGELOG.md"
-	],
+	"files": ["src", "dist", "README.md", "LICENSE", "CHANGELOG.md"],
 	"pi": {
-		"extensions": [
-			"./src/index.ts"
-		]
+		"extensions": ["./src/index.ts"]
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",
