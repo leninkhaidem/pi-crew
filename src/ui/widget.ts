@@ -5,6 +5,7 @@ import type { SubagentState } from "../types.js";
 import { formatToolCall, formatUsageStats } from "./format.js";
 
 const MAX_ROWS = 4;
+const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 export interface WidgetController {
 	update(states: SubagentState[]): void;
@@ -15,6 +16,7 @@ interface ActivePanelArgs {
 	states: SubagentState[];
 	width: number;
 	theme: Theme;
+	frame?: number;
 }
 
 export function mountWidget(ctx: ExtensionContext): WidgetController {
@@ -61,6 +63,7 @@ export function mountWidget(ctx: ExtensionContext): WidgetController {
 class ActiveAgentsOverlayHost implements Component {
 	private panel: ActiveAgentsPanel;
 	private handle: OverlayHandle;
+	private timer: NodeJS.Timeout;
 
 	constructor(
 		private tui: TUI,
@@ -68,6 +71,10 @@ class ActiveAgentsOverlayHost implements Component {
 		states: SubagentState[],
 	) {
 		this.panel = new ActiveAgentsPanel(theme, states);
+		this.timer = setInterval(() => {
+			this.panel.tick();
+			this.tui.requestRender();
+		}, 80);
 		this.handle = tui.showOverlay(this.panel, {
 			nonCapturing: true,
 			anchor: "top-right",
@@ -92,6 +99,7 @@ class ActiveAgentsOverlayHost implements Component {
 	}
 
 	dispose(): void {
+		clearInterval(this.timer);
 		this.handle.hide();
 	}
 }
@@ -102,12 +110,18 @@ class ActiveAgentsPanel implements Component {
 		private states: SubagentState[],
 	) {}
 
+	private frame = 0;
+
 	update(states: SubagentState[]): void {
 		this.states = states;
 	}
 
+	tick(): void {
+		this.frame++;
+	}
+
 	render(width: number): string[] {
-		return renderActiveAgentsPanel({ states: this.states, width, theme: this.theme });
+		return renderActiveAgentsPanel({ states: this.states, width, theme: this.theme, frame: this.frame });
 	}
 
 	invalidate(): void {
@@ -119,32 +133,66 @@ export function renderActiveAgentsPanel(args: ActivePanelArgs): string[] {
 	const width = Math.max(40, args.width);
 	const visible = args.states.slice(0, MAX_ROWS);
 	const overflow = args.states.length - visible.length;
-	const lines = [border("╭", "╮", ` ✻ pi-crew active agents · ${args.states.length} `, width, args.theme)];
-	lines.push(row(" Live delegation panel. Your editor stays focused.", width, args.theme, "dim"));
-	lines.push(row(" Open /subagents for transcripts, kill controls, and history.", width, args.theme, "dim"));
+	const lines = [border("╭", "╮", ` ✻ pi-crew agents · ${args.states.length} active `, width, args.theme)];
+	lines.push(
+		row(" Claude-Code-style live tracker. Open /subagents for transcripts and controls.", width, args.theme, "dim"),
+	);
 	lines.push(border("├", "┤", "", width, args.theme));
-	for (const state of visible) appendAgent(lines, state, width, args.theme);
+	visible.forEach((state, index) =>
+		appendAgent(lines, state, width, args.theme, args.frame ?? 0, index === visible.length - 1 && overflow <= 0),
+	);
 	if (overflow > 0)
 		lines.push(row(` … ${overflow} more active sub-agent${overflow === 1 ? "" : "s"}`, width, args.theme, "muted"));
 	lines.push(border("╰", "╯", "", width, args.theme));
 	return lines;
 }
 
-function appendAgent(lines: string[], state: SubagentState, width: number, theme: Theme): void {
-	const statusIcon = state.status === "starting" ? theme.fg("warning", "◌") : theme.fg("success", "●");
-	const title = `${statusIcon} ${state.agent} #${state.agentId} ${state.status} · thinking ${state.thinking}`;
-	lines.push(row(` ${title}`, width, theme));
-	lines.push(row(`   task  ${state.task}`, width, theme, "muted"));
-	const usage = formatUsageStats({ ...state.usage, turns: state.turns }, state.model);
-	lines.push(row(`   ${usage} · cwd ${shorten(state.cwd)} · ${state.branch ?? "no branch"}`, width, theme, "dim"));
-	const last = lastActivity(state);
-	if (last) lines.push(row(`   ${last}`, width, theme, "dim"));
+function appendAgent(
+	lines: string[],
+	state: SubagentState,
+	width: number,
+	theme: Theme,
+	frame: number,
+	isLast: boolean,
+): void {
+	const connector = isLast ? "└─" : "├─";
+	const stem = isLast ? "  " : "│ ";
+	const spinner = state.status === "starting" ? "◌" : (SPINNER[frame % SPINNER.length] ?? "⠋");
+	const title = `${theme.fg("accent", spinner)} ${theme.bold(state.agent)} #${state.agentId}  ${state.task}`;
+	lines.push(row(` ${connector} ${title}`, width, theme));
+	const stats = compactStats(state);
+	lines.push(row(` ${stem}   ${stats}`, width, theme, "dim"));
+	lines.push(row(` ${stem}   ⎿  ${activityFor(state)}`, width, theme, "dim"));
 }
 
-function lastActivity(state: SubagentState): string | null {
+function compactStats(state: SubagentState): string {
+	const parts = [state.model, state.thinking, formatTurns(state.turns, state.maxTurns)];
+	const toolUses = state.toolUses ?? 0;
+	if (toolUses > 0) parts.push(`${toolUses} tool use${toolUses === 1 ? "" : "s"}`);
+	const usage = formatUsageStats(state.usage);
+	if (usage) parts.push(usage);
+	parts.push(formatDuration(Date.now() - state.startedAt));
+	if (state.executionMode) parts.push(state.executionMode);
+	return parts.join(" · ");
+}
+
+function activityFor(state: SubagentState): string {
+	if (state.activity) return state.activity;
+	if (state.activeTools && state.activeTools.length > 0) return `using ${state.activeTools.join(", ")}`;
 	if (state.lastToolCall) return `tool ${formatToolCall(state.lastToolCall.name, state.lastToolCall.args)}`;
-	if (state.lastText) return `last ${state.lastText}`;
-	return null;
+	if (state.lastText) return state.lastText;
+	return "thinking…";
+}
+
+function formatTurns(turns: number, maxTurns: number | null): string {
+	return maxTurns ? `⟳${turns}≤${maxTurns}` : `⟳${turns}`;
+}
+
+function formatDuration(ms: number): string {
+	const seconds = Math.max(0, ms) / 1000;
+	if (seconds < 60) return `${seconds.toFixed(1)}s`;
+	const minutes = Math.floor(seconds / 60);
+	return `${minutes}m ${Math.floor(seconds % 60)}s`;
 }
 
 function border(left: string, right: string, title: string, width: number, theme: Theme): string {
@@ -179,6 +227,10 @@ function signatureFor(states: SubagentState[]): string {
 			usage: state.usage,
 			lastText: state.lastText,
 			lastToolCall: state.lastToolCall,
+			activeTools: state.activeTools,
+			toolUses: state.toolUses,
+			activity: state.activity,
+			executionMode: state.executionMode,
 		})),
 	);
 }

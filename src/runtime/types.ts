@@ -12,6 +12,7 @@ export interface ExtensionRuntime {
 	lifecycleHooks(): LifecycleHooks;
 	trackHandle(handle: DispatchHandle): void;
 	trackParentAbort(signal: AbortSignal | undefined, handle: DispatchHandle): void;
+	abortActiveHandle(agentId: string, reason?: string): Promise<boolean>;
 	getConfig(): Promise<PiCrewConfig>;
 	concurrency: {
 		pool: PoolLimiter;

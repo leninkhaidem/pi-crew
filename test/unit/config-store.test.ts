@@ -33,6 +33,7 @@ describe("config store", () => {
 				notifyOnCompletion: true,
 				agentScope: "user",
 				confirmProjectAgents: true,
+				executionMode: "session",
 			},
 			tmux: { mode: "off", killOnComplete: "off", graceSeconds: 30 },
 		});

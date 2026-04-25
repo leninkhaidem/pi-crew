@@ -22,7 +22,8 @@ export function createParentAbortTracker(options: ParentAbortTrackerOptions = {}
 	const reason = options.reason ?? DEFAULT_REASON;
 	const abortHandle =
 		options.abortHandle ??
-		((handle: DispatchHandle, why: string) => abortSubagentByStatePath(handle.state.paths.state, why));
+		((handle: DispatchHandle, why: string) =>
+			handle.abort?.(why) ?? abortSubagentByStatePath(handle.state.paths.state, why));
 	const entries = new Map<AbortSignal, Entry>();
 
 	const abortAll = (signal: AbortSignal) => {

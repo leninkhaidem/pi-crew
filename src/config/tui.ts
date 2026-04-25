@@ -3,7 +3,14 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder } from "@mariozechner/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
-import { type PiCrewConfig, THINKING_LEVELS, type ThinkingLevel, defaultThinkingForAgent } from "../types.js";
+import {
+	EXECUTION_MODES,
+	type ExecutionMode,
+	type PiCrewConfig,
+	THINKING_LEVELS,
+	type ThinkingLevel,
+	defaultThinkingForAgent,
+} from "../types.js";
 import { AGENT_SLOT_NAMES } from "./auto.js";
 import { saveConfig } from "./store.js";
 
@@ -15,6 +22,10 @@ export interface ConfigTuiArgs {
 
 export async function runConfigTui(ctx: ExtensionCommandContext, args: ConfigTuiArgs): Promise<{ saved: boolean }> {
 	const cfg: PiCrewConfig = JSON.parse(JSON.stringify(args.currentConfig));
+
+	const executionMode = await selectExecutionMode(ctx, cfg.global.executionMode);
+	if (executionMode === null) return { saved: false };
+	cfg.global.executionMode = executionMode;
 
 	for (const slot of AGENT_SLOT_NAMES) {
 		const items: SelectItem[] = args.availableModels.map((m) => ({
@@ -82,6 +93,52 @@ export async function runConfigTui(ctx: ExtensionCommandContext, args: ConfigTui
 	return { saved: true };
 }
 
+async function selectExecutionMode(
+	ctx: ExtensionCommandContext,
+	current: ExecutionMode,
+): Promise<ExecutionMode | null> {
+	const items: SelectItem[] = EXECUTION_MODES.map((mode) => ({
+		value: mode,
+		label: mode,
+		description:
+			mode === "session"
+				? "recommended — best live UX via createAgentSession"
+				: "compatibility — child process isolation and tmux transcript viewer",
+	}));
+	const initialIndex = Math.max(
+		0,
+		items.findIndex((i) => i.value === current),
+	);
+	const choice = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+		const c = new Container();
+		c.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		c.addChild(new Text(theme.fg("accent", theme.bold("pi-crew · execution mode")), 1, 0));
+		c.addChild(new Text(theme.fg("dim", "Global backend for all sub-agents."), 1, 0));
+		c.addChild(new Text(theme.fg("dim", "session = smoother live UI; subprocess = stronger process isolation."), 1, 0));
+		const list = new SelectList(items, items.length, {
+			selectedPrefix: (t) => theme.fg("accent", t),
+			selectedText: (t) => theme.fg("accent", t),
+			description: (t) => theme.fg("muted", t),
+			scrollInfo: (t) => theme.fg("dim", t),
+			noMatch: (t) => theme.fg("dim", t),
+		});
+		list.setSelectedIndex(initialIndex);
+		list.onSelect = (item) => done(item.value);
+		list.onCancel = () => done(null);
+		c.addChild(list);
+		c.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		return {
+			render: (w) => c.render(w),
+			invalidate: () => c.invalidate(),
+			handleInput: (data) => {
+				list.handleInput(data);
+				tui.requestRender();
+			},
+		};
+	});
+	return isExecutionMode(choice) ? choice : null;
+}
+
 async function selectThinking(
 	ctx: ExtensionCommandContext,
 	slot: string,
@@ -127,4 +184,8 @@ async function selectThinking(
 
 function isThinkingLevel(value: string | null): value is ThinkingLevel {
 	return value !== null && (THINKING_LEVELS as readonly string[]).includes(value);
+}
+
+function isExecutionMode(value: string | null): value is ExecutionMode {
+	return value !== null && (EXECUTION_MODES as readonly string[]).includes(value);
 }

@@ -9,6 +9,7 @@ import { registerTreeCommand } from "./commands/tree.js";
 import { getGlobalConfigPath, loadConfig } from "./config/store.js";
 import { createCompletionDispatcher } from "./notify/batcher.js";
 import { createEmitter } from "./notify/events.js";
+import { registerNotificationRenderer } from "./notify/renderer.js";
 import { createApprovalGate } from "./runtime/approval.js";
 import { createActiveCounter, createPoolLimiter } from "./runtime/concurrency.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./runtime/lifecycle.js";
@@ -36,6 +37,7 @@ export default function (pi: ExtensionAPI) {
 	const agentDir = getAgentDir();
 	const userAgentsDir = path.join(agentDir, "agents");
 	const handles = new Set<DispatchHandle>();
+	const startedAgents = new Set<string>();
 	const emitter = createEmitter(pi);
 	const dispatcher = createCompletionDispatcher(pi);
 
@@ -83,6 +85,8 @@ export default function (pi: ExtensionAPI) {
 				cwd: ctx.cwd,
 				sessionId: resolveSessionId(ctx),
 				parentAgentId: process.env.PI_SUBAGENT_PARENT_ID ?? null,
+				executionMode: cachedConfig?.global.executionMode ?? "session",
+				ctx,
 			};
 		},
 		lifecycleHooks(): LifecycleHooks {
@@ -99,8 +103,9 @@ export default function (pi: ExtensionAPI) {
 							provider: state.provider,
 							sessionId: state.sessionId,
 						});
-					} else if (state.status === "running" && state.pid !== null) {
-						emitter.start({ agentId: state.agentId, pid: state.pid });
+					} else if (state.status === "running" && !startedAgents.has(state.agentId)) {
+						startedAgents.add(state.agentId);
+						if (state.pid !== null) emitter.start({ agentId: state.agentId, pid: state.pid });
 						void getConfig().then((c) => {
 							launchTmuxView(state, c.tmux, PACKAGE_ROOT);
 						});
@@ -132,6 +137,12 @@ export default function (pi: ExtensionAPI) {
 			void h.donePromise.finally(() => handles.delete(h));
 		},
 		trackParentAbort: (signal, handle) => parentAbortTracker.track(signal, handle),
+		abortActiveHandle: async (agentId, reason) => {
+			const handle = [...handles].find((h) => h.agentId === agentId);
+			if (!handle?.abort) return false;
+			await handle.abort(reason);
+			return true;
+		},
 		getConfig,
 		resolveSessionId,
 		ensureProjectAgentApproved: async (args) =>
@@ -146,6 +157,8 @@ export default function (pi: ExtensionAPI) {
 			active: activeCounter,
 		},
 	};
+
+	registerNotificationRenderer(pi);
 
 	registerDispatchTool(pi, rt);
 	registerRunTool(pi, rt);
@@ -177,20 +190,25 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
-		// Mark running sub-agents as detached.
+		// Subprocess agents can keep running as detached work. In-process session agents cannot
+		// survive shutdown/reload cleanly, so abort them instead of leaving hidden work behind.
 		for (const h of handles) {
 			try {
 				const current = await readState(h.state.paths.state);
-				if (current && (current.status === "running" || current.status === "starting")) {
-					const detached = { ...current, status: "detached" as const, lastUpdate: Date.now() };
-					await writeState(detached);
-					emitter.detached({ agentId: current.agentId });
+				if (!current || (current.status !== "running" && current.status !== "starting")) continue;
+				if (h.abort) {
+					await h.abort("parent session shutdown");
+					continue;
 				}
+				const detached = { ...current, status: "detached" as const, lastUpdate: Date.now() };
+				await writeState(detached);
+				emitter.detached({ agentId: current.agentId });
 			} catch {
 				// best effort
 			}
 		}
 		parentAbortTracker.clear();
+		startedAgents.clear();
 		// Reset cached ephemeral id so next session_start gets a fresh one.
 		cachedEphemeralId = null;
 		// Reset project-agent approvals so each new session re-prompts.

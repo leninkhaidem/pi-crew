@@ -23,6 +23,8 @@ const AgentSlotSchema = Type.Object({
 	thinking: Type.Optional(ThinkingLevelSchema),
 });
 
+const ExecutionModeSchema = Type.Union([Type.Literal("session"), Type.Literal("subprocess")]);
+
 const GlobalSettingsSchema = Type.Object({
 	maxConcurrent: Type.Integer({ minimum: 1, maximum: 32 }),
 	maxActive: Type.Integer({ minimum: 1, maximum: 256 }),
@@ -31,6 +33,7 @@ const GlobalSettingsSchema = Type.Object({
 	notifyOnCompletion: Type.Boolean(),
 	agentScope: Type.Union([Type.Literal("user"), Type.Literal("project"), Type.Literal("both")]),
 	confirmProjectAgents: Type.Boolean(),
+	executionMode: Type.Optional(ExecutionModeSchema),
 });
 
 const TmuxSettingsSchema = Type.Object({

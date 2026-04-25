@@ -14,6 +14,7 @@ export function registerKillTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 			reason: Type.Optional(Type.String()),
 		}),
 		async execute(_id, params, _signal, _onUpdate, _ctx) {
+			await rt.abortActiveHandle(params.agentId, params.reason ?? "killed by user");
 			const result = await abortSubagentById(rt.agentDir, params.agentId, params.reason ?? "killed by user");
 			if (!result.ok && result.error === "not_found") {
 				return {

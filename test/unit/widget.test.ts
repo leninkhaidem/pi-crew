@@ -51,9 +51,9 @@ describe("renderActiveAgentsPanel", () => {
 
 		expect(lines[0]).toContain("╭");
 		expect(lines.at(-1)).toContain("╰");
-		expect(lines.join("\n")).toContain("pi-crew active agents");
+		expect(lines.join("\n")).toContain("pi-crew agents");
 		expect(lines.join("\n")).toContain("explore #abc12345");
-		expect(lines.join("\n")).toContain("thinking low");
+		expect(lines.join("\n")).toContain("low");
 		expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
 	});
 });

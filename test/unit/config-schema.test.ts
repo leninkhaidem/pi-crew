@@ -28,8 +28,28 @@ describe("parsePiCrewConfig", () => {
 		expect(r.ok).toBe(true);
 		if (r.ok) {
 			expect(r.value.global.maxConcurrent).toBe(4);
+			expect(r.value.global.executionMode).toBe("session");
 			expect(r.value.tmux.mode).toBe("off");
 		}
+	});
+
+	it("accepts global subprocess execution mode", () => {
+		const r = parsePiCrewConfig({
+			version: 1,
+			agents: {},
+			global: {
+				maxConcurrent: 4,
+				maxActive: 16,
+				maxParallelTasksPerCall: 8,
+				retentionDays: 7,
+				notifyOnCompletion: true,
+				agentScope: "user",
+				confirmProjectAgents: true,
+				executionMode: "subprocess",
+			},
+		});
+		expect(r.ok).toBe(true);
+		if (r.ok) expect(r.value.global.executionMode).toBe("subprocess");
 	});
 
 	it("fills per-slot thinking defaults when missing", () => {

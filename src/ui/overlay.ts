@@ -31,6 +31,7 @@ class TreeOverlay implements Component {
 		private theme: Theme,
 		private onClose: () => void,
 		private requestRender: () => void,
+		private onKill: (state: SubagentState) => void | Promise<void>,
 	) {}
 
 	setStates(s: SubagentState[]) {
@@ -55,7 +56,10 @@ class TreeOverlay implements Component {
 			return;
 		}
 		if (data === KEY_K) {
-			killSelected(this.states[this.selectedIdx]);
+			const state = this.states[this.selectedIdx];
+			if (state && (state.status === "running" || state.status === "starting")) {
+				void Promise.resolve(this.onKill(state)).finally(() => this.requestRender());
+			}
 			return;
 		}
 		if (data === KEY_ESC) this.onClose();
@@ -106,6 +110,7 @@ export async function openTreeOverlay(
 	ctx: ExtensionCommandContext,
 	agentDir: string,
 	sessionId: string,
+	onKill: (state: SubagentState) => void | Promise<void> = killSelected,
 ): Promise<void> {
 	let watcherHandle: { stop: () => void } | null = null;
 	await ctx.ui.custom<void>(
@@ -117,6 +122,7 @@ export async function openTreeOverlay(
 					done(undefined);
 				},
 				() => tui.requestRender(),
+				onKill,
 			);
 			watcherHandle = mountStateWatcher({
 				sessionDir: path.join(getRoot({ agentDir }), sessionId),
@@ -199,7 +205,7 @@ function sortStates(states: SubagentState[]): SubagentState[] {
 }
 
 function killSelected(state: SubagentState | undefined): void {
-	if (!state || state.status !== "running" || !state.pid) return;
+	if (!state || (state.status !== "running" && state.status !== "starting") || !state.pid) return;
 	try {
 		process.kill(state.pid, "SIGTERM");
 	} catch {

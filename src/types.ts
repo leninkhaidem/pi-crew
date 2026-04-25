@@ -33,6 +33,9 @@ export interface SubagentPaths {
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
+export const EXECUTION_MODES = ["session", "subprocess"] as const;
+export type ExecutionMode = (typeof EXECUTION_MODES)[number];
+
 export const DEFAULT_AGENT_THINKING: Record<string, ThinkingLevel> = {
 	explore: "low",
 	"general-purpose": "medium",
@@ -57,6 +60,7 @@ export interface SubagentState {
 	model: string;
 	provider: string;
 	thinking: ThinkingLevel;
+	executionMode?: ExecutionMode;
 	tools: string[] | null;
 	maxTurns: number | null;
 	pid: number | null;
@@ -71,6 +75,9 @@ export interface SubagentState {
 	usage: SubagentUsage;
 	lastText: string | null;
 	lastToolCall: SubagentToolCall | null;
+	activeTools?: string[];
+	toolUses?: number;
+	activity?: string | null;
 	finalOutput: string | null;
 	paths: SubagentPaths;
 }
@@ -102,6 +109,7 @@ export interface GlobalSettings {
 	notifyOnCompletion: boolean;
 	agentScope: "user" | "project" | "both";
 	confirmProjectAgents: boolean;
+	executionMode: ExecutionMode;
 }
 
 export interface TmuxSettings {
@@ -125,6 +133,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 	notifyOnCompletion: true,
 	agentScope: "user",
 	confirmProjectAgents: true,
+	executionMode: "session",
 };
 
 export const DEFAULT_TMUX_SETTINGS: TmuxSettings = {

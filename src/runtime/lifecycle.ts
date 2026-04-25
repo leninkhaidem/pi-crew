@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { generateAgentId } from "../state/id.js";
 import { computePaths } from "../state/paths.js";
 import { readState, writeState } from "../state/store.js";
@@ -7,10 +8,13 @@ import {
 	type AgentConfig,
 	type AgentSlot,
 	type DispatchOptions,
+	type ExecutionMode,
 	type SubagentState,
 	type SubagentUsage,
 	defaultThinkingForAgent,
 } from "../types.js";
+import { describeActivity } from "./activity.js";
+import { dispatchSession } from "./session-lifecycle.js";
 import { type SpawnedSubagent, closeSpawnFds, spawnSubagent } from "./spawn.js";
 import { tailJsonl } from "./tail.js";
 
@@ -21,6 +25,8 @@ export interface LifecycleEnv {
 	parentAgentId: string | null;
 	binary?: string;
 	branch?: string | null;
+	executionMode?: ExecutionMode;
+	ctx?: ExtensionContext;
 }
 
 export interface LifecycleHooks {
@@ -38,6 +44,7 @@ export interface DispatchHandle {
 	agentId: string;
 	state: SubagentState;
 	donePromise: Promise<SubagentState>;
+	abort?: (reason?: string) => Promise<void>;
 }
 
 const STATE_DEBOUNCE_MS = 250;
@@ -47,6 +54,10 @@ export async function dispatch(
 	env: LifecycleEnv,
 	hooks: LifecycleHooks = {},
 ): Promise<DispatchHandle> {
+	const actualExecutionMode = env.executionMode === "session" && env.ctx ? "session" : "subprocess";
+	if (actualExecutionMode === "session" && env.ctx) {
+		return dispatchSession(plan, env as LifecycleEnv & { ctx: ExtensionContext }, hooks);
+	}
 	const agentId = generateAgentId();
 	const sessionIdResolved = env.sessionId;
 	const paths = computePaths({
@@ -71,6 +82,7 @@ export async function dispatch(
 		model: plan.model.modelId,
 		provider: plan.model.provider,
 		thinking,
+		executionMode: actualExecutionMode,
 		tools: plan.agent.tools,
 		maxTurns: plan.options.maxTurns ?? null,
 		pid: null,
@@ -85,6 +97,9 @@ export async function dispatch(
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0 },
 		lastText: null,
 		lastToolCall: null,
+		activeTools: [],
+		toolUses: 0,
+		activity: "starting…",
 		finalOutput: null,
 		paths,
 	};
@@ -136,6 +151,8 @@ export async function dispatch(
 	let pendingUpdate: SubagentState | null = null;
 	let writeTimer: NodeJS.Timeout | null = null;
 	let closing = false;
+	const activeTools = new Map<string, string>();
+	let toolUses = 0;
 	const scheduleWrite = (next: SubagentState) => {
 		pendingUpdate = next;
 		state = next;
@@ -164,8 +181,21 @@ export async function dispatch(
 	const tail = tailJsonl({
 		path: paths.output,
 		onEvent: (e) => {
-			const ev = e as { type?: string; message?: unknown; messages?: unknown[] };
-			if (ev.type === "message_end") {
+			const ev = e as { type?: string; message?: unknown; messages?: unknown[]; assistantMessageEvent?: unknown };
+			if (ev.type === "message_update") {
+				const update = ev.assistantMessageEvent as { type?: string; partial?: { content?: unknown[] } } | undefined;
+				if (update?.type === "text_delta") {
+					const text = extractFirstText(update.partial?.content) ?? state.lastText;
+					if (text) {
+						scheduleWrite({
+							...state,
+							lastText: text,
+							activity: describeActivity(activeTools, text),
+							lastUpdate: Date.now(),
+						});
+					}
+				}
+			} else if (ev.type === "message_end") {
 				const msg = ev.message as
 					| { role?: string; usage?: unknown; content?: unknown; stopReason?: string }
 					| undefined;
@@ -191,19 +221,48 @@ export async function dispatch(
 					};
 					scheduleWrite(next);
 				}
+			} else if (ev.type === "tool_execution_start") {
+				const tc = ev as { toolCallId?: string; toolName?: string; args?: unknown };
+				if (tc.toolName) {
+					activeTools.set(tc.toolCallId ?? `${tc.toolName}-${Date.now()}`, tc.toolName);
+					scheduleWrite({
+						...state,
+						lastToolCall: { name: tc.toolName, args: (tc.args ?? {}) as Record<string, unknown> },
+						activeTools: [...activeTools.values()],
+						toolUses,
+						activity: describeActivity(activeTools, state.lastText),
+						lastUpdate: Date.now(),
+					});
+				}
+			} else if (ev.type === "tool_execution_end") {
+				const tc = ev as { toolCallId?: string; toolName?: string };
+				if (tc.toolCallId) activeTools.delete(tc.toolCallId);
+				else if (tc.toolName) deleteOneTool(activeTools, tc.toolName);
+				toolUses++;
+				scheduleWrite({
+					...state,
+					activeTools: [...activeTools.values()],
+					toolUses,
+					activity: describeActivity(activeTools, state.lastText),
+					lastUpdate: Date.now(),
+				});
 			} else if (ev.type === "tool_call_start" && ev.message) {
 				const tc = ev.message as { name?: string; arguments?: unknown };
 				if (tc?.name) {
+					activeTools.set(`${tc.name}-${Date.now()}`, tc.name);
 					scheduleWrite({
 						...state,
 						lastToolCall: { name: tc.name, args: (tc.arguments ?? {}) as Record<string, unknown> },
+						activeTools: [...activeTools.values()],
+						toolUses,
+						activity: describeActivity(activeTools, state.lastText),
 						lastUpdate: Date.now(),
 					});
 				}
 			} else if (ev.type === "agent_end") {
 				const last = extractLastAssistantText(ev.messages ?? []);
 				if (last) {
-					scheduleWrite({ ...state, finalOutput: last, lastUpdate: Date.now() });
+					scheduleWrite({ ...state, finalOutput: last, activity: "finalizing…", lastUpdate: Date.now() });
 				}
 			}
 		},
@@ -246,6 +305,8 @@ export async function dispatch(
 							lastUpdate: Date.now(),
 							status: code === 0 ? "done" : "failed",
 							errorMessage: code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`,
+							activeTools: [],
+							activity: code === 0 ? "done" : "failed",
 							finalOutput: state.finalOutput ?? null,
 						};
 			await writeState(finalState);
@@ -281,6 +342,15 @@ function extractLastAssistantText(messages: unknown[]): string | null {
 		}
 	}
 	return null;
+}
+
+function deleteOneTool(activeTools: Map<string, string>, toolName: string): void {
+	for (const [key, name] of activeTools) {
+		if (name === toolName) {
+			activeTools.delete(key);
+			return;
+		}
+	}
 }
 
 async function tryReadTail(p: string): Promise<string> {
