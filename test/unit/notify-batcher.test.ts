@@ -43,16 +43,42 @@ describe("createCompletionDispatcher", () => {
 	beforeEach(() => vi.useFakeTimers());
 	afterEach(() => vi.useRealTimers());
 
-	it("keeps successful completion messages hidden from the UI", () => {
+	it("sends successful completion summaries as follow-up messages", () => {
 		const sendMessage = vi.fn();
 		const dispatcher = createCompletionDispatcher({ sendMessage } as never);
 
 		dispatcher.push(stateOf({}));
 		vi.runAllTimers();
 
-		expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ customType: "pi-crew", display: false }), {
-			triggerTurn: false,
+		expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ customType: "pi-crew", display: true }), {
+			deliverAs: "followUp",
+			triggerTurn: true,
 		});
+	});
+
+	it("keeps complete detailed state text in injected completion messages", () => {
+		const sendMessage = vi.fn();
+		const dispatcher = createCompletionDispatcher({ sendMessage } as never);
+		const finalOutput = "x".repeat(2000);
+		const lastText = "y".repeat(2000);
+
+		dispatcher.push(stateOf({ finalOutput, lastText }));
+		vi.runAllTimers();
+
+		const message = sendMessage.mock.calls[0]?.[0] as { details?: { states?: SubagentState[] } };
+		expect(message.details?.states?.[0]?.finalOutput).toBe(finalOutput);
+		expect(message.details?.states?.[0]?.lastText).toBe(lastText);
+	});
+
+	it("suppresses consumed completions", () => {
+		const sendMessage = vi.fn();
+		const dispatcher = createCompletionDispatcher({ sendMessage } as never);
+
+		dispatcher.push(stateOf({}));
+		dispatcher.consume("abc12345");
+		vi.runAllTimers();
+
+		expect(sendMessage).not.toHaveBeenCalled();
 	});
 
 	it("still displays failed completion messages", () => {
@@ -63,7 +89,8 @@ describe("createCompletionDispatcher", () => {
 		vi.runAllTimers();
 
 		expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ customType: "pi-crew", display: true }), {
-			triggerTurn: false,
+			deliverAs: "followUp",
+			triggerTurn: true,
 		});
 	});
 });

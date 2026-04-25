@@ -39,8 +39,6 @@ export type ExecutionMode = (typeof EXECUTION_MODES)[number];
 export const DEFAULT_AGENT_THINKING: Record<string, ThinkingLevel> = {
 	explore: "low",
 	"general-purpose": "medium",
-	plan: "high",
-	"code-reviewer": "high",
 };
 
 export function defaultThinkingForAgent(agentName: string): ThinkingLevel {
@@ -52,6 +50,7 @@ export interface SubagentState {
 	agentId: string;
 	parentAgentId: string | null;
 	sessionId: string;
+	batchId?: string | null;
 	agent: string;
 	agentSource: "user" | "project" | "bundled";
 	task: string;

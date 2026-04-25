@@ -1,5 +1,5 @@
 // test/integration/lifecycle.test.ts
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -29,6 +29,15 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 		const mock = prepareMockPi({
 			events: [
 				{ type: "agent_start" },
+				{
+					type: "message_update",
+					assistantMessageEvent: {
+						type: "thinking_end",
+						partial: {
+							content: [{ type: "thinking", thinking: "hidden", thinkingSignature: "secret" }],
+						},
+					},
+				},
 				{
 					type: "message_end",
 					message: {
@@ -84,6 +93,9 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 			expect(final.usage.input).toBe(100);
 			expect(final.usage.output).toBe(20);
 			expect(final.turns).toBe(1);
+			const transcript = readFileSync(final.paths.output, "utf-8");
+			expect(transcript).not.toContain("thinkingSignature");
+			expect(transcript).not.toContain("hidden");
 		} finally {
 			mock.cleanup();
 		}
@@ -123,6 +135,67 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 		} finally {
 			mock.cleanup();
 		}
+	}, 20_000);
+
+	it("hard-aborts subprocess mode after maxTurns plus grace", async () => {
+		const assistantTurn = (text: string) => ({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text }],
+				usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { total: 0 } },
+				stopReason: "toolUse",
+			},
+		});
+		const mock = prepareMockPi({
+			events: [assistantTurn("one"), assistantTurn("two"), assistantTurn("three"), assistantTurn("four")],
+			exitCode: 0,
+			delayMs: 50,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
+					options: { agent: "explore", task: "loop", maxTurns: 1 },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-max-turns",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+			const final = await handle.donePromise;
+			expect(final.status).toBe("aborted");
+			expect(final.errorMessage).toContain("maxTurns exceeded (1)");
+			expect(final.turns).toBeGreaterThanOrEqual(3);
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
+	it("captures spawn errors instead of leaving the subprocess promise hanging", async () => {
+		const handle = await dispatch(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
+				options: { agent: "explore", task: "missing binary" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess-spawn-error",
+				parentAgentId: null,
+				binary: path.join(tmp, "does-not-exist"),
+			},
+		);
+
+		const final = await handle.donePromise;
+		expect(final.status).toBe("failed");
+		expect(final.errorMessage).toBeTruthy();
 	}, 20_000);
 
 	it("captures failure when subprocess exits non-zero", async () => {

@@ -26,7 +26,7 @@ describe("discoverAgents", () => {
 			bundledDir: path.resolve("src/agents/defaults"),
 		});
 		const names = r.agents.map((a) => a.name).sort();
-		expect(names).toEqual(["code-reviewer", "explore", "general-purpose", "plan"]);
+		expect(names).toEqual(["explore", "general-purpose"]);
 		expect(r.agents.every((a) => a.source === "bundled")).toBe(true);
 	});
 

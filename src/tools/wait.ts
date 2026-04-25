@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import { getRoot } from "../state/paths.js";
 import { readState } from "../state/store.js";
+import { formatParentSummary } from "../summary.js";
 import type { SubagentState } from "../types.js";
 
 const TERMINAL = new Set<SubagentState["status"]>(["done", "failed", "aborted", "orphaned", "detached"]);
@@ -19,6 +20,7 @@ export function registerWaitTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 			timeoutMs: Type.Optional(Type.Integer({ minimum: 1000 })),
 		}),
 		async execute(_id, params, signal) {
+			for (const id of params.agentIds) rt.consumeCompletion(id);
 			const root = getRoot({ agentDir: rt.agentDir });
 			const deadline = params.timeoutMs ? Date.now() + params.timeoutMs : null;
 			const results: SubagentState[] = [];
@@ -36,17 +38,11 @@ export function registerWaitTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 				else results.push(stubMissing(id));
 			}
 
-			const text = results
-				.map((r) =>
-					r.status === "done"
-						? `[${r.agent} #${r.agentId}] done\n${r.finalOutput ?? "(no output)"}`
-						: `[${r.agent} #${r.agentId}] ${r.status} — ${r.errorMessage ?? "(no error)"}`,
-				)
-				.join("\n\n");
+			const text = results.map((r) => formatParentSummary(r, { maxChars: 800, maxLines: 12 })).join("\n\n");
 
 			return {
 				content: [{ type: "text" as const, text }],
-				details: { results },
+				details: { results: results.map(compactStateDetails) },
 			};
 		},
 	});
@@ -62,6 +58,19 @@ async function findById(root: string, id: string): Promise<SubagentState | null>
 		}
 	}
 	return null;
+}
+
+function compactStateDetails(state: SubagentState) {
+	return {
+		agentId: state.agentId,
+		agent: state.agent,
+		task: state.task,
+		status: state.status,
+		errorMessage: state.errorMessage,
+		turns: state.turns,
+		usage: state.usage,
+		paths: state.paths,
+	};
 }
 
 function stubMissing(id: string): SubagentState {

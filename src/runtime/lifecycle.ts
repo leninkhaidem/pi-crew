@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
@@ -14,14 +15,18 @@ import {
 	defaultThinkingForAgent,
 } from "../types.js";
 import { describeActivity } from "./activity.js";
+import { createJsonlParser } from "./jsonl.js";
+import { abortSubagentByStatePath } from "./kill.js";
+import { appendFinalResultContract } from "./result-contract.js";
 import { dispatchSession } from "./session-lifecycle.js";
 import { type SpawnedSubagent, closeSpawnFds, spawnSubagent } from "./spawn.js";
-import { tailJsonl } from "./tail.js";
+import { sanitizeTranscriptEvent } from "./transcript.js";
 
 export interface LifecycleEnv {
 	agentDir: string;
 	cwd: string;
 	sessionId: string;
+	batchId?: string | null;
 	parentAgentId: string | null;
 	binary?: string;
 	branch?: string | null;
@@ -45,9 +50,13 @@ export interface DispatchHandle {
 	state: SubagentState;
 	donePromise: Promise<SubagentState>;
 	abort?: (reason?: string) => Promise<void>;
+	steer?: (message: string) => Promise<void>;
+	resume?: (task: string, signal?: AbortSignal) => Promise<SubagentState>;
+	dispose?: () => Promise<void> | void;
 }
 
 const STATE_DEBOUNCE_MS = 250;
+const MAX_TURN_GRACE = 2;
 
 export async function dispatch(
 	plan: DispatchPlan,
@@ -68,12 +77,14 @@ export async function dispatch(
 
 	const cwd = plan.options.cwd ?? env.cwd;
 	const thinking = plan.model.thinking ?? defaultThinkingForAgent(plan.agent.name);
+	const systemPrompt = appendFinalResultContract(plan.agent.systemPrompt);
 
 	const initialState: SubagentState = {
 		schemaVersion: 1,
 		agentId,
 		parentAgentId: env.parentAgentId,
 		sessionId: sessionIdResolved,
+		batchId: env.batchId ?? null,
 		agent: plan.agent.name,
 		agentSource: plan.agent.source,
 		task: plan.options.task,
@@ -105,7 +116,7 @@ export async function dispatch(
 	};
 
 	await fs.mkdir(path.dirname(paths.state), { recursive: true });
-	await fs.writeFile(paths.prompt, plan.agent.systemPrompt, { mode: 0o600 });
+	await fs.writeFile(paths.prompt, systemPrompt, { mode: 0o600 });
 	// Pre-create empty output and stderr files so spawn fds open them with append mode.
 	await fs.writeFile(paths.output, "", { mode: 0o600 });
 	await fs.writeFile(paths.stderr, "", { mode: 0o600 });
@@ -178,144 +189,191 @@ export async function dispatch(
 		}, STATE_DEBOUNCE_MS);
 	};
 
-	const tail = tailJsonl({
-		path: paths.output,
-		onEvent: (e) => {
-			const ev = e as { type?: string; message?: unknown; messages?: unknown[]; assistantMessageEvent?: unknown };
-			if (ev.type === "message_update") {
-				const update = ev.assistantMessageEvent as { type?: string; partial?: { content?: unknown[] } } | undefined;
-				if (update?.type === "text_delta") {
-					const text = extractFirstText(update.partial?.content) ?? state.lastText;
-					if (text) {
-						scheduleWrite({
-							...state,
-							lastText: text,
-							activity: describeActivity(activeTools, text),
-							lastUpdate: Date.now(),
-						});
-					}
-				}
-			} else if (ev.type === "message_end") {
-				const msg = ev.message as
-					| { role?: string; usage?: unknown; content?: unknown; stopReason?: string }
-					| undefined;
-				if (msg?.role === "assistant") {
-					const u = msg.usage as Partial<SubagentUsage> | undefined;
-					const costTotal: number = (u as { cost?: { total?: number } } | undefined)?.cost?.total ?? 0;
-					const next: SubagentState = {
-						...state,
-						turns: state.turns + 1,
-						usage: u
-							? {
-									input: state.usage.input + (u.input ?? 0),
-									output: state.usage.output + (u.output ?? 0),
-									cacheRead: state.usage.cacheRead + (u.cacheRead ?? 0),
-									cacheWrite: state.usage.cacheWrite + (u.cacheWrite ?? 0),
-									cost: state.usage.cost + costTotal,
-									contextTokens: (u as { totalTokens?: number }).totalTokens ?? state.usage.contextTokens,
-								}
-							: state.usage,
-						lastText: extractFirstText(msg.content) ?? state.lastText,
-						stopReason: msg.stopReason ?? state.stopReason,
-						lastUpdate: Date.now(),
-					};
-					scheduleWrite(next);
-				}
-			} else if (ev.type === "tool_execution_start") {
-				const tc = ev as { toolCallId?: string; toolName?: string; args?: unknown };
-				if (tc.toolName) {
-					activeTools.set(tc.toolCallId ?? `${tc.toolName}-${Date.now()}`, tc.toolName);
+	let maxTurnAbortRequested = false;
+	const abort = async (reason = "killed by user") => {
+		await writeState({ ...state, lastUpdate: Date.now() }).catch(() => undefined);
+		await abortSubagentByStatePath(paths.state, reason).catch(() => undefined);
+	};
+	const abortForMaxTurns = () => {
+		if (!plan.options.maxTurns || maxTurnAbortRequested) return;
+		maxTurnAbortRequested = true;
+		void abort(`maxTurns exceeded (${plan.options.maxTurns})`);
+	};
+
+	const handleTranscriptEvent = (e: unknown) => {
+		const ev = e as { type?: string; message?: unknown; messages?: unknown[]; assistantMessageEvent?: unknown };
+		if (ev.type === "message_update") {
+			const update = ev.assistantMessageEvent as { type?: string; partial?: { content?: unknown[] } } | undefined;
+			if (update?.type === "text_delta") {
+				const text = extractFirstText(update.partial?.content) ?? state.lastText;
+				if (text) {
 					scheduleWrite({
 						...state,
-						lastToolCall: { name: tc.toolName, args: (tc.args ?? {}) as Record<string, unknown> },
-						activeTools: [...activeTools.values()],
-						toolUses,
-						activity: describeActivity(activeTools, state.lastText),
+						lastText: text,
+						activity: describeActivity(activeTools, text),
 						lastUpdate: Date.now(),
 					});
 				}
-			} else if (ev.type === "tool_execution_end") {
-				const tc = ev as { toolCallId?: string; toolName?: string };
-				if (tc.toolCallId) activeTools.delete(tc.toolCallId);
-				else if (tc.toolName) deleteOneTool(activeTools, tc.toolName);
-				toolUses++;
+			}
+		} else if (ev.type === "message_end") {
+			const msg = ev.message as { role?: string; usage?: unknown; content?: unknown; stopReason?: string } | undefined;
+			if (msg?.role === "assistant") {
+				const u = msg.usage as Partial<SubagentUsage> | undefined;
+				const costTotal: number = (u as { cost?: { total?: number } } | undefined)?.cost?.total ?? 0;
+				const next: SubagentState = {
+					...state,
+					turns: state.turns + 1,
+					usage: u
+						? {
+								input: state.usage.input + (u.input ?? 0),
+								output: state.usage.output + (u.output ?? 0),
+								cacheRead: state.usage.cacheRead + (u.cacheRead ?? 0),
+								cacheWrite: state.usage.cacheWrite + (u.cacheWrite ?? 0),
+								cost: state.usage.cost + costTotal,
+								contextTokens: (u as { totalTokens?: number }).totalTokens ?? state.usage.contextTokens,
+							}
+						: state.usage,
+					lastText: extractFirstText(msg.content) ?? state.lastText,
+					stopReason: msg.stopReason ?? state.stopReason,
+					lastUpdate: Date.now(),
+				};
+				scheduleWrite(next);
+				if (msg.stopReason !== "stop" && plan.options.maxTurns && next.turns >= plan.options.maxTurns + MAX_TURN_GRACE)
+					abortForMaxTurns();
+			}
+		} else if (ev.type === "tool_execution_start") {
+			const tc = ev as { toolCallId?: string; toolName?: string; args?: unknown };
+			if (tc.toolName) {
+				activeTools.set(tc.toolCallId ?? `${tc.toolName}-${Date.now()}`, tc.toolName);
 				scheduleWrite({
 					...state,
+					lastToolCall: { name: tc.toolName, args: (tc.args ?? {}) as Record<string, unknown> },
 					activeTools: [...activeTools.values()],
 					toolUses,
 					activity: describeActivity(activeTools, state.lastText),
 					lastUpdate: Date.now(),
 				});
-			} else if (ev.type === "tool_call_start" && ev.message) {
-				const tc = ev.message as { name?: string; arguments?: unknown };
-				if (tc?.name) {
-					activeTools.set(`${tc.name}-${Date.now()}`, tc.name);
-					scheduleWrite({
-						...state,
-						lastToolCall: { name: tc.name, args: (tc.arguments ?? {}) as Record<string, unknown> },
-						activeTools: [...activeTools.values()],
-						toolUses,
-						activity: describeActivity(activeTools, state.lastText),
-						lastUpdate: Date.now(),
-					});
-				}
-			} else if (ev.type === "agent_end") {
-				const last = extractLastAssistantText(ev.messages ?? []);
-				if (last) {
-					scheduleWrite({ ...state, finalOutput: last, activity: "finalizing…", lastUpdate: Date.now() });
-				}
 			}
-		},
-		onError: () => {
-			// non-fatal; keep tailing
-		},
+		} else if (ev.type === "tool_execution_end") {
+			const tc = ev as { toolCallId?: string; toolName?: string };
+			if (tc.toolCallId) activeTools.delete(tc.toolCallId);
+			else if (tc.toolName) deleteOneTool(activeTools, tc.toolName);
+			toolUses++;
+			scheduleWrite({
+				...state,
+				activeTools: [...activeTools.values()],
+				toolUses,
+				activity: describeActivity(activeTools, state.lastText),
+				lastUpdate: Date.now(),
+			});
+		} else if (ev.type === "tool_call_start" && ev.message) {
+			const tc = ev.message as { name?: string; arguments?: unknown };
+			if (tc?.name) {
+				activeTools.set(`${tc.name}-${Date.now()}`, tc.name);
+				scheduleWrite({
+					...state,
+					lastToolCall: { name: tc.name, args: (tc.arguments ?? {}) as Record<string, unknown> },
+					activeTools: [...activeTools.values()],
+					toolUses,
+					activity: describeActivity(activeTools, state.lastText),
+					lastUpdate: Date.now(),
+				});
+			}
+		} else if (ev.type === "agent_end") {
+			const last = extractLastAssistantText(ev.messages ?? []);
+			if (last) scheduleWrite({ ...state, finalOutput: last, activity: "finalizing…", lastUpdate: Date.now() });
+		}
+	};
+
+	const outputStream = fsSync.createWriteStream(paths.output, { flags: "a", mode: 0o600 });
+	const stdoutParser = createJsonlParser((event) => {
+		handleTranscriptEvent(event);
+		const sanitized = sanitizeTranscriptEvent(event);
+		if (sanitized) outputStream.write(`${JSON.stringify(sanitized)}\n`);
 	});
+	spawned.proc.stdout?.on("data", (chunk) => stdoutParser.write(chunk));
 
 	const donePromise = new Promise<SubagentState>((resolve) => {
-		spawned.proc.once("close", async (code) => {
-			// Prevent any in-flight debounced write from overwriting externally-set terminal state.
+		let finalized = false;
+		const finalize = async (finalState: SubagentState) => {
+			if (finalized) return;
+			finalized = true;
 			closing = true;
 			pendingUpdate = null;
 			if (writeTimer) {
 				clearTimeout(writeTimer);
 				writeTimer = null;
 			}
-			// Give tail one final tick to drain.
-			await new Promise((r) => setTimeout(r, 150));
-			await tail.stop();
+			stdoutParser.flush();
+			await closeStream(outputStream);
 			closeSpawnFds(spawned);
+			await writeState(finalState);
+			hooks.onEnd?.(finalState);
+			resolve(finalState);
+		};
 
+		spawned.proc.once("error", async (err) => {
+			stdoutParser.flush();
+			const currentDisk = await readState(paths.state);
+			const finalState: SubagentState = isExternallyTerminal(currentDisk)
+				? {
+						...currentDisk,
+						finishedAt: currentDisk.finishedAt ?? Date.now(),
+						lastUpdate: Date.now(),
+					}
+				: {
+						...state,
+						exitCode: -1,
+						finishedAt: Date.now(),
+						lastUpdate: Date.now(),
+						status: "failed",
+						errorMessage: err.message,
+						activeTools: [],
+						activity: "failed",
+						finalOutput: state.finalOutput ?? null,
+					};
+			await finalize(finalState);
+		});
+
+		spawned.proc.once("close", async (code) => {
+			stdoutParser.flush();
 			// Re-read state to detect external finalization (e.g., subagent_kill set status to "aborted").
 			const currentDisk = await readState(paths.state);
 			const stderrText = await tryReadTail(paths.stderr);
 
-			const finalState: SubagentState =
-				currentDisk &&
-				(currentDisk.status === "aborted" || currentDisk.status === "orphaned" || currentDisk.status === "detached")
-					? {
-							...currentDisk,
-							exitCode: code,
-							finishedAt: currentDisk.finishedAt ?? Date.now(),
-							lastUpdate: Date.now(),
-						}
-					: {
-							...state,
-							exitCode: code,
-							finishedAt: Date.now(),
-							lastUpdate: Date.now(),
-							status: code === 0 ? "done" : "failed",
-							errorMessage: code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`,
-							activeTools: [],
-							activity: code === 0 ? "done" : "failed",
-							finalOutput: state.finalOutput ?? null,
-						};
-			await writeState(finalState);
-			hooks.onEnd?.(finalState);
-			resolve(finalState);
+			const finalState: SubagentState = isExternallyTerminal(currentDisk)
+				? {
+						...currentDisk,
+						exitCode: code ?? currentDisk.exitCode,
+						finishedAt: currentDisk.finishedAt ?? Date.now(),
+						lastUpdate: Date.now(),
+					}
+				: {
+						...state,
+						exitCode: code,
+						finishedAt: Date.now(),
+						lastUpdate: Date.now(),
+						status: code === 0 ? "done" : "failed",
+						errorMessage: code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`,
+						activeTools: [],
+						activity: code === 0 ? "done" : "failed",
+						finalOutput: state.finalOutput ?? null,
+					};
+			await finalize(finalState);
 		});
 	});
 
-	return { agentId, state, donePromise };
+	return { agentId, state, donePromise, abort };
+}
+
+function isExternallyTerminal(state: SubagentState | null): state is SubagentState {
+	return Boolean(state && (state.status === "aborted" || state.status === "orphaned" || state.status === "detached"));
+}
+
+async function closeStream(stream: fsSync.WriteStream): Promise<void> {
+	await new Promise<void>((resolve) => {
+		stream.end(() => resolve());
+	});
 }
 
 function extractFirstText(content: unknown): string | null {

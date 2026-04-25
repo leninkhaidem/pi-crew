@@ -53,7 +53,7 @@ export async function sweep(args: SweepArgs): Promise<SweepReport> {
 			}
 			if (!state) continue;
 
-			if ((state.status === "running" || state.status === "detached") && !pidAlive(state.pid)) {
+			if ((state.status === "running" || state.status === "detached") && shouldMarkOrphaned(state)) {
 				const next: SubagentState = {
 					...state,
 					status: "orphaned",
@@ -88,6 +88,12 @@ export async function sweep(args: SweepArgs): Promise<SweepReport> {
 	}
 
 	return report;
+}
+
+function shouldMarkOrphaned(state: SubagentState): boolean {
+	if (state.executionMode === "session") return false;
+	if (state.pid === null) return false;
+	return !pidAlive(state.pid);
 }
 
 function pidAlive(pid: number | null): boolean {

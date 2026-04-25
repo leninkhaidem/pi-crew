@@ -10,7 +10,8 @@ export function registerTreeCommand(pi: ExtensionAPI, rt: ExtensionRuntime): voi
 		description: "Open the pi-crew sub-agent tree overlay.",
 		handler: async (_args, ctx) => {
 			const sessionId = rt.resolveSessionId(ctx);
-			await openTreeOverlay(ctx, rt.agentDir, sessionId, async (state: SubagentState) => {
+			const batchId = rt.getCurrentBatchId(ctx);
+			await openTreeOverlay(ctx, rt.agentDir, sessionId, batchId, async (state: SubagentState) => {
 				const reason = "killed from /subagents";
 				const handled = await rt.abortActiveHandle(state.agentId, reason);
 				if (!handled) await abortSubagentByStatePath(state.paths.state, reason);

@@ -22,7 +22,7 @@ export interface SpawnedSubagent {
 	pid: number;
 	command: string;
 	args: string[];
-	openFds: { stdout: number; stderr: number };
+	openFds: { stderr: number };
 }
 
 export function spawnSubagent(args: SpawnArgs): SpawnedSubagent {
@@ -42,13 +42,12 @@ export function spawnSubagent(args: SpawnArgs): SpawnedSubagent {
 	];
 	const inv = resolvePiInvocation({ binary: args.binary, args: cliArgs });
 
-	const stdoutFd = fs.openSync(args.outputPath, "a");
 	const stderrFd = fs.openSync(args.stderrPath, "a");
 
 	const proc = spawn(inv.command, inv.args, {
 		cwd: args.cwd,
 		shell: false,
-		stdio: ["ignore", stdoutFd, stderrFd],
+		stdio: ["ignore", "pipe", stderrFd],
 		env: {
 			...process.env,
 			PI_SUBAGENT_PARENT_ID: args.parentAgentId,
@@ -59,7 +58,7 @@ export function spawnSubagent(args: SpawnArgs): SpawnedSubagent {
 
 	const pid = proc.pid;
 	if (typeof pid !== "number") {
-		fs.closeSync(stdoutFd);
+		proc.once("error", () => undefined);
 		fs.closeSync(stderrFd);
 		throw new Error("spawn produced no pid");
 	}
@@ -68,17 +67,17 @@ export function spawnSubagent(args: SpawnArgs): SpawnedSubagent {
 		pid,
 		command: inv.command,
 		args: inv.args,
-		openFds: { stdout: stdoutFd, stderr: stderrFd },
+		openFds: { stderr: stderrFd },
 	};
 }
 
 /**
- * Close the file descriptors handed off to spawn. Safe to call after the
- * process exits — fd has already been duplicated into the child so closing
- * the parent fd does not affect the child's writes.
+ * Close file descriptors handed off to spawn. Safe to call after the process exits —
+ * fds have already been duplicated into the child, so closing parent fds does not
+ * affect child writes.
  */
 export function closeSpawnFds(s: SpawnedSubagent): void {
-	for (const fd of [s.openFds.stdout, s.openFds.stderr]) {
+	for (const fd of [s.openFds.stderr]) {
 		try {
 			fs.closeSync(fd);
 		} catch {

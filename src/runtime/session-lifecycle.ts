@@ -15,6 +15,8 @@ import { type SubagentState, type SubagentUsage, defaultThinkingForAgent } from 
 import { describeActivity } from "./activity.js";
 import { abortSubagentByStatePath } from "./kill.js";
 import type { DispatchHandle, DispatchPlan, LifecycleEnv, LifecycleHooks } from "./lifecycle.js";
+import { appendFinalResultContract } from "./result-contract.js";
+import { sanitizeTranscriptEvent } from "./transcript.js";
 
 const STATE_DEBOUNCE_MS = 80;
 const MAX_TURN_GRACE = 2;
@@ -36,12 +38,14 @@ export async function dispatchSession(
 	const paths = computePaths({ agentDir: env.agentDir, sessionId: sessionIdResolved, agentId });
 	const cwd = plan.options.cwd ?? env.cwd;
 	const thinking = plan.model.thinking ?? defaultThinkingForAgent(plan.agent.name);
+	const systemPrompt = appendFinalResultContract(plan.agent.systemPrompt);
 
 	const initialState: SubagentState = {
 		schemaVersion: 1,
 		agentId,
 		parentAgentId: env.parentAgentId,
 		sessionId: sessionIdResolved,
+		batchId: env.batchId ?? null,
 		agent: plan.agent.name,
 		agentSource: plan.agent.source,
 		task: plan.options.task,
@@ -73,16 +77,30 @@ export async function dispatchSession(
 	};
 
 	await fs.mkdir(path.dirname(paths.state), { recursive: true });
-	await fs.writeFile(paths.prompt, plan.agent.systemPrompt, { mode: 0o600 });
+	await fs.writeFile(paths.prompt, systemPrompt, { mode: 0o600 });
 	await fs.writeFile(paths.output, "", { mode: 0o600 });
 	await fs.writeFile(paths.stderr, "", { mode: 0o600 });
 	await writeState(initialState);
 	hooks.onStateUpdate?.(initialState);
 
-	const outputStream = fsSync.createWriteStream(paths.output, { flags: "a", mode: 0o600 });
+	let outputStream = fsSync.createWriteStream(paths.output, { flags: "a", mode: 0o600 });
+	let outputStreamClosed = false;
+	const ensureOutputStream = () => {
+		if (outputStreamClosed) {
+			outputStream = fsSync.createWriteStream(paths.output, { flags: "a", mode: 0o600 });
+			outputStreamClosed = false;
+		}
+		return outputStream;
+	};
+	const closeOutputStream = async () => {
+		if (outputStreamClosed) return;
+		outputStreamClosed = true;
+		await closeStream(outputStream);
+	};
 	const appendEvent = (event: unknown) => {
 		try {
-			outputStream.write(`${JSON.stringify(event)}\n`);
+			const sanitized = sanitizeTranscriptEvent(event);
+			if (sanitized) ensureOutputStream().write(`${JSON.stringify(sanitized)}\n`);
 		} catch {
 			// best effort transcript
 		}
@@ -99,7 +117,7 @@ export async function dispatchSession(
 			activity: "failed",
 		};
 		await writeState(failed);
-		await closeStream(outputStream);
+		await closeOutputStream();
 		hooks.onEnd?.(failed);
 		return { agentId, state: failed, donePromise: Promise.resolve(failed) };
 	}
@@ -148,7 +166,7 @@ export async function dispatchSession(
 			noPromptTemplates: true,
 			noThemes: true,
 			noContextFiles: true,
-			systemPromptOverride: () => plan.agent.systemPrompt,
+			systemPromptOverride: () => systemPrompt,
 			appendSystemPromptOverride: () => [],
 		});
 		await loader.reload();
@@ -166,6 +184,13 @@ export async function dispatchSession(
 		const created = await createAgentSession(sessionOptions);
 		session = created.session;
 		session.setActiveToolsByName(session.getActiveToolNames().filter((name) => !EXCLUDED_TOOL_NAMES.has(name)));
+		await session.bindExtensions({
+			onError: (err) => {
+				void fs
+					.appendFile(paths.stderr, `extension error: ${err.extensionPath}: ${String(err.error)}\n`)
+					.catch(() => undefined);
+			},
+		});
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		await fs.appendFile(paths.stderr, `${message}\n`).catch(() => undefined);
@@ -178,7 +203,7 @@ export async function dispatchSession(
 			activity: "failed",
 		};
 		await writeState(failed);
-		await closeStream(outputStream);
+		await closeOutputStream();
 		hooks.onEnd?.(failed);
 		return { agentId, state: failed, donePromise: Promise.resolve(failed) };
 	}
@@ -192,44 +217,84 @@ export async function dispatchSession(
 	await writeState(state);
 	hooks.onStateUpdate?.(state);
 
-	unsubscribe = session.subscribe((event: unknown) => {
-		appendEvent(event);
-		handleSessionEvent(event, {
-			getState: () => state,
-			scheduleWrite,
-			activeTools,
-			getToolUses: () => toolUses,
-			setToolUses: (value) => {
-				toolUses = value;
-			},
-			onHardAbort: async () => {
-				if (!session || hardAborted) return;
-				hardAborted = true;
-				abortReason = `maxTurns exceeded (${plan.options.maxTurns})`;
-				await abortSubagentByStatePath(paths.state, abortReason).catch(() => undefined);
-				await session.abort().catch(() => undefined);
-			},
-			onSoftLimit: async () => {
-				if (!session || softLimitReached) return;
-				softLimitReached = true;
-				await session
-					.steer("You have reached your turn limit. Wrap up immediately — provide your final answer now.")
-					.catch(() => undefined);
-			},
-			maxTurns: plan.options.maxTurns,
+	const subscribeForRun = () => {
+		unsubscribe = session!.subscribe((event: unknown) => {
+			appendEvent(event);
+			handleSessionEvent(event, {
+				getState: () => state,
+				scheduleWrite,
+				activeTools,
+				getToolUses: () => toolUses,
+				setToolUses: (value) => {
+					toolUses = value;
+				},
+				onHardAbort: async () => {
+					if (!session || hardAborted) return;
+					hardAborted = true;
+					abortReason = `maxTurns exceeded (${plan.options.maxTurns})`;
+					await writeState({ ...state, lastUpdate: Date.now() }).catch(() => undefined);
+					await abortSubagentByStatePath(paths.state, abortReason).catch(() => undefined);
+					await session.abort().catch(() => undefined);
+				},
+				onSoftLimit: async () => {
+					if (!session || softLimitReached) return;
+					softLimitReached = true;
+					await session
+						.steer("You have reached your turn limit. Wrap up immediately — provide your final answer now.")
+						.catch(() => undefined);
+				},
+				maxTurns: plan.options.maxTurns,
+			});
 		});
-	});
+	};
 
 	const abort = async (reason = "killed by user") => {
 		abortReason = reason;
+		await writeState({ ...state, lastUpdate: Date.now() }).catch(() => undefined);
 		await abortSubagentByStatePath(paths.state, reason).catch(() => undefined);
 		await session?.abort().catch(() => undefined);
 	};
 
-	const donePromise = (async (): Promise<SubagentState> => {
+	const steer = async (message: string) => {
+		if (!session) throw new Error("session not available");
+		await session.steer(message);
+	};
+
+	const markRunning = async (task: string) => {
+		activeTools.clear();
+		abortReason = undefined;
+		hardAborted = false;
+		softLimitReached = false;
+		closing = false;
+		pendingUpdate = null;
+		if (writeTimer) {
+			clearTimeout(writeTimer);
+			writeTimer = null;
+		}
+		state = {
+			...state,
+			task,
+			status: "running",
+			exitCode: null,
+			stopReason: null,
+			errorMessage: null,
+			finishedAt: null,
+			lastUpdate: Date.now(),
+			activeTools: [],
+			activity: "thinking…",
+			finalOutput: null,
+		};
+		await writeState(state);
+		hooks.onStateUpdate?.(state);
+	};
+
+	const runPrompt = async (task: string): Promise<SubagentState> => {
+		if (!session) throw new Error("session not available");
+		ensureOutputStream();
+		subscribeForRun();
 		let promptError: unknown;
 		try {
-			await session?.prompt(`Task: ${plan.options.task}`, { source: "extension" });
+			await session.prompt(`Task: ${task}`, { source: "extension" });
 		} catch (err) {
 			promptError = err;
 		} finally {
@@ -240,6 +305,7 @@ export async function dispatchSession(
 				writeTimer = null;
 			}
 			unsubscribe();
+			unsubscribe = () => undefined;
 		}
 
 		const currentDisk = await readState(paths.state);
@@ -270,14 +336,31 @@ export async function dispatchSession(
 					finalOutput: finalText ?? null,
 				};
 
+		await flushStream(outputStream);
+		await closeOutputStream();
 		await writeState(finalState);
-		await closeStream(outputStream);
-		session?.dispose();
+		state = finalState;
 		hooks.onEnd?.(finalState);
 		return finalState;
-	})();
+	};
 
-	return { agentId, state, donePromise, abort };
+	const resume = async (task: string): Promise<SubagentState> => {
+		if (!session) throw new Error("session not available");
+		if (state.status === "running" || state.status === "starting")
+			throw new Error(`sub-agent #${agentId} is already running`);
+		await markRunning(task);
+		return runPrompt(task);
+	};
+
+	const dispose = async () => {
+		unsubscribe();
+		await closeOutputStream().catch(() => undefined);
+		session?.dispose();
+	};
+
+	const donePromise = runPrompt(plan.options.task);
+
+	return { agentId, state, donePromise, abort, steer, resume, dispose };
 }
 
 interface EventHandlerContext {
@@ -341,8 +424,10 @@ function handleSessionEvent(event: unknown, ctx: EventHandlerContext): void {
 			});
 		}
 	} else if (ev.type === "turn_end") {
+		const msg = ev.message as { role?: string; stopReason?: string } | undefined;
 		const turns = state.turns + 1;
 		ctx.scheduleWrite({ ...state, turns, lastUpdate: Date.now() });
+		if (msg?.role === "assistant" && msg.stopReason === "stop") return;
 		if (ctx.maxTurns && turns >= ctx.maxTurns + MAX_TURN_GRACE) {
 			void ctx.onHardAbort();
 		} else if (ctx.maxTurns && turns >= ctx.maxTurns) {
@@ -409,6 +494,12 @@ function deleteOneTool(activeTools: Map<string, string>, toolName: string): void
 			return;
 		}
 	}
+}
+
+async function flushStream(stream: fsSync.WriteStream): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		stream.write("", (err) => (err ? reject(err) : resolve()));
+	});
 }
 
 async function closeStream(stream: fsSync.WriteStream): Promise<void> {

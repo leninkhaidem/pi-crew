@@ -1,6 +1,5 @@
+import { buildSummaryPreview, formatParentSummary } from "../summary.js";
 import type { SubagentState } from "../types.js";
-
-const PREVIEW_LEN = 200;
 
 export function formatUsage(state: SubagentState): string {
 	const u = state.usage;
@@ -17,23 +16,22 @@ export function formatCompletionMessage(state: SubagentState): string {
 		return [
 			`✓ subagent ${state.agent} #${state.agentId} finished (${usage}).`,
 			"",
-			state.finalOutput ?? "(no output)",
-			"",
-			`Full transcript: ${state.paths.output}`,
-			`State: ${state.paths.state}`,
+			formatParentSummary(state, { format: "xml", full: true }),
 		].join("\n");
 	}
 	if (state.status === "aborted") {
 		return [
 			`✗ subagent ${state.agent} #${state.agentId} aborted: ${state.errorMessage ?? "(no reason)"}.`,
-			`State: ${state.paths.state}`,
+			"",
+			formatParentSummary(state, { format: "xml", full: true }),
 		].join("\n");
 	}
 	const err = state.errorMessage ?? `exit ${state.exitCode}`;
 	return [
 		`✗ subagent ${state.agent} #${state.agentId} ${state.status} (exit ${state.exitCode}, "${err}").`,
+		"",
+		formatParentSummary(state, { format: "xml", full: true }),
 		`Stderr: ${state.paths.stderr}`,
-		`State: ${state.paths.state}`,
 	].join("\n");
 }
 
@@ -50,11 +48,10 @@ export function formatBatchedMessage(states: SubagentState[]): string {
 	lines.push("");
 	lines.push("Details for each:");
 	for (const s of states) {
-		const out = s.finalOutput ?? s.errorMessage ?? "(no output)";
-		const preview = out.length > PREVIEW_LEN ? `${out.slice(0, PREVIEW_LEN)}…` : out;
-		lines.push(`  - #${s.agentId}: ${preview}`);
-		const trail = s.status === "done" ? `    Full: ${s.paths.output}` : `    Stderr: ${s.paths.stderr}`;
-		lines.push(trail);
+		const output = buildSummaryPreview(s, { full: true }).text;
+		lines.push(`  - #${s.agentId}: ${output}`);
+		lines.push(`    Trace: ${s.paths.output}`);
+		lines.push(`    State: ${s.paths.state}`);
 	}
 	return lines.join("\n");
 }

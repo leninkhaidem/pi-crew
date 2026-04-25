@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -68,6 +68,13 @@ describe("sweep", () => {
 		writeStateFile("s1", "bbbbbbbb", { status: "detached", pid: 999999 });
 		const r = await sweep({ agentDir: tmp, retentionDays: 7 });
 		expect(r.orphans).toBe(1);
+	});
+
+	it("does not orphan running session-mode agents that have no subprocess pid", async () => {
+		const stateFile = writeStateFile("s1", "session1", { status: "running", executionMode: "session", pid: null });
+		const r = await sweep({ agentDir: tmp, retentionDays: 7 });
+		expect(r.orphans).toBe(0);
+		expect(JSON.parse(readFileSync(stateFile, "utf-8")).status).toBe("running");
 	});
 
 	it("deletes terminal states older than retentionDays", async () => {

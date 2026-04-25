@@ -58,8 +58,6 @@ describe("parsePiCrewConfig", () => {
 			agents: {
 				explore: { provider: "anthropic", modelId: "claude-haiku-4-5" },
 				"general-purpose": { provider: "anthropic", modelId: "claude-sonnet-4-5" },
-				plan: { provider: "anthropic", modelId: "claude-opus-4" },
-				"code-reviewer": { provider: "anthropic", modelId: "claude-opus-4" },
 				custom: { provider: "openai", modelId: "gpt-5" },
 			},
 		});
@@ -67,8 +65,6 @@ describe("parsePiCrewConfig", () => {
 		if (r.ok) {
 			expect((r.value.agents.explore as { thinking?: string } | undefined)?.thinking).toBe("low");
 			expect((r.value.agents["general-purpose"] as { thinking?: string } | undefined)?.thinking).toBe("medium");
-			expect((r.value.agents.plan as { thinking?: string } | undefined)?.thinking).toBe("high");
-			expect((r.value.agents["code-reviewer"] as { thinking?: string } | undefined)?.thinking).toBe("high");
 			expect((r.value.agents.custom as { thinking?: string } | undefined)?.thinking).toBe("medium");
 		}
 	});

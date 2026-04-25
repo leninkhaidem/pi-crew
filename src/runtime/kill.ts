@@ -48,6 +48,16 @@ export async function abortSubagentByStatePath(
 		return { ok: true, agentId: state.agentId, killed: false, state, alreadyTerminal: true };
 	}
 
+	const next: SubagentState = {
+		...state,
+		status: "aborted",
+		exitCode: -1,
+		errorMessage: reason,
+		finishedAt: Date.now(),
+		lastUpdate: Date.now(),
+	};
+	await writeState(next);
+
 	let killed = false;
 	if (state.pid) {
 		try {
@@ -67,14 +77,5 @@ export async function abortSubagentByStatePath(
 		}
 	}
 
-	const next: SubagentState = {
-		...state,
-		status: "aborted",
-		exitCode: -1,
-		errorMessage: reason,
-		finishedAt: Date.now(),
-		lastUpdate: Date.now(),
-	};
-	await writeState(next);
 	return { ok: true, agentId: state.agentId, killed, state: next, alreadyTerminal: false };
 }

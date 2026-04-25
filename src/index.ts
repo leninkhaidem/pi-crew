@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import { discoverAgents } from "./agents/discovery.js";
+import { registerAgentsCommand } from "./commands/agents.js";
 import { registerConfigCommand } from "./commands/config.js";
 import { registerInstallDefaultsCommand } from "./commands/install-defaults.js";
 import { registerTreeCommand } from "./commands/tree.js";
@@ -11,6 +12,7 @@ import { createCompletionDispatcher } from "./notify/batcher.js";
 import { createEmitter } from "./notify/events.js";
 import { registerNotificationRenderer } from "./notify/renderer.js";
 import { createApprovalGate } from "./runtime/approval.js";
+import { createBatchTracker } from "./runtime/batch.js";
 import { createActiveCounter, createPoolLimiter } from "./runtime/concurrency.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./runtime/lifecycle.js";
 import { createParentAbortTracker } from "./runtime/parent-abort.js";
@@ -19,10 +21,13 @@ import type { ExtensionRuntime } from "./runtime/types.js";
 import { readState, writeState } from "./state/store.js";
 import { sweep } from "./state/sweep.js";
 import { buildSystemPromptBlock } from "./system-prompt.js";
+import { registerAgentTool } from "./tools/agent.js";
 import { registerDispatchTool } from "./tools/dispatch.js";
 import { registerKillTool } from "./tools/kill.js";
+import { registerGetSubagentResultTool } from "./tools/result.js";
 import { registerRunTool } from "./tools/run.js";
 import { registerStatusTool } from "./tools/status.js";
+import { registerSteerTool } from "./tools/steer.js";
 import { registerWaitTool } from "./tools/wait.js";
 import type { PiCrewConfig } from "./types.js";
 import { type FooterController, mountFooter } from "./ui/footer.js";
@@ -36,16 +41,18 @@ const BUNDLED_AGENTS_DIR = path.join(PACKAGE_ROOT, "src", "agents", "defaults");
 export default function (pi: ExtensionAPI) {
 	const agentDir = getAgentDir();
 	const userAgentsDir = path.join(agentDir, "agents");
-	const handles = new Set<DispatchHandle>();
+	const handles = new Map<string, DispatchHandle>();
 	const startedAgents = new Set<string>();
 	const emitter = createEmitter(pi);
 	const dispatcher = createCompletionDispatcher(pi);
+	const batches = createBatchTracker();
 
 	let cachedConfig: PiCrewConfig | null = null;
+	let applyLoadedConfig: (config: PiCrewConfig) => void = () => undefined;
 	const getConfig = async (): Promise<PiCrewConfig> => {
-		if (cachedConfig) return cachedConfig;
 		const r = await loadConfig(getGlobalConfigPath(agentDir));
 		cachedConfig = r.config;
+		applyLoadedConfig(cachedConfig);
 		return cachedConfig;
 	};
 
@@ -70,20 +77,23 @@ export default function (pi: ExtensionAPI) {
 	const pool = createPoolLimiter(4);
 	const activeCounter = createActiveCounter(16);
 
-	void getConfig().then((c) => {
+	applyLoadedConfig = (c) => {
 		pool.setMax(c.global.maxConcurrent);
 		activeCounter.setMax(c.global.maxActive);
-	});
+	};
+	void getConfig();
 
 	const rt: ExtensionRuntime = {
 		userAgentsDir,
 		bundledAgentsDir: BUNDLED_AGENTS_DIR,
 		agentDir,
 		envFor(ctx: ExtensionContext): LifecycleEnv {
+			const sessionId = resolveSessionId(ctx);
 			return {
 				agentDir,
 				cwd: ctx.cwd,
-				sessionId: resolveSessionId(ctx),
+				sessionId,
+				batchId: batches.beginDispatch(sessionId),
 				parentAgentId: process.env.PI_SUBAGENT_PARENT_ID ?? null,
 				executionMode: cachedConfig?.global.executionMode ?? "session",
 				ctx,
@@ -133,16 +143,38 @@ export default function (pi: ExtensionAPI) {
 			};
 		},
 		trackHandle: (h) => {
-			handles.add(h);
-			void h.donePromise.finally(() => handles.delete(h));
+			handles.set(h.agentId, h);
+			void h.donePromise.finally(() => {
+				// Keep session-mode handles with resume/steer support until session shutdown.
+				// Subprocess handles cannot be resumed and can be dropped once terminal.
+				if (!h.resume && !h.steer) handles.delete(h.agentId);
+			});
 		},
 		trackParentAbort: (signal, handle) => parentAbortTracker.track(signal, handle),
 		abortActiveHandle: async (agentId, reason) => {
-			const handle = [...handles].find((h) => h.agentId === agentId);
+			const handle = handles.get(agentId);
 			if (!handle?.abort) return false;
 			await handle.abort(reason);
 			return true;
 		},
+		steerHandle: async (agentId, message) => {
+			const handle = handles.get(agentId);
+			if (!handle) return "not_found";
+			if (!handle.steer) return "unsupported";
+			await handle.steer(message);
+			return "ok";
+		},
+		resumeHandle: async (agentId, task, signal) => {
+			const handle = handles.get(agentId);
+			if (!handle?.resume) return null;
+			const resumePromise = handle.resume(task, signal);
+			const resumedHandle: DispatchHandle = { ...handle, donePromise: resumePromise };
+			handles.set(agentId, resumedHandle);
+			parentAbortTracker.track(signal, resumedHandle);
+			return resumePromise;
+		},
+		consumeCompletion: (agentId) => dispatcher.consume(agentId),
+		getCurrentBatchId: (ctx) => batches.currentBatchId(resolveSessionId(ctx)),
 		getConfig,
 		resolveSessionId,
 		ensureProjectAgentApproved: async (args) =>
@@ -160,13 +192,26 @@ export default function (pi: ExtensionAPI) {
 
 	registerNotificationRenderer(pi);
 
+	registerAgentTool(pi, rt);
 	registerDispatchTool(pi, rt);
 	registerRunTool(pi, rt);
 	registerStatusTool(pi, rt);
+	registerGetSubagentResultTool(pi, rt);
+	registerSteerTool(pi, rt);
 	registerWaitTool(pi, rt);
 	registerKillTool(pi, rt);
+
+	pi.on("message_start", (event, ctx) => {
+		if ((event.message as { role?: string }).role === "user") batches.noteUserMessage(resolveSessionId(ctx));
+	});
+
+	pi.on("turn_start", (event, ctx) => {
+		batches.noteTurn(resolveSessionId(ctx), event.turnIndex);
+	});
+
 	registerConfigCommand(pi, rt);
 	registerInstallDefaultsCommand(pi, rt);
+	registerAgentsCommand(pi, rt);
 	registerTreeCommand(pi, rt);
 
 	let widget: WidgetController | null = null;
@@ -192,21 +237,24 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		// Subprocess agents can keep running as detached work. In-process session agents cannot
 		// survive shutdown/reload cleanly, so abort them instead of leaving hidden work behind.
-		for (const h of handles) {
+		for (const h of handles.values()) {
 			try {
 				const current = await readState(h.state.paths.state);
-				if (!current || (current.status !== "running" && current.status !== "starting")) continue;
-				if (h.abort) {
-					await h.abort("parent session shutdown");
-					continue;
+				if (current && (current.status === "running" || current.status === "starting")) {
+					if (h.abort) {
+						await h.abort("parent session shutdown");
+					} else {
+						const detached = { ...current, status: "detached" as const, lastUpdate: Date.now() };
+						await writeState(detached);
+						emitter.detached({ agentId: current.agentId });
+					}
 				}
-				const detached = { ...current, status: "detached" as const, lastUpdate: Date.now() };
-				await writeState(detached);
-				emitter.detached({ agentId: current.agentId });
+				await h.dispose?.();
 			} catch {
 				// best effort
 			}
 		}
+		handles.clear();
 		parentAbortTracker.clear();
 		startedAgents.clear();
 		// Reset cached ephemeral id so next session_start gets a fresh one.
@@ -226,27 +274,45 @@ export default function (pi: ExtensionAPI) {
 		footer = null;
 	});
 
-	pi.on("before_agent_start", async (event, _ctx) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		const config = await getConfig();
 		const discovered = discoverAgents({
-			cwd: process.cwd(),
+			cwd: ctx.cwd,
 			scope: config.global.agentScope,
 			userAgentsDir,
 			bundledDir: BUNDLED_AGENTS_DIR,
 		});
+		const configuredSlots = new Set(Object.keys(config.agents));
+		configuredSlots.add("general-purpose");
+		const availableModels = safeAvailableModels(ctx);
 		const block = buildSystemPromptBlock({
 			agents: discovered.agents.map((a) => ({
 				name: a.name,
 				description: a.description,
 				source: a.source,
 			})),
-			configuredSlots: new Set(Object.keys(config.agents)),
+			configuredSlots,
 			stateDirRoot: path.join(agentDir, "subagents"),
+			models: availableModels.map((model) => ({
+				provider: model.provider,
+				id: model.id,
+				name: model.name,
+				reasoning: model.reasoning,
+			})),
+			currentModel: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : null,
 		});
 		return {
 			systemPrompt: `${event.systemPrompt}\n\n${block}`,
 		};
 	});
+}
+
+function safeAvailableModels(ctx: ExtensionContext) {
+	try {
+		return ctx.modelRegistry.getAvailable();
+	} catch {
+		return [];
+	}
 }
 
 // Programmatic API re-exports

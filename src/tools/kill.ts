@@ -14,7 +14,7 @@ export function registerKillTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 			reason: Type.Optional(Type.String()),
 		}),
 		async execute(_id, params, _signal, _onUpdate, _ctx) {
-			await rt.abortActiveHandle(params.agentId, params.reason ?? "killed by user");
+			const handledInMemory = await rt.abortActiveHandle(params.agentId, params.reason ?? "killed by user");
 			const result = await abortSubagentById(rt.agentDir, params.agentId, params.reason ?? "killed by user");
 			if (!result.ok && result.error === "not_found") {
 				return {
@@ -28,15 +28,16 @@ export function registerKillTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					details: { error: "state_unreadable" },
 				};
 			}
+			const killed = result.killed || handledInMemory;
 			pi.events.emit(EV.killed, {
 				agentId: params.agentId,
 				reason: params.reason,
-				killed: result.killed,
+				killed,
 			});
-			const verb = result.alreadyTerminal ? "Already stopped" : "Killed";
+			const verb = result.alreadyTerminal && !handledInMemory ? "Already stopped" : "Killed";
 			return {
 				content: [{ type: "text" as const, text: `${verb} #${params.agentId}: ${params.reason ?? ""}` }],
-				details: { agentId: params.agentId, killed: result.killed },
+				details: { agentId: params.agentId, killed },
 			};
 		},
 	});

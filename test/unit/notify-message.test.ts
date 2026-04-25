@@ -48,6 +48,14 @@ describe("formatCompletionMessage", () => {
 		expect(msg).toContain("$0.0021");
 	});
 
+	it("includes long success output without truncation", () => {
+		const longOutput = `start-${"x".repeat(2000)}-end`;
+		const msg = formatCompletionMessage(stateOf({ finalOutput: longOutput }));
+		expect(msg).toContain(longOutput);
+		expect(msg).not.toContain("<truncated");
+		expect(msg).toContain("/p/output.jsonl");
+	});
+
 	it("formats failure with stderr path", () => {
 		const msg = formatCompletionMessage(stateOf({ status: "failed", exitCode: 1, errorMessage: "rate limit" }));
 		expect(msg).toContain("✗ subagent explore #abc12345 failed");
@@ -62,14 +70,16 @@ describe("formatCompletionMessage", () => {
 });
 
 describe("formatBatchedMessage", () => {
-	it("formats multiple completions", () => {
-		const a = stateOf({ agentId: "aaaa1111", finalOutput: "alpha output" });
-		const b = stateOf({ agentId: "bbbb2222", agent: "plan", finalOutput: "beta output" });
+	it("formats multiple completions with complete final outputs", () => {
+		const alpha = `alpha-${"x".repeat(800)}-end`;
+		const beta = `beta-${"y".repeat(800)}-end`;
+		const a = stateOf({ agentId: "aaaa1111", finalOutput: alpha });
+		const b = stateOf({ agentId: "bbbb2222", agent: "general-purpose", finalOutput: beta });
 		const msg = formatBatchedMessage([a, b]);
 		expect(msg).toContain("Sub-agent batch update");
 		expect(msg).toContain("✓ explore #aaaa1111");
-		expect(msg).toContain("✓ plan #bbbb2222");
-		expect(msg).toContain("alpha output");
-		expect(msg).toContain("beta output");
+		expect(msg).toContain("✓ general-purpose #bbbb2222");
+		expect(msg).toContain(alpha);
+		expect(msg).toContain(beta);
 	});
 });

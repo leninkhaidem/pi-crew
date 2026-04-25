@@ -1,4 +1,5 @@
 // src/ui/overlay.ts
+import fs from "node:fs/promises";
 import path from "node:path";
 import type { ExtensionCommandContext, Theme } from "@mariozechner/pi-coding-agent";
 import { type Component, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
@@ -13,6 +14,7 @@ const KEY_ENTER = "\r";
 const KEY_ESC = "\x1b";
 const KEY_K = "k";
 const MAX_PANEL_ITEMS = 8;
+const TRANSCRIPT_PREVIEW_LINES = 12;
 
 interface PanelRenderArgs {
 	states: SubagentState[];
@@ -20,12 +22,16 @@ interface PanelRenderArgs {
 	expanded: Set<string>;
 	width: number;
 	theme: Theme;
+	scrollOffset?: number;
+	transcriptPreview?: Map<string, string>;
 }
 
 class TreeOverlay implements Component {
 	private states: SubagentState[] = [];
 	private selectedIdx = 0;
+	private scrollOffset = 0;
 	private expanded = new Set<string>();
+	private transcriptPreview = new Map<string, string>();
 
 	constructor(
 		private theme: Theme,
@@ -37,17 +43,20 @@ class TreeOverlay implements Component {
 	setStates(s: SubagentState[]) {
 		this.states = sortStates(s);
 		if (this.selectedIdx >= s.length) this.selectedIdx = Math.max(0, s.length - 1);
+		this.ensureSelectionVisible();
 		this.requestRender();
 	}
 
 	handleInput(data: string): void {
 		if (data === KEY_UP) {
 			this.selectedIdx = Math.max(0, this.selectedIdx - 1);
+			this.ensureSelectionVisible();
 			this.requestRender();
 			return;
 		}
 		if (data === KEY_DOWN) {
 			this.selectedIdx = Math.min(this.states.length - 1, this.selectedIdx + 1);
+			this.ensureSelectionVisible();
 			this.requestRender();
 			return;
 		}
@@ -72,6 +81,8 @@ class TreeOverlay implements Component {
 			expanded: this.expanded,
 			width,
 			theme: this.theme,
+			scrollOffset: this.scrollOffset,
+			transcriptPreview: this.transcriptPreview,
 		});
 	}
 
@@ -83,8 +94,32 @@ class TreeOverlay implements Component {
 		const cur = this.states[this.selectedIdx];
 		if (!cur) return;
 		if (this.expanded.has(cur.agentId)) this.expanded.delete(cur.agentId);
-		else this.expanded.add(cur.agentId);
+		else {
+			this.expanded.add(cur.agentId);
+			void this.loadTranscriptPreview(cur);
+		}
 		this.requestRender();
+	}
+
+	private async loadTranscriptPreview(state: SubagentState): Promise<void> {
+		if (this.transcriptPreview.has(state.agentId)) return;
+		this.transcriptPreview.set(state.agentId, "loading transcript…");
+		this.requestRender();
+		try {
+			const raw = await fs.readFile(state.paths.output, "utf-8");
+			const lines = raw.trimEnd().split("\n").filter(Boolean).slice(-TRANSCRIPT_PREVIEW_LINES);
+			this.transcriptPreview.set(state.agentId, lines.length > 0 ? lines.join("\n") : "(empty transcript)");
+		} catch (err) {
+			this.transcriptPreview.set(state.agentId, `(unable to read transcript: ${(err as Error).message})`);
+		}
+		this.requestRender();
+	}
+
+	private ensureSelectionVisible(): void {
+		if (this.selectedIdx < this.scrollOffset) this.scrollOffset = this.selectedIdx;
+		const bottom = this.scrollOffset + MAX_PANEL_ITEMS - 1;
+		if (this.selectedIdx > bottom) this.scrollOffset = this.selectedIdx - MAX_PANEL_ITEMS + 1;
+		this.scrollOffset = Math.max(0, this.scrollOffset);
 	}
 }
 
@@ -98,7 +133,7 @@ export function renderSubagentsPanel(args: PanelRenderArgs): string[] {
 	lines.push(row(" ↑↓ select · enter expand · k kill running · esc close", panelArgs.width, panelArgs.theme, "dim"));
 	lines.push(border("├", "┤", "", panelArgs.width, panelArgs.theme));
 	if (panelArgs.states.length === 0) {
-		lines.push(row(" No sub-agents for this session.", panelArgs.width, panelArgs.theme, "muted"));
+		lines.push(row(" No sub-agents for current batch.", panelArgs.width, panelArgs.theme, "muted"));
 	} else {
 		appendStateRows(lines, panelArgs);
 	}
@@ -106,10 +141,16 @@ export function renderSubagentsPanel(args: PanelRenderArgs): string[] {
 	return lines;
 }
 
+export function filterCurrentBatchStates(states: SubagentState[], batchId: string | null): SubagentState[] {
+	if (!batchId) return [];
+	return states.filter((state) => state.batchId === batchId);
+}
+
 export async function openTreeOverlay(
 	ctx: ExtensionCommandContext,
 	agentDir: string,
 	sessionId: string,
+	batchId: string | null,
 	onKill: (state: SubagentState) => void | Promise<void> = killSelected,
 ): Promise<void> {
 	let watcherHandle: { stop: () => void } | null = null;
@@ -126,7 +167,7 @@ export async function openTreeOverlay(
 			);
 			watcherHandle = mountStateWatcher({
 				sessionDir: path.join(getRoot({ agentDir }), sessionId),
-				onChange: (states) => overlay.setStates(states),
+				onChange: (states) => overlay.setStates(filterCurrentBatchStates(states, batchId)),
 			});
 			return overlay;
 		},
@@ -138,24 +179,43 @@ export async function openTreeOverlay(
 }
 
 function appendStateRows(lines: string[], args: PanelRenderArgs): void {
-	const visible = args.states.slice(0, MAX_PANEL_ITEMS);
+	const offset = args.scrollOffset ?? 0;
+	const visible = args.states.slice(offset, offset + MAX_PANEL_ITEMS);
 	for (const [idx, state] of visible.entries()) {
-		const selected = idx === args.selectedIdx;
+		const absoluteIdx = offset + idx;
+		const selected = absoluteIdx === args.selectedIdx;
 		lines.push(row(summaryLine(state, selected, args.theme), args.width, args.theme));
 		lines.push(row(`    ${state.task}`, args.width, args.theme, "muted"));
-		if (args.expanded.has(state.agentId)) appendExpandedRows(lines, state, args.width, args.theme);
+		if (args.expanded.has(state.agentId))
+			appendExpandedRows(lines, state, args.width, args.theme, args.transcriptPreview?.get(state.agentId));
 	}
-	const overflow = args.states.length - visible.length;
-	if (overflow > 0) lines.push(row(` … ${overflow} more not shown`, args.width, args.theme, "dim"));
+	const hiddenBefore = offset;
+	const hiddenAfter = Math.max(0, args.states.length - offset - visible.length);
+	if (hiddenBefore > 0 || hiddenAfter > 0) {
+		lines.push(row(` … ${hiddenBefore} above, ${hiddenAfter} below`, args.width, args.theme, "dim"));
+	}
 }
 
-function appendExpandedRows(lines: string[], state: SubagentState, width: number, theme: Theme): void {
+function appendExpandedRows(
+	lines: string[],
+	state: SubagentState,
+	width: number,
+	theme: Theme,
+	transcriptPreview?: string,
+): void {
 	lines.push(row(`    cwd: ${state.cwd}`, width, theme, "dim"));
 	lines.push(row(`    state: ${state.paths.state}`, width, theme, "dim"));
 	lines.push(row(`    output: ${state.paths.output}`, width, theme, "dim"));
 	if (state.lastToolCall)
 		lines.push(row(`    last tool: ${formatToolCall(state.lastToolCall.name, state.lastToolCall.args)}`, width, theme));
-	if (state.lastText) lines.push(row(`    last text: ${state.lastText}`, width, theme));
+	if (state.finalOutput) lines.push(row(`    result: ${state.finalOutput}`, width, theme));
+	else if (state.lastText) lines.push(row(`    last text: ${state.lastText}`, width, theme));
+	if (transcriptPreview) {
+		lines.push(row("    transcript preview:", width, theme, "dim"));
+		for (const line of transcriptPreview.split("\n").slice(0, TRANSCRIPT_PREVIEW_LINES)) {
+			lines.push(row(`      ${line}`, width, theme, "dim"));
+		}
+	}
 }
 
 function summaryLine(state: SubagentState, selected: boolean, theme: Theme): string {

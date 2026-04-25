@@ -1,7 +1,7 @@
 import { visibleWidth } from "@mariozechner/pi-tui";
 import { describe, expect, it } from "vitest";
 import type { SubagentState } from "../../src/types.js";
-import { renderSubagentsPanel } from "../../src/ui/overlay.js";
+import { filterCurrentBatchStates, renderSubagentsPanel } from "../../src/ui/overlay.js";
 
 const theme = {
 	bold: (s: string) => s,
@@ -46,6 +46,15 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 });
 
 describe("renderSubagentsPanel", () => {
+	it("filters states to the current batch", () => {
+		const current = stateOf({ agentId: "current1", batchId: "batch-new" });
+		const historical = stateOf({ agentId: "old1", batchId: "batch-old" });
+		const unbatched = stateOf({ agentId: "legacy", batchId: null });
+
+		expect(filterCurrentBatchStates([historical, current, unbatched], "batch-new")).toEqual([current]);
+		expect(filterCurrentBatchStates([historical, current], null)).toEqual([]);
+	});
+
 	it("renders a bordered overlay panel within the requested width", () => {
 		const lines = renderSubagentsPanel({
 			states: [stateOf({})],

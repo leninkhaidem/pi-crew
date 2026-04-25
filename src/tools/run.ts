@@ -4,10 +4,12 @@ import { Type } from "typebox";
 import { discoverAgents } from "../agents/discovery.js";
 import { dispatch as runDispatch } from "../runtime/lifecycle.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
+import { formatParentSummary } from "../summary.js";
 import type { SubagentState } from "../types.js";
 import { renderRunCall } from "../ui/render-call.js";
 import { renderDispatchResult } from "../ui/render-result.js";
-import { ChainItemSchema, TaskItemSchema } from "./shared.js";
+import { ChainItemSchema, SlotOverrideProperties, TaskItemSchema } from "./shared.js";
+import { type SlotOverrides, resolveAgentSlot } from "./slot.js";
 
 export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 	pi.registerTool({
@@ -16,6 +18,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 		description: [
 			"Run sub-agent(s) and BLOCK until done. Use only when next step depends on result.",
 			"Args: { agent, task } | { tasks: [...] } | { chain: [...] with {previous} placeholder }",
+			"Supports per-call provider/model/thinking overrides; model without provider infers provider when possible.",
 			"Returns final assistant text. Prefer subagent_dispatch unless sequential.",
 		].join(" "),
 		parameters: Type.Object({
@@ -25,6 +28,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 			chain: Type.Optional(Type.Array(ChainItemSchema)),
 			cwd: Type.Optional(Type.String()),
 			maxTurns: Type.Optional(Type.Integer({ minimum: 1 })),
+			...SlotOverrideProperties,
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const config = await rt.getConfig();
@@ -51,18 +55,18 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 				task: string,
 				cwd: string | undefined,
 				maxTurns: number | undefined,
+				overrides: SlotOverrides = {},
 			): Promise<SubagentState> => {
 				if (signal?.aborted) throw new Error("Interrupted before sub-agent launch.");
 				if (!rt.concurrency.active.tryAcquire()) {
 					throw new Error(`Active sub-agent limit reached (${rt.concurrency.active.current()}). Wait or kill some.`);
 				}
 				try {
-					const slot = config.agents[agentName];
-					if (!slot) {
-						throw new Error(`Configuration required for "${agentName}". Run /subagent-config.`);
-					}
 					const agent = discovered.agents.find((a) => a.name === agentName);
 					if (!agent) throw new Error(`Unknown agent "${agentName}".`);
+					const slotResolution = resolveAgentSlot(agent.name, config, ctx, pi, overrides);
+					if (!slotResolution.ok) throw new Error(slotResolution.message);
+					const slot = slotResolution.slot;
 					const approved = await rt.ensureProjectAgentApproved({
 						agentName: agent.name,
 						agentSource: agent.source,
@@ -80,6 +84,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					);
 					rt.trackHandle(handle);
 					rt.trackParentAbort(signal, handle);
+					rt.consumeCompletion(handle.agentId);
 					return await handle.donePromise;
 				} finally {
 					rt.concurrency.active.release();
@@ -88,13 +93,35 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 
 			try {
 				if (single) {
-					const final = await oneShot(single.agent, single.task, params.cwd, params.maxTurns);
+					const final = await oneShot(single.agent, single.task, params.cwd, params.maxTurns, {
+						provider: params.provider,
+						model: params.model,
+						thinking: params.thinking,
+					});
 					return toolResult(final);
 				}
 				if (tasks) {
-					const slice = tasks.slice(0, config.global.maxParallelTasksPerCall);
+					if (tasks.length > config.global.maxParallelTasksPerCall) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Too many parallel tasks (${tasks.length}); max is ${config.global.maxParallelTasksPerCall}. Split the call into batches.`,
+								},
+							],
+							details: { error: "too_many_tasks", maxParallelTasksPerCall: config.global.maxParallelTasksPerCall },
+						};
+					}
 					const settled = await Promise.allSettled(
-						slice.map((t) => rt.concurrency.pool.run(() => oneShot(t.agent, t.task, t.cwd, t.maxTurns))),
+						tasks.map((t) =>
+							rt.concurrency.pool.run(() =>
+								oneShot(t.agent, t.task, t.cwd, t.maxTurns, {
+									provider: t.provider,
+									model: t.model,
+									thinking: t.thinking,
+								}),
+							),
+						),
 					);
 					const states: SubagentState[] = [];
 					const errors: string[] = [];
@@ -109,7 +136,11 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					let previous = "";
 					for (const step of chain) {
 						const taskText = step.task.replace(/\{previous\}/g, previous);
-						const r = await oneShot(step.agent, taskText, step.cwd, step.maxTurns);
+						const r = await oneShot(step.agent, taskText, step.cwd, step.maxTurns, {
+							provider: step.provider,
+							model: step.model,
+							thinking: step.thinking,
+						});
 						results.push(r);
 						if (r.status !== "done") return toolResultBatch(results, true);
 						previous = r.finalOutput ?? "";
@@ -158,12 +189,6 @@ function toolResultBatch(states: SubagentState[], partial = false, errors: strin
 	};
 }
 
-export function formatRunStateResult(state: SubagentState, options: { single?: boolean } = {}): string {
-	const output = state.finalOutput?.trim() || "(no output)";
-	if (state.status === "done") {
-		return options.single ? output : `[${state.agent} #${state.agentId}] done\n${output}`;
-	}
-	const reason = state.errorMessage ?? (state.exitCode !== null ? `exit ${state.exitCode}` : "no error");
-	const header = `[${state.agent} #${state.agentId}] ${state.status} — ${reason}`;
-	return state.finalOutput?.trim() ? `${header}\n${state.finalOutput.trim()}` : header;
+export function formatRunStateResult(state: SubagentState, _options: { single?: boolean } = {}): string {
+	return formatParentSummary(state, { maxChars: 800, maxLines: 12 });
 }

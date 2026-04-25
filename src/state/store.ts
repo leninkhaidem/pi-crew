@@ -8,7 +8,7 @@ const READ_RETRY_DELAY_MS = 50;
 export async function writeState(state: SubagentState): Promise<void> {
 	const dir = path.dirname(state.paths.state);
 	await fs.mkdir(dir, { recursive: true });
-	const tmp = `${state.paths.state}.tmp`;
+	const tmp = `${state.paths.state}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
 	await fs.writeFile(tmp, JSON.stringify(state, null, 2), { encoding: "utf-8", mode: 0o600 });
 	await fs.rename(tmp, state.paths.state);
 }

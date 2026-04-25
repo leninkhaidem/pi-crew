@@ -6,32 +6,46 @@ const BATCH_WINDOW_MS = 2000;
 
 export interface CompletionDispatcher {
 	push(state: SubagentState): void;
+	consume(agentId: string): void;
 	flush(): void;
 }
 
 export function createCompletionDispatcher(pi: ExtensionAPI): CompletionDispatcher {
 	let queue: SubagentState[] = [];
 	let timer: NodeJS.Timeout | null = null;
+	const consumed = new Set<string>();
 
 	const flushNow = () => {
 		if (queue.length === 0) return;
-		const batch = queue;
+		const batch = queue.filter((state) => !consumed.has(state.agentId));
 		queue = [];
 		if (timer) {
 			clearTimeout(timer);
 			timer = null;
 		}
+		if (batch.length === 0) return;
 		const content =
 			batch.length === 1 ? formatCompletionMessage(batch[0] as SubagentState) : formatBatchedMessage(batch);
-		const display = batch.some((state) => state.status !== "done");
-		pi.sendMessage({ customType: "pi-crew", display, content, details: { states: batch } }, { triggerTurn: false });
+		pi.sendMessage(
+			{ customType: "pi-crew", display: true, content, details: { states: batch } },
+			{ deliverAs: "followUp", triggerTurn: true },
+		);
 	};
 
 	return {
 		push(state) {
+			if (consumed.has(state.agentId)) return;
 			queue.push(state);
 			if (timer) return;
 			timer = setTimeout(flushNow, BATCH_WINDOW_MS);
+		},
+		consume(agentId) {
+			consumed.add(agentId);
+			queue = queue.filter((state) => state.agentId !== agentId);
+			if (queue.length === 0 && timer) {
+				clearTimeout(timer);
+				timer = null;
+			}
 		},
 		flush: flushNow,
 	};

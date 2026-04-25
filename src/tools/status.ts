@@ -55,7 +55,7 @@ export function registerStatusTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 			const text = formatStatusList(states);
 			return {
 				content: [{ type: "text" as const, text }],
-				details: { count: states.length, states },
+				details: { count: states.length, states: states.map(compactStateDetails) },
 			};
 		},
 	});
@@ -71,6 +71,19 @@ async function findById(root: string, id: string): Promise<SubagentState | null>
 		}
 	}
 	return null;
+}
+
+function compactStateDetails(state: SubagentState) {
+	return {
+		agentId: state.agentId,
+		agent: state.agent,
+		task: state.task,
+		status: state.status,
+		lastText: state.lastText,
+		lastToolCall: state.lastToolCall,
+		usage: state.usage,
+		paths: state.paths,
+	};
 }
 
 function formatStatusList(states: SubagentState[]): string {

@@ -4,7 +4,7 @@ import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { ExtensionRuntime } from "../runtime/types.js";
 
-const BUNDLED_NAMES = ["general-purpose", "explore", "plan", "code-reviewer"];
+const BUNDLED_NAMES = ["general-purpose", "explore"];
 
 export function registerInstallDefaultsCommand(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 	pi.registerCommand("subagent-install-defaults", {

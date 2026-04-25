@@ -6,6 +6,8 @@ import { dispatch as runDispatch } from "../runtime/lifecycle.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import { renderDispatchCall } from "../ui/render-call.js";
 import { renderDispatchResult } from "../ui/render-result.js";
+import { SlotOverrideProperties } from "./shared.js";
+import { resolveAgentSlot } from "./slot.js";
 
 export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 	pi.registerTool({
@@ -13,32 +15,22 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 		label: "Subagent dispatch",
 		description: [
 			"Dispatch a sub-agent in the background. Returns agentId immediately.",
-			"Args: { agent, task, cwd?, maxTurns? }",
+			"Args: { agent, task, cwd?, maxTurns?, provider?, model?, thinking? }",
+			"Supports per-call provider/model/thinking overrides; model without provider infers provider when possible.",
 			"Available agents: see 'pi-crew' section in system prompt.",
 			"Completion is auto-pushed into this conversation when the sub-agent finishes.",
 		].join(" "),
 		parameters: Type.Object({
 			agent: Type.String({
-				description: "Agent name (general-purpose, explore, plan, code-reviewer, ...)",
+				description: "Agent name (general-purpose, explore, or custom)",
 			}),
 			task: Type.String({ description: "Task description" }),
 			cwd: Type.Optional(Type.String()),
 			maxTurns: Type.Optional(Type.Integer({ minimum: 1 })),
+			...SlotOverrideProperties,
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const config = await rt.getConfig();
-			const slot = config.agents[params.agent];
-			if (!slot) {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `Configuration required for agent "${params.agent}". Run /subagent-config to set models.`,
-						},
-					],
-					details: { error: "unconfigured" },
-				};
-			}
 			const discovered = discoverAgents({
 				cwd: ctx.cwd,
 				scope: config.global.agentScope,
@@ -53,6 +45,18 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 					details: { error: "unknown_agent" },
 				};
 			}
+			const slotResolution = resolveAgentSlot(agent.name, config, ctx, pi, {
+				provider: params.provider,
+				model: params.model,
+				thinking: params.thinking,
+			});
+			if (!slotResolution.ok) {
+				return {
+					content: [{ type: "text" as const, text: slotResolution.message }],
+					details: { error: slotResolution.error },
+				};
+			}
+			const slot = slotResolution.slot;
 			const approved = await rt.ensureProjectAgentApproved({
 				agentName: agent.name,
 				agentSource: agent.source,

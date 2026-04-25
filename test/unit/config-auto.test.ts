@@ -21,30 +21,16 @@ describe("suggestDefaults", () => {
 		expect(r.agents.explore?.modelId).toBe("gpt-5-mini");
 	});
 
-	it("picks most-capable reasoning model for plan/code-reviewer", () => {
-		const models = [
-			M("anthropic", "claude-haiku-4-5", false, 0.25),
-			M("anthropic", "claude-sonnet-4-5", true, 3),
-			M("anthropic", "claude-opus-4", true, 15),
-		];
+	it("does not configure general-purpose because it inherits parent model/thinking", () => {
+		const models = [M("anthropic", "claude-sonnet-4-5", true, 3)];
 		const r = suggestDefaults(models);
-		expect(r.agents.plan?.modelId).toBe("claude-opus-4");
-		expect(r.agents["code-reviewer"]?.modelId).toBe("claude-opus-4");
+		expect(r.agents["general-purpose"]).toBeUndefined();
 	});
 
-	it("general-purpose prefers sonnet over opus when both available", () => {
-		const models = [M("anthropic", "claude-sonnet-4-5", true, 3), M("anthropic", "claude-opus-4", true, 15)];
-		const r = suggestDefaults(models);
-		expect(r.agents["general-purpose"]?.modelId).toBe("claude-sonnet-4-5");
-	});
-
-	it("sets per-slot thinking defaults", () => {
+	it("sets explore thinking default", () => {
 		const models = [M("anthropic", "claude-sonnet-4-5", true, 3)];
 		const r = suggestDefaults(models);
 		expect((r.agents.explore as { thinking?: string } | undefined)?.thinking).toBe("low");
-		expect((r.agents["general-purpose"] as { thinking?: string } | undefined)?.thinking).toBe("medium");
-		expect((r.agents.plan as { thinking?: string } | undefined)?.thinking).toBe("high");
-		expect((r.agents["code-reviewer"] as { thinking?: string } | undefined)?.thinking).toBe("high");
 	});
 
 	it("returns empty agents when no models authenticated", () => {

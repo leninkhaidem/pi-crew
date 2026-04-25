@@ -1,6 +1,6 @@
 // src/runtime/types.ts
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
-import type { PiCrewConfig } from "../types.js";
+import type { PiCrewConfig, SubagentState } from "../types.js";
 import type { ActiveCounter, PoolLimiter } from "./concurrency.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./lifecycle.js";
 
@@ -13,6 +13,10 @@ export interface ExtensionRuntime {
 	trackHandle(handle: DispatchHandle): void;
 	trackParentAbort(signal: AbortSignal | undefined, handle: DispatchHandle): void;
 	abortActiveHandle(agentId: string, reason?: string): Promise<boolean>;
+	steerHandle(agentId: string, message: string): Promise<"ok" | "not_found" | "unsupported">;
+	resumeHandle(agentId: string, task: string, signal?: AbortSignal): Promise<SubagentState | null>;
+	consumeCompletion(agentId: string): void;
+	getCurrentBatchId(ctx: ExtensionContext): string | null;
 	getConfig(): Promise<PiCrewConfig>;
 	concurrency: {
 		pool: PoolLimiter;

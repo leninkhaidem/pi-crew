@@ -40,8 +40,12 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 });
 
 describe("formatRunStateResult", () => {
-	it("preserves concise single-agent success output", () => {
-		expect(formatRunStateResult(stateOf({}), { single: true })).toBe("done output");
+	it("returns a compact summary with trace pointers for single-agent success output", () => {
+		const result = formatRunStateResult(stateOf({}), { single: true });
+		expect(result).toContain("[general-purpose #abc12345] done");
+		expect(result).toContain("Summary: done output");
+		expect(result).toContain("Trace: /p/output.jsonl");
+		expect(result).toContain("State: /p/state.json");
 	});
 
 	it("shows aborted single-agent runs with status and reason instead of no output", () => {
@@ -50,7 +54,8 @@ describe("formatRunStateResult", () => {
 			{ single: true },
 		);
 
-		expect(result).toBe("[general-purpose #abc12345] aborted — parent ask interrupted");
+		expect(result).toContain("[general-purpose #abc12345] aborted — parent ask interrupted");
+		expect(result).toContain("Trace: /p/output.jsonl");
 	});
 
 	it("shows failed batch runs with status and reason", () => {
@@ -58,6 +63,7 @@ describe("formatRunStateResult", () => {
 			stateOf({ status: "failed", exitCode: 1, errorMessage: "boom", finalOutput: null }),
 		);
 
-		expect(result).toBe("[general-purpose #abc12345] failed — boom");
+		expect(result).toContain("[general-purpose #abc12345] failed — boom");
+		expect(result).toContain("State: /p/state.json");
 	});
 });
