@@ -58,6 +58,16 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 				}
 				const agent = discovered.agents.find((a) => a.name === agentName);
 				if (!agent) throw new Error(`Unknown agent "${agentName}".`);
+				const approved = await rt.ensureProjectAgentApproved({
+					agentName: agent.name,
+					agentSource: agent.source,
+					ctx,
+				});
+				if (!approved) {
+					throw new Error(
+						`Project agent "${agent.name}" not approved. Set confirmProjectAgents: false in /subagent-config to disable prompts.`,
+					);
+				}
 				const handle = await runDispatch(
 					{ agent, model: slot, options: { agent: agentName, task, cwd, maxTurns } },
 					rt.envFor(ctx),

@@ -13,4 +13,14 @@ export interface ExtensionRuntime {
 	getConfig(): Promise<PiCrewConfig>;
 	/** Resolve the current session id consistently across tools/commands/UI. */
 	resolveSessionId(ctx: ExtensionContext): string;
+	/**
+	 * Confirm a project-scoped agent before dispatch. Returns true if approved
+	 * (already confirmed this session, or just confirmed via UI prompt, or
+	 * `confirmProjectAgents: false`). Returns false if user declined.
+	 */
+	ensureProjectAgentApproved(args: {
+		agentName: string;
+		agentSource: "user" | "project" | "bundled";
+		ctx: ExtensionContext;
+	}): Promise<boolean>;
 }

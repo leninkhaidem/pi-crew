@@ -9,6 +9,7 @@ import { registerTreeCommand } from "./commands/tree.js";
 import { getGlobalConfigPath, loadConfig } from "./config/store.js";
 import { createCompletionDispatcher } from "./notify/batcher.js";
 import { createEmitter } from "./notify/events.js";
+import { createApprovalGate } from "./runtime/approval.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./runtime/lifecycle.js";
 import { killTmuxWindow, launchTmuxView } from "./runtime/tmux.js";
 import type { ExtensionRuntime } from "./runtime/types.js";
@@ -54,6 +55,10 @@ export default function (pi: ExtensionAPI) {
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		return sessionFile ? path.basename(sessionFile, ".jsonl") : ephemeralSessionId();
 	};
+
+	const approvalGate = createApprovalGate({
+		isConfirmEnabled: async () => (await getConfig()).global.confirmProjectAgents,
+	});
 
 	const rt: ExtensionRuntime = {
 		userAgentsDir,
@@ -115,6 +120,13 @@ export default function (pi: ExtensionAPI) {
 		},
 		getConfig,
 		resolveSessionId,
+		ensureProjectAgentApproved: async (args) =>
+			approvalGate({
+				agentName: args.agentName,
+				agentSource: args.agentSource,
+				hasUI: args.ctx.hasUI,
+				confirm: (title, message) => args.ctx.ui.confirm(title, message),
+			}),
 	};
 
 	registerDispatchTool(pi, rt);
@@ -162,6 +174,8 @@ export default function (pi: ExtensionAPI) {
 		}
 		// Reset cached ephemeral id so next session_start gets a fresh one.
 		cachedEphemeralId = null;
+		// Reset project-agent approvals so each new session re-prompts.
+		approvalGate.reset();
 		try {
 			dispatcher.flush();
 		} catch {

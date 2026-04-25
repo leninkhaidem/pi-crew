@@ -53,6 +53,22 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 					details: { error: "unknown_agent" },
 				};
 			}
+			const approved = await rt.ensureProjectAgentApproved({
+				agentName: agent.name,
+				agentSource: agent.source,
+				ctx,
+			});
+			if (!approved) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Project agent "${agent.name}" not approved. Set confirmProjectAgents: false in /subagent-config to disable prompts.`,
+						},
+					],
+					details: { error: "project_agent_declined" },
+				};
+			}
 			const handle = await runDispatch(
 				{
 					agent,
