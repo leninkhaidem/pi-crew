@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { generateAgentId } from "../state/id.js";
 import { computePaths } from "../state/paths.js";
-import { writeState } from "../state/store.js";
+import { readState, writeState } from "../state/store.js";
 import type { AgentConfig, DispatchOptions, SubagentState, SubagentUsage } from "../types.js";
 import { type SpawnedSubagent, closeSpawnFds, spawnSubagent } from "./spawn.js";
 import { tailJsonl } from "./tail.js";
@@ -125,16 +125,20 @@ export async function dispatch(
 
 	let pendingUpdate: SubagentState | null = null;
 	let writeTimer: NodeJS.Timeout | null = null;
+	let closing = false;
 	const scheduleWrite = (next: SubagentState) => {
 		pendingUpdate = next;
 		state = next;
 		if (writeTimer) return;
 		writeTimer = setTimeout(async () => {
 			writeTimer = null;
-			if (!pendingUpdate) return;
+			if (!pendingUpdate || closing) return;
 			const snapshot = pendingUpdate;
 			pendingUpdate = null;
 			try {
+				// Guard: skip write if the on-disk state has been externally finalized (e.g., subagent_kill).
+				const diskState = await readState(paths.state);
+				if (diskState && (diskState.status === "aborted" || diskState.status === "orphaned")) return;
 				await writeState(snapshot);
 				hooks.onStateUpdate?.(snapshot);
 			} catch {
@@ -196,6 +200,9 @@ export async function dispatch(
 
 	const donePromise = new Promise<SubagentState>((resolve) => {
 		spawned.proc.once("close", async (code) => {
+			// Prevent any in-flight debounced write from overwriting externally-set terminal state.
+			closing = true;
+			pendingUpdate = null;
 			if (writeTimer) {
 				clearTimeout(writeTimer);
 				writeTimer = null;
@@ -205,16 +212,27 @@ export async function dispatch(
 			await tail.stop();
 			closeSpawnFds(spawned);
 
+			// Re-read state to detect external finalization (e.g., subagent_kill set status to "aborted").
+			const currentDisk = await readState(paths.state);
 			const stderrText = await tryReadTail(paths.stderr);
-			const finalState: SubagentState = {
-				...state,
-				exitCode: code,
-				finishedAt: Date.now(),
-				lastUpdate: Date.now(),
-				status: code === 0 ? "done" : "failed",
-				errorMessage: code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`,
-				finalOutput: state.finalOutput ?? null,
-			};
+
+			const finalState: SubagentState =
+				currentDisk && (currentDisk.status === "aborted" || currentDisk.status === "orphaned")
+					? {
+							...currentDisk,
+							exitCode: code,
+							finishedAt: currentDisk.finishedAt ?? Date.now(),
+							lastUpdate: Date.now(),
+						}
+					: {
+							...state,
+							exitCode: code,
+							finishedAt: Date.now(),
+							lastUpdate: Date.now(),
+							status: code === 0 ? "done" : "failed",
+							errorMessage: code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`,
+							finalOutput: state.finalOutput ?? null,
+						};
 			await writeState(finalState);
 			hooks.onEnd?.(finalState);
 			resolve(finalState);

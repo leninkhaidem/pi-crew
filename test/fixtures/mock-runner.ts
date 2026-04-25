@@ -31,19 +31,16 @@ export function prepareMockPi(script: MockScript): MockSpawnResult {
 
 	const wrapperPath = path.join(dir, "pi");
 	const wrapperBody = `#!/usr/bin/env bash
-exec "${process.execPath}" --import "${TSX_LOADER_PATH}" "${MOCK_PI_PATH}" "$@"
+exec env MOCK_PI_SCRIPT="${scriptPath}" "${process.execPath}" --import "${TSX_LOADER_PATH}" "${MOCK_PI_PATH}" "$@"
 `;
 	writeFileSync(wrapperPath, wrapperBody);
 	chmodSync(wrapperPath, 0o755);
-	process.env.MOCK_PI_SCRIPT = scriptPath;
 
 	return {
 		binary: wrapperPath,
 		scriptPath,
 		dir,
 		cleanup: () => {
-			// biome-ignore lint/performance/noDelete: env var must actually be removed
-			delete process.env.MOCK_PI_SCRIPT;
 			try {
 				rmSync(dir, { recursive: true, force: true });
 			} catch {
