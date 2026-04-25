@@ -15,7 +15,7 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 		label: "Subagent dispatch",
 		description: [
 			"Dispatch a sub-agent in the background. Returns agentId immediately.",
-			"Args: { agent, task, cwd?, maxTurns?, provider?, model?, thinking? }",
+			"Args: { agent, task, cwd?, provider?, model?, thinking? }",
 			"Supports per-call provider/model/thinking overrides; model without provider infers provider when possible.",
 			"Available agents: see 'pi-crew' section in system prompt.",
 			"Completion is auto-pushed into this conversation when the sub-agent finishes.",
@@ -26,7 +26,6 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 			}),
 			task: Type.String({ description: "Task description" }),
 			cwd: Type.Optional(Type.String()),
-			maxTurns: Type.Optional(Type.Integer({ minimum: 1 })),
 			...SlotOverrideProperties,
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
@@ -94,7 +93,6 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 							agent: params.agent,
 							task: params.task,
 							cwd: params.cwd,
-							maxTurns: params.maxTurns,
 						},
 					},
 					rt.envFor(ctx),

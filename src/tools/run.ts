@@ -27,7 +27,6 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 			tasks: Type.Optional(Type.Array(TaskItemSchema)),
 			chain: Type.Optional(Type.Array(ChainItemSchema)),
 			cwd: Type.Optional(Type.String()),
-			maxTurns: Type.Optional(Type.Integer({ minimum: 1 })),
 			...SlotOverrideProperties,
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
@@ -54,7 +53,6 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 				agentName: string,
 				task: string,
 				cwd: string | undefined,
-				maxTurns: number | undefined,
 				overrides: SlotOverrides = {},
 			): Promise<SubagentState> => {
 				if (signal?.aborted) throw new Error("Interrupted before sub-agent launch.");
@@ -78,7 +76,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 						);
 					}
 					const handle = await runDispatch(
-						{ agent, model: slot, options: { agent: agentName, task, cwd, maxTurns } },
+						{ agent, model: slot, options: { agent: agentName, task, cwd } },
 						rt.envFor(ctx),
 						rt.lifecycleHooks(),
 					);
@@ -93,7 +91,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 
 			try {
 				if (single) {
-					const final = await oneShot(single.agent, single.task, params.cwd, params.maxTurns, {
+					const final = await oneShot(single.agent, single.task, params.cwd, {
 						provider: params.provider,
 						model: params.model,
 						thinking: params.thinking,
@@ -115,7 +113,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					const settled = await Promise.allSettled(
 						tasks.map((t) =>
 							rt.concurrency.pool.run(() =>
-								oneShot(t.agent, t.task, t.cwd, t.maxTurns, {
+								oneShot(t.agent, t.task, t.cwd, {
 									provider: t.provider,
 									model: t.model,
 									thinking: t.thinking,
@@ -136,7 +134,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					let previous = "";
 					for (const step of chain) {
 						const taskText = step.task.replace(/\{previous\}/g, previous);
-						const r = await oneShot(step.agent, taskText, step.cwd, step.maxTurns, {
+						const r = await oneShot(step.agent, taskText, step.cwd, {
 							provider: step.provider,
 							model: step.model,
 							thinking: step.thinking,
