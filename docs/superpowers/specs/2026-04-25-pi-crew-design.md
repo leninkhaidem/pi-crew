@@ -98,6 +98,7 @@ Explicitly deferred:
 │  Command:                                                          │
 │    pi -p --mode json --no-session                                  │
 │       --model <provider>/<modelId>                                 │
+│       --thinking <level>                                           │
 │       --tools <list>                                               │
 │       --append-system-prompt <prompt.md>                           │
 │       "Task: <task text>"                                          │
@@ -276,6 +277,7 @@ main agent calls subagent_dispatch({ agent: "explore", task: "find auth code" })
   │       cmd: pi (resolved via getPiInvocation)
   │       args: ["-p", "--mode", "json", "--no-session",
   │              "--model", `${provider}/${modelId}`,
+  │              "--thinking", thinkingLevel,
   │              ...(tools ? ["--tools", tools.join(",")] : []),
   │              "--append-system-prompt", prompt.md path,
   │              `Task: ${task}`]
@@ -585,8 +587,20 @@ interface PiCrewConfig {
 interface AgentSlot {
   provider: string;              // e.g., "anthropic"
   modelId: string;               // e.g., "claude-haiku-4-5"
-  // future-proof; v1 leaves additional slots empty
+  thinking?: ThinkingLevel;      // optional; per-slot defaults applied when omitted
 }
+
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+// Per-slot defaults when `thinking` is omitted (applied on parse and dispatch):
+//   explore           → "low"
+//   general-purpose   → "medium"
+//   plan              → "high"
+//   code-reviewer     → "high"
+//   <user-defined>    → "medium"
+//
+// Pi only applies thinking to models with `reasoning: true`; non-reasoning
+// models silently ignore the level.
 
 interface GlobalSettings {
   maxConcurrent: number;         // default 4
@@ -672,6 +686,8 @@ Opens overlay (`ctx.ui.custom(component, { overlay: true, overlayOptions: { widt
    - plan: most capable reasoning model
    - code-reviewer: most capable reasoning model
    - general-purpose: balanced (sonnet over opus when both present)
+4. Per-slot thinking defaults (see §9.1):
+   - explore=low, general-purpose=medium, plan=high, code-reviewer=high
 ```
 
 **TUI opens only via `/subagent config`.** Tool calls (`subagent_dispatch`, `subagent_run`) never trigger interactive UI on the user's behalf — they return an error that tells the LLM (and indirectly the user) to run the slash command:
@@ -1087,6 +1103,7 @@ interface SubagentState {
   branch: string | null;                 // git branch at spawn (null if not a repo)
   model: string;                         // resolved modelId
   provider: string;                      // resolved provider
+  thinking: ThinkingLevel;               // resolved reasoning budget (see §9.1)
   tools: string[] | null;                // tool filter (null = inherit pi default)
   maxTurns: number | null;               // optional ceiling
 
@@ -1522,7 +1539,7 @@ gh release create v0.1.0 --notes-file CHANGELOG.md --draft
 
 - **Sub-agent:** an isolated pi process spawned via `pi -p --mode json --no-session`, given a focused system prompt and tool allowlist, executing a single task.
 - **Agent (definition):** a `.md` file with frontmatter (`name`, `description`, `tools`) and a system prompt body. Located at `~/.pi/agent/agents/`, `<cwd>/.pi/agents/`, or bundled defaults.
-- **Slot:** the user's configured choice of `(provider, modelId)` for a particular agent name. Stored in `pi-crew.json`.
+- **Slot:** the user's configured choice of `(provider, modelId, thinking?)` for a particular agent name. Stored in `pi-crew.json`. Per-slot thinking defaults applied on parse when omitted.
 - **agentId:** an 8-character hex identifier for one specific sub-agent invocation. Globally unique per `~/.pi/agent/subagents/`.
 - **sessionId:** the main pi session's UUID. Sub-agents are organized under their parent session's directory.
 - **Push notification:** a `CustomMessageEntry` injected into the main session via `pi.sendMessage` so the main agent sees the result in its next-turn context.

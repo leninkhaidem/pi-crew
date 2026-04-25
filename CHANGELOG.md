@@ -10,7 +10,8 @@ Initial release.
 - Synchronous wrapper (`subagent_run`) supporting single, parallel (max 8), and chain modes.
 - Status/wait/kill tools for tracking and abort.
 - Four bundled default agents: `general-purpose`, `explore`, `plan`, `code-reviewer`.
-- TUI configuration (`/subagent-config`) for picking provider+model per agent slot.
+- TUI configuration (`/subagent-config`) for picking provider, model, and thinking budget per agent slot.
+- Per-slot reasoning budget (`thinking`) propagated to sub-agents via `pi --thinking <level>`. Defaults: explore=low, general-purpose=medium, plan/code-reviewer=high.
 - `/subagent-install-defaults` to copy bundled agents to user dir.
 - `/subagents` interactive tree overlay.
 - Auto-show widget above editor; footer status; tree overlay.

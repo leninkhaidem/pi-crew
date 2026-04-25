@@ -8,6 +8,7 @@ Sub-agent extension for the [pi coding assistant](https://github.com/badlogic/pi
 - **Push notification on completion.** Each sub-agent's final summary is auto-injected into the main session — no polling.
 - **Live status.** Widget above the editor shows every active sub-agent's status, branch, cwd, and recent activity.
 - **Multi-provider.** Each agent slot's model is configured via TUI from your authenticated providers. No hardcoded model IDs.
+- **Per-slot thinking budget.** Reasoning effort (`off|minimal|low|medium|high|xhigh`) configured per slot. Defaults: explore=low, general-purpose=medium, plan/code-reviewer=high.
 - **Four bundled defaults.** `general-purpose`, `explore`, `plan`, `code-reviewer`. Override by creating same-named `.md` in `~/.pi/agent/agents/`.
 - **Tmux integration.** Optional live view of sub-agents in tmux windows or a separate session.
 
@@ -17,7 +18,7 @@ Sub-agent extension for the [pi coding assistant](https://github.com/badlogic/pi
 
 After install:
 
-- `/subagent-config` — configure model per agent slot
+- `/subagent-config` — configure model + thinking budget per agent slot
 - `/subagent-install-defaults` — (optional) copy bundled `.md` files to `~/.pi/agent/agents/`
 
 ## Tools the main agent gets
@@ -34,7 +35,7 @@ After install:
 
 | Command | Purpose |
 |---|---|
-| `/subagent-config` | TUI to set provider+model per agent slot. |
+| `/subagent-config` | TUI to set provider, model, and thinking level per agent slot. |
 | `/subagent-install-defaults` | Copy bundled `.md` agents to `~/.pi/agent/agents/`. |
 | `/subagents` | Open interactive tree overlay of all sub-agents. |
 
