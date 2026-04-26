@@ -136,7 +136,12 @@ export function registerAgentTool(pi: ExtensionAPI, rt: ExtensionRuntime): void 
 					details: {
 						agentId: handle.agentId,
 						alias: handle.state.alias,
+						agent: handle.state.agent,
 						status: handle.state.status,
+						provider: handle.state.provider,
+						model: handle.state.model,
+						thinking: handle.state.thinking,
+						turns: handle.state.turns,
 						paths: handle.state.paths,
 					},
 				};
@@ -166,7 +171,14 @@ function stateResult(state: SubagentState) {
 		details: {
 			agentId: state.agentId,
 			alias: state.alias,
+			agent: state.agent,
 			status: state.status,
+			provider: state.provider,
+			model: state.model,
+			thinking: state.thinking,
+			turns: state.turns,
+			finalOutput: state.finalOutput,
+			errorMessage: state.errorMessage,
 			paths: state.paths,
 			usage: state.usage,
 		},

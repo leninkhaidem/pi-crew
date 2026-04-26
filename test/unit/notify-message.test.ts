@@ -47,6 +47,7 @@ describe("formatCompletionMessage", () => {
 		expect(msg).toContain("<alias>auth-search</alias>");
 		expect(msg).toContain("Found 12 files in api/auth.");
 		expect(msg).toContain("/p/output.jsonl");
+		expect(msg).toContain("anthropic/claude-haiku-4-5");
 		expect(msg).toContain("$0.0021");
 	});
 

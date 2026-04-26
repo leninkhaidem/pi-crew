@@ -4,7 +4,7 @@ import type { SubagentState } from "../types.js";
 export function formatUsage(state: SubagentState): string {
 	const u = state.usage;
 	const parts: string[] = [];
-	parts.push(`${state.model}`);
+	parts.push(`${state.provider}/${state.model}`);
 	parts.push(`${state.turns} turn${state.turns === 1 ? "" : "s"}`);
 	if (u.cost > 0) parts.push(`$${u.cost.toFixed(4)}`);
 	return parts.join(", ");

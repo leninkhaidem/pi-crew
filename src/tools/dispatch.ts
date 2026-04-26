@@ -124,6 +124,10 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 					alias: handle.state.alias,
 					task: params.task,
 					status: handle.state.status,
+					provider: handle.state.provider,
+					model: handle.state.model,
+					thinking: handle.state.thinking,
+					turns: handle.state.turns,
 					paths: handle.state.paths,
 				},
 			};
