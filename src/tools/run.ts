@@ -8,7 +8,7 @@ import { formatParentSummary } from "../summary.js";
 import type { SubagentState } from "../types.js";
 import { renderRunCall } from "../ui/render-call.js";
 import { renderDispatchResult } from "../ui/render-result.js";
-import { ChainItemSchema, SlotOverrideProperties, TaskItemSchema } from "./shared.js";
+import { AliasSchema, ChainItemSchema, SlotOverrideProperties, TaskItemSchema } from "./shared.js";
 import { type SlotOverrides, resolveAgentSlot } from "./slot.js";
 
 export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
@@ -17,12 +17,14 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 		label: "Subagent run",
 		description: [
 			"Run sub-agent(s) and BLOCK until done. Use only when next step depends on result.",
-			"Args: { agent, task } | { tasks: [...] } | { chain: [...] with {previous} placeholder }",
+			"Args: { agent, alias, task } | { tasks: [...] } | { chain: [...] with {previous} placeholder }",
+			"Each sub-agent item requires alias: a short instance name shown in sub-agent UI.",
 			"Supports per-call provider/model/thinking overrides; model without provider infers provider when possible.",
 			"Returns final assistant text. Prefer subagent_dispatch unless sequential.",
 		].join(" "),
 		parameters: Type.Object({
 			agent: Type.Optional(Type.String()),
+			alias: Type.Optional(AliasSchema),
 			task: Type.Optional(Type.String()),
 			tasks: Type.Optional(Type.Array(TaskItemSchema)),
 			chain: Type.Optional(Type.Array(ChainItemSchema)),
@@ -38,7 +40,8 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 				bundledDir: rt.bundledAgentsDir,
 			});
 
-			const single = params.agent && params.task ? { agent: params.agent, task: params.task } : null;
+			const single =
+				params.agent && params.task ? { agent: params.agent, alias: params.alias, task: params.task } : null;
 			const tasks = params.tasks;
 			const chain = params.chain;
 
@@ -51,6 +54,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 
 			const oneShot = async (
 				agentName: string,
+				alias: string,
 				task: string,
 				cwd: string | undefined,
 				overrides: SlotOverrides = {},
@@ -76,7 +80,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 						);
 					}
 					const handle = await runDispatch(
-						{ agent, model: slot, options: { agent: agentName, task, cwd } },
+						{ agent, model: slot, options: { agent: agentName, alias: alias.trim(), task, cwd } },
 						rt.envFor(ctx),
 						rt.lifecycleHooks(),
 					);
@@ -91,7 +95,13 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 
 			try {
 				if (single) {
-					const final = await oneShot(single.agent, single.task, params.cwd, {
+					if (!single.alias?.trim()) {
+						return {
+							content: [{ type: "text" as const, text: "Provide alias for the sub-agent run." }],
+							details: { error: "alias_required" },
+						};
+					}
+					const final = await oneShot(single.agent, single.alias, single.task, params.cwd, {
 						provider: params.provider,
 						model: params.model,
 						thinking: params.thinking,
@@ -113,7 +123,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					const settled = await Promise.allSettled(
 						tasks.map((t) =>
 							rt.concurrency.pool.run(() =>
-								oneShot(t.agent, t.task, t.cwd, {
+								oneShot(t.agent, t.alias, t.task, t.cwd, {
 									provider: t.provider,
 									model: t.model,
 									thinking: t.thinking,
@@ -134,7 +144,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					let previous = "";
 					for (const step of chain) {
 						const taskText = step.task.replace(/\{previous\}/g, previous);
-						const r = await oneShot(step.agent, taskText, step.cwd, {
+						const r = await oneShot(step.agent, step.alias, taskText, step.cwd, {
 							provider: step.provider,
 							model: step.model,
 							thinking: step.thinking,
@@ -154,7 +164,10 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 			return { content: [{ type: "text" as const, text: "(unreachable)" }], details: { error: "unreachable" } };
 		},
 		renderCall(args, theme, _context) {
-			return renderRunCall(args as { agent?: string; task?: string; tasks?: unknown[]; chain?: unknown[] }, theme);
+			return renderRunCall(
+				args as { agent?: string; alias?: string; task?: string; tasks?: unknown[]; chain?: unknown[] },
+				theme,
+			);
 		},
 		renderResult(result, options, theme, _context) {
 			return renderDispatchResult(result as Parameters<typeof renderDispatchResult>[0], options, theme);
@@ -165,7 +178,15 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 function toolResult(state: SubagentState) {
 	return {
 		content: [{ type: "text" as const, text: formatRunStateResult(state, { single: true }) }],
-		details: { agentId: state.agentId, status: state.status, paths: state.paths, usage: state.usage },
+		details: {
+			agentId: state.agentId,
+			alias: state.alias,
+			status: state.status,
+			finalOutput: state.finalOutput,
+			errorMessage: state.errorMessage,
+			paths: state.paths,
+			usage: state.usage,
+		},
 	};
 }
 
@@ -178,7 +199,10 @@ function toolResultBatch(states: SubagentState[], partial = false, errors: strin
 		details: {
 			results: states.map((s) => ({
 				agentId: s.agentId,
+				alias: s.alias,
 				status: s.status,
+				finalOutput: s.finalOutput,
+				errorMessage: s.errorMessage,
 				paths: s.paths,
 			})),
 			...(partial ? { partial: true } : {}),
@@ -188,5 +212,5 @@ function toolResultBatch(states: SubagentState[], partial = false, errors: strin
 }
 
 export function formatRunStateResult(state: SubagentState, _options: { single?: boolean } = {}): string {
-	return formatParentSummary(state, { maxChars: 800, maxLines: 12 });
+	return formatParentSummary(state, { full: true });
 }

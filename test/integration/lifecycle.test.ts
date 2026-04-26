@@ -74,7 +74,7 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 				{
 					agent: fakeAgent,
 					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
-					options: { agent: "explore", task: "find auth" },
+					options: { agent: "explore", alias: "explore-test", task: "find auth" },
 				},
 				{
 					agentDir: tmp,
@@ -118,7 +118,7 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 				{
 					agent: fakeAgent,
 					model: { provider: "mock", modelId: "mock-haiku" } as Parameters<typeof dispatch>[0]["model"],
-					options: { agent: "explore", task: "legacy plan" },
+					options: { agent: "explore", alias: "explore-test", task: "legacy plan" },
 				},
 				{
 					agentDir: tmp,
@@ -158,7 +158,7 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 				{
 					agent: fakeAgent,
 					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
-					options: { agent: "explore", task: "loop", maxTurns: 1 },
+					options: { agent: "explore", alias: "explore-test", task: "loop", maxTurns: 1 },
 				},
 				{
 					agentDir: tmp,
@@ -182,7 +182,7 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 			{
 				agent: fakeAgent,
 				model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
-				options: { agent: "explore", task: "missing binary" },
+				options: { agent: "explore", alias: "explore-test", task: "missing binary" },
 			},
 			{
 				agentDir: tmp,
@@ -211,7 +211,7 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 				{
 					agent: fakeAgent,
 					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
-					options: { agent: "explore", task: "should fail" },
+					options: { agent: "explore", alias: "explore-test", task: "should fail" },
 				},
 				{
 					agentDir: tmp,

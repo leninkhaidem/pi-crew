@@ -16,6 +16,7 @@ const stateOf = (agentDir: string, overrides: Partial<SubagentState>): SubagentS
 		parentAgentId: null,
 		sessionId,
 		agent: "explore",
+		alias: "summarizer",
 		agentSource: "bundled",
 		task: "summarize",
 		cwd: "/proj",

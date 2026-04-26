@@ -35,9 +35,10 @@ export async function readState(p: string): Promise<SubagentState | null> {
 }
 
 function normalizeState(input: unknown): SubagentState {
-	const state = input as SubagentState & { thinking?: SubagentState["thinking"] };
+	const state = input as SubagentState & { thinking?: SubagentState["thinking"]; alias?: string };
 	return {
 		...state,
+		alias: state.alias ?? state.agent,
 		thinking: state.thinking ?? defaultThinkingForAgent(state.agent),
 	};
 }

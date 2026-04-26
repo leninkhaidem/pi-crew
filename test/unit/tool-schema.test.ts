@@ -5,9 +5,9 @@ import { registerRunTool } from "../../src/tools/run.js";
 
 describe("sub-agent tool schemas", () => {
 	it("do not expose max-turn controls in LLM-facing tools", () => {
-		const tools = new Map<string, { parameters?: { properties?: Record<string, unknown> } }>();
+		const tools = new Map<string, ToolLike>();
 		const pi = {
-			registerTool: vi.fn((tool: { name: string; parameters?: { properties?: Record<string, unknown> } }) => {
+			registerTool: vi.fn((tool: ToolLike & { name: string }) => {
 				tools.set(tool.name, tool);
 			}),
 		};
@@ -24,9 +24,22 @@ describe("sub-agent tool schemas", () => {
 		expect(propertiesOf(tools.get("Agent"))).toHaveProperty("model");
 		expect(propertiesOf(tools.get("subagent_dispatch"))).toHaveProperty("thinking");
 		expect(propertiesOf(tools.get("subagent_run"))).toHaveProperty("provider");
+		expect(propertiesOf(tools.get("Agent"))).toHaveProperty("alias");
+		expect(propertiesOf(tools.get("subagent_dispatch"))).toHaveProperty("alias");
+		expect(propertiesOf(tools.get("subagent_run"))).toHaveProperty("alias");
+		expect(requiredOf(tools.get("Agent"))).toContain("alias");
+		expect(requiredOf(tools.get("subagent_dispatch"))).toContain("alias");
 	});
 });
 
-function propertiesOf(tool: { parameters?: { properties?: Record<string, unknown> } } | undefined) {
+interface ToolLike {
+	parameters?: { properties?: Record<string, unknown>; required?: string[] };
+}
+
+function propertiesOf(tool: ToolLike | undefined) {
 	return tool?.parameters?.properties ?? {};
+}
+
+function requiredOf(tool: ToolLike | undefined) {
+	return tool?.parameters?.required ?? [];
 }

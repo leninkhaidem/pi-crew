@@ -85,7 +85,7 @@ describe("dispatchSession", () => {
 			{
 				agent: fakeAgent,
 				model: { provider: "mock", modelId: "model", thinking: "low" },
-				options: { agent: "general-purpose", task: "say ok", maxTurns: 1 },
+				options: { agent: "general-purpose", alias: "general-test", task: "say ok", maxTurns: 1 },
 			},
 			{
 				agentDir: tmp,
@@ -111,7 +111,7 @@ describe("dispatchSession", () => {
 			{
 				agent: fakeAgent,
 				model: { provider: "mock", modelId: "model", thinking: "low" },
-				options: { agent: "general-purpose", task: "say ok" },
+				options: { agent: "general-purpose", alias: "general-test", task: "say ok" },
 			},
 			{
 				agentDir: tmp,

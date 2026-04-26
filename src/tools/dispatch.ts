@@ -6,7 +6,7 @@ import { dispatch as runDispatch } from "../runtime/lifecycle.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import { renderDispatchCall } from "../ui/render-call.js";
 import { renderDispatchResult } from "../ui/render-result.js";
-import { SlotOverrideProperties } from "./shared.js";
+import { AliasSchema, SlotOverrideProperties } from "./shared.js";
 import { resolveAgentSlot } from "./slot.js";
 
 export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
@@ -15,7 +15,8 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 		label: "Subagent dispatch",
 		description: [
 			"Dispatch a sub-agent in the background. Returns agentId immediately.",
-			"Args: { agent, task, cwd?, provider?, model?, thinking? }",
+			"Args: { agent, alias, task, cwd?, provider?, model?, thinking? }",
+			"Requires alias: a short instance name shown in sub-agent UI.",
 			"Supports per-call provider/model/thinking overrides; model without provider infers provider when possible.",
 			"Available agents: see 'pi-crew' section in system prompt.",
 			"Completion is auto-pushed into this conversation when the sub-agent finishes.",
@@ -24,6 +25,7 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 			agent: Type.String({
 				description: "Agent name (general-purpose, explore, or custom)",
 			}),
+			alias: AliasSchema,
 			task: Type.String({ description: "Task description" }),
 			cwd: Type.Optional(Type.String()),
 			...SlotOverrideProperties,
@@ -91,6 +93,7 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 						model: slot,
 						options: {
 							agent: params.agent,
+							alias: params.alias.trim(),
 							task: params.task,
 							cwd: params.cwd,
 						},
@@ -110,15 +113,15 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 					{
 						type: "text" as const,
 						text: [
-							`Dispatched #${handle.agentId} (${agent.name}): ${params.task}`,
-							`State: ${handle.state.paths.state}`,
-							`Output: ${handle.state.paths.output}`,
+							`Started ${handle.state.alias} #${handle.agentId} (${agent.name}, ${handle.state.provider}/${handle.state.model}).`,
+							"Completion will be posted automatically.",
 						].join("\n"),
 					},
 				],
 				details: {
 					agentId: handle.agentId,
 					agent: agent.name,
+					alias: handle.state.alias,
 					task: params.task,
 					status: handle.state.status,
 					paths: handle.state.paths,
@@ -126,7 +129,10 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 			};
 		},
 		renderCall(args, theme, _context) {
-			return renderDispatchCall(args as { agent?: string; task?: string }, theme);
+			return renderDispatchCall(
+				args as { agent?: string; alias?: string; task?: string; model?: string; provider?: string },
+				theme,
+			);
 		},
 		renderResult(result, options, theme, _context) {
 			return renderDispatchResult(result as Parameters<typeof renderDispatchResult>[0], options, theme);

@@ -34,7 +34,7 @@ if (!process.env.PI_CREW_E2E) {
 				{
 					agent: fakeAgent,
 					model: { provider: "openai-codex", modelId: "gpt-5.5", thinking: "low" },
-					options: { agent: "explore", task: "say done" },
+					options: { agent: "explore", alias: "explore-test", task: "say done" },
 				},
 				{ agentDir: tmp, cwd: tmp, sessionId: "smoke", parentAgentId: null },
 				{},

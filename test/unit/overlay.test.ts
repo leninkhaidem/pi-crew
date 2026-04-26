@@ -14,6 +14,7 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 	parentAgentId: null,
 	sessionId: "sess",
 	agent: "explore",
+	alias: "auth-search",
 	agentSource: "bundled",
 	task: "find auth and summarize every relevant file in a very long task title",
 	cwd: "/proj",

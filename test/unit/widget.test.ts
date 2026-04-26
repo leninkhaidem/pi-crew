@@ -9,6 +9,7 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 	parentAgentId: null,
 	sessionId: "sess",
 	agent: "explore",
+	alias: "auth-search",
 	agentSource: "bundled",
 	task: "find auth",
 	cwd: "/proj",
@@ -51,8 +52,10 @@ describe("renderActiveAgentsPanel", () => {
 
 		expect(lines[0]).toBe("● Agents");
 		expect(lines.join("\n")).toContain("└─");
+		expect(lines.join("\n")).toContain("auth-search");
 		expect(lines.join("\n")).toContain("explore");
-		expect(lines.join("\n")).toContain("find auth");
+		expect(lines.join("\n")).toContain("openai-codex/gpt-5.4-mini");
+		expect(lines.join("\n")).not.toContain("find auth");
 		expect(lines.join("\n")).toContain("⎿");
 		expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
 	});
@@ -72,7 +75,8 @@ describe("renderActiveAgentsPanel", () => {
 
 		expect(lines).toHaveLength(3);
 		expect(lines.every((line) => !line.includes("\n") && visibleWidth(line) <= 50)).toBe(true);
-		expect(lines.join("\n")).toContain("Implement thing Requirements:");
+		expect(lines.join("\n")).not.toContain("Implement thing");
+		expect(lines.join("\n")).toContain("running command with multiple lines");
 	});
 });
 

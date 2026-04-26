@@ -156,11 +156,10 @@ function appendAgent(
 	const stem = isLast ? "   " : "│  ";
 	const spinner = state.status === "starting" ? "◌" : (SPINNER[frame % SPINNER.length] ?? "⠋");
 	const stats = compactStats(state);
-	const task = oneLine(state.task);
 	const activity = oneLine(activityFor(state));
 	lines.push(
 		truncateToWidth(
-			`${theme.fg("dim", connector)} ${theme.fg("accent", spinner)} ${theme.bold(state.agent)}  ${theme.fg("muted", task)} ${theme.fg("dim", "·")} ${theme.fg("dim", stats)}`,
+			`${theme.fg("dim", connector)} ${theme.fg("accent", spinner)} ${theme.bold(state.alias)} ${theme.fg("dim", `(${state.agent})`)} ${theme.fg("dim", "·")} ${theme.fg("dim", stats)}`,
 			width,
 		),
 	);
@@ -168,7 +167,7 @@ function appendAgent(
 }
 
 function compactStats(state: SubagentState): string {
-	const parts = [formatTurns(state.turns, state.maxTurns)];
+	const parts = [`${state.provider}/${state.model}`, state.thinking, formatTurns(state.turns, state.maxTurns)];
 	const toolUses = state.toolUses ?? 0;
 	if (toolUses > 0) parts.push(`${toolUses} tool use${toolUses === 1 ? "" : "s"}`);
 	const usage = formatUsageStats(state.usage);
@@ -209,6 +208,7 @@ function signatureFor(states: SubagentState[]): string {
 		states.map((state) => ({
 			agentId: state.agentId,
 			agent: state.agent,
+			alias: state.alias,
 			status: state.status,
 			task: state.task,
 			model: state.model,

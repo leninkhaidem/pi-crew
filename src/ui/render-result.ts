@@ -6,6 +6,7 @@ import { type UsageStatsLike, formatUsageStats } from "./format.js";
 
 interface DispatchDetails {
 	agentId?: string;
+	alias?: string;
 	usage?: UsageStatsLike;
 }
 
@@ -22,7 +23,7 @@ export function renderDispatchResult(
 	}
 	const md = getMarkdownTheme();
 	const c = new Container();
-	c.addChild(new Text(theme.fg("accent", `#${details.agentId ?? "?"}`), 0, 0));
+	c.addChild(new Text(theme.fg("accent", `${details.alias ?? "subagent"} #${details.agentId ?? "?"}`), 0, 0));
 	c.addChild(new Spacer(1));
 	c.addChild(new Markdown(text.trim(), 0, 0, md));
 	if (details.usage) {

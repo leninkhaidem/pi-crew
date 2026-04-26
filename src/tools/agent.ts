@@ -7,7 +7,7 @@ import type { ExtensionRuntime } from "../runtime/types.js";
 import { formatParentSummary } from "../summary.js";
 import type { AgentConfig, SubagentState } from "../types.js";
 import { renderDispatchResult } from "../ui/render-result.js";
-import { SlotOverrideProperties } from "./shared.js";
+import { AliasSchema, SlotOverrideProperties } from "./shared.js";
 import { resolveAgentSlot } from "./slot.js";
 
 export function registerAgentTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
@@ -17,13 +17,14 @@ export function registerAgentTool(pi: ExtensionAPI, rt: ExtensionRuntime): void 
 		description: [
 			"Launch a specialized sub-agent, Claude Code style.",
 			"Foreground calls block and return the final result; background calls return an agent ID immediately.",
+			"Requires alias: a short instance name shown in sub-agent UI.",
 			"Supports per-call provider/model/thinking overrides; model without provider infers provider when possible.",
-			"Args: { subagent_type, prompt, description?, run_in_background?, provider?, model?, thinking?, resume? }.",
+			"Args: { subagent_type, alias, prompt, run_in_background?, provider?, model?, thinking?, resume? }.",
 		].join(" "),
 		parameters: Type.Object({
 			subagent_type: Type.String({ description: "Agent name, e.g. explore, general-purpose, or custom." }),
+			alias: AliasSchema,
 			prompt: Type.String({ description: "Task for the sub-agent." }),
-			description: Type.Optional(Type.String({ description: "Short task label for UI." })),
 			run_in_background: Type.Optional(Type.Boolean({ description: "If true, return immediately with an agent ID." })),
 			...SlotOverrideProperties,
 			resume: Type.Optional(Type.String({ description: "Existing session-mode agent ID to continue." })),
@@ -105,6 +106,7 @@ export function registerAgentTool(pi: ExtensionAPI, rt: ExtensionRuntime): void 
 						model: slot,
 						options: {
 							agent: agent.name,
+							alias: params.alias.trim(),
 							task: params.prompt,
 							cwd: params.cwd,
 						},
@@ -126,15 +128,17 @@ export function registerAgentTool(pi: ExtensionAPI, rt: ExtensionRuntime): void 
 						{
 							type: "text" as const,
 							text: [
-								"Agent started in background.",
-								`Agent ID: ${handle.agentId}`,
-								`Type: ${agent.name}`,
-								`Description: ${params.description ?? summarize(params.prompt)}`,
-								`Use get_subagent_result with agent_id: "${handle.agentId}" to retrieve results.`,
+								`Started ${handle.state.alias} #${handle.agentId} (${agent.name}, ${handle.state.provider}/${handle.state.model}).`,
+								"Completion will be posted automatically.",
 							].join("\n"),
 						},
 					],
-					details: { agentId: handle.agentId, status: handle.state.status, paths: handle.state.paths },
+					details: {
+						agentId: handle.agentId,
+						alias: handle.state.alias,
+						status: handle.state.status,
+						paths: handle.state.paths,
+					},
 				};
 			}
 
@@ -159,7 +163,13 @@ function resolveAgent(agents: AgentConfig[], name: string): AgentConfig | undefi
 function stateResult(state: SubagentState) {
 	return {
 		content: [{ type: "text" as const, text: formatParentSummary(state, { maxChars: 1200, maxLines: 16 }) }],
-		details: { agentId: state.agentId, status: state.status, paths: state.paths, usage: state.usage },
+		details: {
+			agentId: state.agentId,
+			alias: state.alias,
+			status: state.status,
+			paths: state.paths,
+			usage: state.usage,
+		},
 	};
 }
 
@@ -173,9 +183,4 @@ function limitResult(current: number) {
 		],
 		details: { error: "max_active_reached" },
 	};
-}
-
-function summarize(prompt: string): string {
-	const first = prompt.replace(/\s+/g, " ").trim();
-	return first.length <= 60 ? first : `${first.slice(0, 57)}…`;
 }

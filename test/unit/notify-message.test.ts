@@ -8,6 +8,7 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 	parentAgentId: null,
 	sessionId: "sess",
 	agent: "explore",
+	alias: "auth-search",
 	agentSource: "bundled",
 	task: "find auth",
 	cwd: "/proj",
@@ -42,7 +43,8 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 describe("formatCompletionMessage", () => {
 	it("formats success with final output and paths", () => {
 		const msg = formatCompletionMessage(stateOf({}));
-		expect(msg).toContain("✓ subagent explore #abc12345 finished");
+		expect(msg).toContain("✓ subagent auth-search (explore) #abc12345 finished");
+		expect(msg).toContain("<alias>auth-search</alias>");
 		expect(msg).toContain("Found 12 files in api/auth.");
 		expect(msg).toContain("/p/output.jsonl");
 		expect(msg).toContain("$0.0021");
@@ -58,14 +60,14 @@ describe("formatCompletionMessage", () => {
 
 	it("formats failure with stderr path", () => {
 		const msg = formatCompletionMessage(stateOf({ status: "failed", exitCode: 1, errorMessage: "rate limit" }));
-		expect(msg).toContain("✗ subagent explore #abc12345 failed");
+		expect(msg).toContain("✗ subagent auth-search (explore) #abc12345 failed");
 		expect(msg).toContain("rate limit");
 		expect(msg).toContain("/p/stderr.log");
 	});
 
 	it("formats aborted with reason", () => {
 		const msg = formatCompletionMessage(stateOf({ status: "aborted", errorMessage: "user cancelled", exitCode: -1 }));
-		expect(msg).toContain("✗ subagent explore #abc12345 aborted: user cancelled");
+		expect(msg).toContain("✗ subagent auth-search (explore) #abc12345 aborted: user cancelled");
 	});
 });
 
@@ -77,8 +79,8 @@ describe("formatBatchedMessage", () => {
 		const b = stateOf({ agentId: "bbbb2222", agent: "general-purpose", finalOutput: beta });
 		const msg = formatBatchedMessage([a, b]);
 		expect(msg).toContain("Sub-agent batch update");
-		expect(msg).toContain("✓ explore #aaaa1111");
-		expect(msg).toContain("✓ general-purpose #bbbb2222");
+		expect(msg).toContain("✓ auth-search (explore) #aaaa1111 done (anthropic/claude-haiku-4-5");
+		expect(msg).toContain("✓ auth-search (general-purpose) #bbbb2222 done (anthropic/claude-haiku-4-5");
 		expect(msg).toContain(alpha);
 		expect(msg).toContain(beta);
 	});

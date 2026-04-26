@@ -86,6 +86,7 @@ export async function dispatch(
 		sessionId: sessionIdResolved,
 		batchId: env.batchId ?? null,
 		agent: plan.agent.name,
+		alias: plan.options.alias,
 		agentSource: plan.agent.source,
 		task: plan.options.task,
 		cwd,

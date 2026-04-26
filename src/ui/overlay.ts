@@ -186,7 +186,6 @@ function appendStateRows(lines: string[], args: PanelRenderArgs): void {
 		const absoluteIdx = offset + idx;
 		const selected = absoluteIdx === args.selectedIdx;
 		lines.push(row(summaryLine(state, selected, args.theme), args.width, args.theme));
-		lines.push(row(`    ${state.task}`, args.width, args.theme, "muted"));
 		if (args.expanded.has(state.agentId))
 			appendExpandedRows(lines, state, args.width, args.theme, args.transcriptPreview?.get(state.agentId));
 	}
@@ -204,6 +203,7 @@ function appendExpandedRows(
 	theme: Theme,
 	transcriptPreview?: string,
 ): void {
+	lines.push(row(`    task: ${state.task}`, width, theme, "muted"));
 	lines.push(row(`    cwd: ${state.cwd}`, width, theme, "dim"));
 	lines.push(row(`    state: ${state.paths.state}`, width, theme, "dim"));
 	lines.push(row(`    output: ${state.paths.output}`, width, theme, "dim"));
@@ -222,8 +222,8 @@ function appendExpandedRows(
 function summaryLine(state: SubagentState, selected: boolean, theme: Theme): string {
 	const pointer = selected ? theme.fg("accent", "▸") : " ";
 	const icon = iconFor(state.status, theme);
-	const usage = formatUsageStats({ ...state.usage, turns: state.turns }, state.model);
-	return `${pointer} ${icon} ${state.agent} #${state.agentId} ${state.status} · ${state.thinking} · ${usage}`;
+	const usage = formatUsageStats({ ...state.usage, turns: state.turns });
+	return `${pointer} ${icon} ${state.alias} #${state.agentId} ${state.status} · ${state.agent} · ${state.provider}/${state.model} · ${state.thinking} · ${usage}`;
 }
 
 function border(left: string, right: string, title: string, width: number, theme: Theme): string {

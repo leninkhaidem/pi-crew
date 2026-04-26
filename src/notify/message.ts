@@ -14,21 +14,21 @@ export function formatCompletionMessage(state: SubagentState): string {
 	const usage = formatUsage(state);
 	if (state.status === "done") {
 		return [
-			`✓ subagent ${state.agent} #${state.agentId} finished (${usage}).`,
+			`✓ subagent ${state.alias} (${state.agent}) #${state.agentId} finished (${usage}).`,
 			"",
 			formatParentSummary(state, { format: "xml", full: true }),
 		].join("\n");
 	}
 	if (state.status === "aborted") {
 		return [
-			`✗ subagent ${state.agent} #${state.agentId} aborted: ${state.errorMessage ?? "(no reason)"}.`,
+			`✗ subagent ${state.alias} (${state.agent}) #${state.agentId} aborted: ${state.errorMessage ?? "(no reason)"}.`,
 			"",
 			formatParentSummary(state, { format: "xml", full: true }),
 		].join("\n");
 	}
 	const err = state.errorMessage ?? `exit ${state.exitCode}`;
 	return [
-		`✗ subagent ${state.agent} #${state.agentId} ${state.status} (exit ${state.exitCode}, "${err}").`,
+		`✗ subagent ${state.alias} (${state.agent}) #${state.agentId} ${state.status} (exit ${state.exitCode}, "${err}").`,
 		"",
 		formatParentSummary(state, { format: "xml", full: true }),
 		`Stderr: ${state.paths.stderr}`,
@@ -41,15 +41,15 @@ export function formatBatchedMessage(states: SubagentState[]): string {
 		const icon = s.status === "done" ? "✓" : "✗";
 		const ext =
 			s.status === "done"
-				? `done (${s.turns} turns, $${s.usage.cost.toFixed(4)})`
-				: `failed: ${s.errorMessage ?? "unknown"}`;
-		lines.push(`  ${icon} ${s.agent} #${s.agentId} ${ext}`);
+				? `done (${s.provider}/${s.model}, ${s.turns} turns, $${s.usage.cost.toFixed(4)})`
+				: `failed (${s.provider}/${s.model}): ${s.errorMessage ?? "unknown"}`;
+		lines.push(`  ${icon} ${s.alias} (${s.agent}) #${s.agentId} ${ext}`);
 	}
 	lines.push("");
 	lines.push("Details for each:");
 	for (const s of states) {
 		const output = buildSummaryPreview(s, { full: true }).text;
-		lines.push(`  - #${s.agentId}: ${output}`);
+		lines.push(`  - ${s.alias} #${s.agentId}: ${output}`);
 		lines.push(`    Trace: ${s.paths.output}`);
 		lines.push(`    State: ${s.paths.state}`);
 	}

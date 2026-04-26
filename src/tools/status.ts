@@ -16,7 +16,7 @@ export function registerStatusTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 		label: "Subagent status",
 		description: [
 			"Peek at running/recent sub-agents.",
-			"Returns { agentId, agent, task, status, lastText, usage, paths } per agent.",
+			"Returns { agentId, alias, agent, task, status, lastText, usage, paths } per agent.",
 			"Args: { agentId? } | { scope?: 'active'|'session'|'all', includeDetached? }",
 			"For full transcript, read paths.output (a JSONL file).",
 		].join(" "),
@@ -76,6 +76,7 @@ async function findById(root: string, id: string): Promise<SubagentState | null>
 function compactStateDetails(state: SubagentState) {
 	return {
 		agentId: state.agentId,
+		alias: state.alias,
 		agent: state.agent,
 		task: state.task,
 		status: state.status,
@@ -91,7 +92,7 @@ function formatStatusList(states: SubagentState[]): string {
 	const lines: string[] = [];
 	for (const s of states) {
 		const icon = iconFor(s.status);
-		lines.push(`${icon} #${s.agentId} ${s.agent} (${s.status}) — ${s.task}`);
+		lines.push(`${icon} ${s.alias} #${s.agentId} (${s.agent}, ${s.model}, ${s.thinking}) ${s.status} — ${s.task}`);
 		if (s.lastText) lines.push(`    last: ${s.lastText.slice(0, 120)}`);
 		if (s.lastToolCall) lines.push(`    tool: ${s.lastToolCall.name}`);
 		lines.push(`    state: ${s.paths.state}`);

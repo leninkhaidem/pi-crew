@@ -51,7 +51,7 @@ describe("kill flow", () => {
 				{
 					agent: fakeAgent,
 					model: { provider: "mock", modelId: "mock", thinking: "low" },
-					options: { agent: "explore", task: "test parent interrupt" },
+					options: { agent: "explore", alias: "explore-test", task: "test parent interrupt" },
 				},
 				{
 					agentDir: tmp,
@@ -112,7 +112,7 @@ describe("kill flow", () => {
 				{
 					agent: fakeAgent,
 					model: { provider: "mock", modelId: "mock", thinking: "low" },
-					options: { agent: "explore", task: "test kill" },
+					options: { agent: "explore", alias: "explore-test", task: "test kill" },
 				},
 				{
 					agentDir: tmp,
@@ -186,7 +186,7 @@ describe("kill flow", () => {
 				{
 					agent: fakeAgent,
 					model: { provider: "mock", modelId: "mock", thinking: "low" },
-					options: { agent: "explore", task: "test detached" },
+					options: { agent: "explore", alias: "explore-test", task: "test detached" },
 				},
 				{
 					agentDir: tmp,
@@ -227,7 +227,7 @@ describe("kill flow", () => {
 				{
 					agent: fakeAgent,
 					model: { provider: "mock", modelId: "mock", thinking: "low" },
-					options: { agent: "explore", task: "test fail" },
+					options: { agent: "explore", alias: "explore-test", task: "test fail" },
 				},
 				{
 					agentDir: tmp,

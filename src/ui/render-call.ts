@@ -2,16 +2,19 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 
-export function renderDispatchCall(args: { agent?: string; task?: string }, theme: Theme) {
+export function renderDispatchCall(
+	args: { agent?: string; alias?: string; model?: string; provider?: string },
+	theme: Theme,
+) {
 	const agent = args?.agent ?? "?";
-	const task = args?.task ?? "?";
-	const preview = task.length > 60 ? `${task.slice(0, 60)}…` : task;
-	const text = `${theme.fg("toolTitle", theme.bold("subagent_dispatch ")) + theme.fg("accent", agent)}\n  ${theme.fg("dim", preview)}`;
+	const alias = args?.alias ?? "?";
+	const model = args?.model ? `${args.provider ? `${args.provider}/` : ""}${args.model}` : "model pending";
+	const text = `${theme.fg("toolTitle", theme.bold("subagent_dispatch "))}${theme.fg("accent", alias)} ${theme.fg("dim", `(${agent}, ${model})`)}`;
 	return new Text(text, 0, 0);
 }
 
 export function renderRunCall(
-	args: { agent?: string; task?: string; tasks?: unknown[]; chain?: unknown[] },
+	args: { agent?: string; alias?: string; task?: string; tasks?: unknown[]; chain?: unknown[] },
 	theme: Theme,
 ) {
 	if (Array.isArray(args?.chain)) {

@@ -32,7 +32,7 @@ export function formatParentSummary(state: SubagentState, options: ParentSummary
 function formatTextSummary(state: SubagentState, options: ParentSummaryOptions): string {
 	const summary = buildSummaryPreview(state, options);
 	const lines = [
-		`[${state.agent} #${state.agentId}] ${state.status}${reasonSuffix(state)}`,
+		`[${state.alias} (${state.agent}) #${state.agentId}] ${state.status}${reasonSuffix(state)}`,
 		`Summary: ${summary.text}`,
 	];
 	if (summary.truncated) lines.push(`Summary truncated (${summary.omitted} chars omitted). Use Trace for full output.`);
@@ -46,6 +46,7 @@ function formatXmlSummary(state: SubagentState, options: ParentSummaryOptions): 
 	const lines = [
 		"<subagent-result>",
 		`<agent-id>${escapeXml(state.agentId)}</agent-id>`,
+		`<alias>${escapeXml(state.alias)}</alias>`,
 		`<agent>${escapeXml(state.agent)}</agent>`,
 		`<status>${escapeXml(state.status)}</status>`,
 		`<summary>${escapeXml(summary.text)}</summary>`,

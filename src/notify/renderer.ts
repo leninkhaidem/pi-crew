@@ -18,7 +18,7 @@ export function registerNotificationRenderer(pi: ExtensionAPI): void {
 function renderState(state: SubagentState, expanded: boolean, theme: Theme): string {
 	const ok = state.status === "done";
 	const icon = ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
-	const title = `${icon} ${theme.bold(`${state.agent} #${state.agentId}`)} ${theme.fg(ok ? "dim" : "warning", state.status)}`;
+	const title = `${icon} ${theme.bold(`${state.alias} #${state.agentId}`)} ${theme.fg("dim", `(${state.agent})`)} ${theme.fg(ok ? "dim" : "warning", state.status)}`;
 	const stats = notificationStats(state);
 	const reason = ok
 		? (state.finalOutput ?? "No output.")
@@ -31,7 +31,7 @@ function renderState(state: SubagentState, expanded: boolean, theme: Theme): str
 }
 
 function notificationStats(state: SubagentState): string {
-	const parts = [state.model, state.thinking, formatTurns(state.turns, state.maxTurns)];
+	const parts = [`${state.provider}/${state.model}`, state.thinking, formatTurns(state.turns, state.maxTurns)];
 	const toolUses = state.toolUses ?? 0;
 	if (toolUses > 0) parts.push(`${toolUses} tool use${toolUses === 1 ? "" : "s"}`);
 	const usage = formatUsageStats(state.usage);

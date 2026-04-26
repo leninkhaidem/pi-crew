@@ -27,8 +27,8 @@ After install:
 
 | Tool | Purpose |
 |---|---|
-| `Agent` | Claude-style foreground/background launch wrapper. |
-| Example | `await Agent({ subagent_type: 'general-purpose', prompt: 'Summarize this PR', provider: 'openai-codex', model: 'gpt-5.4-mini', thinking: 'low', run_in_background: true })` |
+| `Agent` | Claude-style foreground/background launch wrapper. Requires `alias`, a short instance/job name shown in UI. |
+| Example | `await Agent({ subagent_type: 'general-purpose', alias: 'pr-summary', prompt: 'Summarize this PR', provider: 'openai-codex', model: 'gpt-5.4-mini', thinking: 'low', run_in_background: true })` |
 | `get_subagent_result` | Check or wait for a background result; optionally include transcript JSONL. |
 | `steer_subagent` | Send a steering message to a running session-mode sub-agent. |
 | `subagent_dispatch` | Background dispatch. Returns agentId. |
@@ -43,7 +43,7 @@ After install:
 | `/subagent-config` | TUI to set provider, model, and thinking level for `explore`. |
 | `/subagent-install-defaults` | Copy bundled `.md` agents to `~/.pi/agent/agents/`. |
 | `/subagent-agents` | Create, view, edit, eject, or delete simple `.md` agent definitions. |
-| `/subagents` | Open an interactive overlay for active sub-agents in the current batch, mainly for status and killing hung agents. |
+| `/subagents` | Open an interactive overlay for active sub-agents in the current batch, showing alias, model, status, and kill controls. |
 
 ## Hook events on `pi.events`
 

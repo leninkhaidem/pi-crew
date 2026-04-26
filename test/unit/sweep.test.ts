@@ -23,6 +23,7 @@ const writeStateFile = (sessionId: string, agentId: string, partial: Record<stri
 			parentAgentId: null,
 			sessionId,
 			agent: "explore",
+			alias: "sweep-agent",
 			agentSource: "bundled",
 			task: "x",
 			cwd: tmp,

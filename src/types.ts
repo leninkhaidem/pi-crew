@@ -52,6 +52,7 @@ export interface SubagentState {
 	sessionId: string;
 	batchId?: string | null;
 	agent: string;
+	alias: string;
 	agentSource: "user" | "project" | "bundled";
 	task: string;
 	cwd: string;
@@ -147,6 +148,7 @@ export interface PiCrewDispatchEvent {
 	agentId: string;
 	parentAgentId: string | null;
 	agent: string;
+	alias: string;
 	task: string;
 	cwd: string;
 	model: string;
@@ -195,6 +197,7 @@ export interface PiCrewConfigChangedEvent {
 
 export interface DispatchOptions {
 	agent: string;
+	alias: string;
 	task: string;
 	cwd?: string;
 	maxTurns?: number;

@@ -21,8 +21,14 @@ export const SlotOverrideProperties = {
 	thinking: Type.Optional(ThinkingLevelSchema),
 };
 
+export const AliasSchema = Type.String({
+	minLength: 1,
+	description: "Required instance alias shown in sub-agent UI, e.g. 'schema-validator'.",
+});
+
 export const TaskItemSchema = Type.Object({
 	agent: Type.String({ description: "Agent name (e.g., 'explore')" }),
+	alias: AliasSchema,
 	task: Type.String({ description: "Task to delegate" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory" })),
 	...SlotOverrideProperties,
@@ -30,6 +36,7 @@ export const TaskItemSchema = Type.Object({
 
 export const ChainItemSchema = Type.Object({
 	agent: Type.String({ description: "Agent name" }),
+	alias: AliasSchema,
 	task: Type.String({ description: "Task with optional {previous} placeholder" }),
 	cwd: Type.Optional(Type.String()),
 	...SlotOverrideProperties,

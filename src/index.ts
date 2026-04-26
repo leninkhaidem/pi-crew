@@ -106,6 +106,7 @@ export default function (pi: ExtensionAPI) {
 							agentId: state.agentId,
 							parentAgentId: state.parentAgentId,
 							agent: state.agent,
+							alias: state.alias,
 							task: state.task,
 							cwd: state.cwd,
 							model: state.model,

@@ -8,6 +8,7 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 	parentAgentId: null,
 	sessionId: "sess",
 	agent: "general-purpose",
+	alias: "work-agent",
 	agentSource: "bundled",
 	task: "do work",
 	cwd: "/proj",
@@ -40,10 +41,12 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 });
 
 describe("formatRunStateResult", () => {
-	it("returns a compact summary with trace pointers for single-agent success output", () => {
-		const result = formatRunStateResult(stateOf({}), { single: true });
-		expect(result).toContain("[general-purpose #abc12345] done");
-		expect(result).toContain("Summary: done output");
+	it("returns the full final output with trace pointers for single-agent success output", () => {
+		const longOutput = `start-${"x".repeat(2000)}-end`;
+		const result = formatRunStateResult(stateOf({ finalOutput: longOutput }), { single: true });
+		expect(result).toContain("[work-agent (general-purpose) #abc12345] done");
+		expect(result).toContain(longOutput);
+		expect(result).not.toContain("Summary truncated");
 		expect(result).toContain("Trace: /p/output.jsonl");
 		expect(result).toContain("State: /p/state.json");
 	});
@@ -54,7 +57,7 @@ describe("formatRunStateResult", () => {
 			{ single: true },
 		);
 
-		expect(result).toContain("[general-purpose #abc12345] aborted — parent ask interrupted");
+		expect(result).toContain("[work-agent (general-purpose) #abc12345] aborted — parent ask interrupted");
 		expect(result).toContain("Trace: /p/output.jsonl");
 	});
 
@@ -63,7 +66,7 @@ describe("formatRunStateResult", () => {
 			stateOf({ status: "failed", exitCode: 1, errorMessage: "boom", finalOutput: null }),
 		);
 
-		expect(result).toContain("[general-purpose #abc12345] failed — boom");
+		expect(result).toContain("[work-agent (general-purpose) #abc12345] failed — boom");
 		expect(result).toContain("State: /p/state.json");
 	});
 });

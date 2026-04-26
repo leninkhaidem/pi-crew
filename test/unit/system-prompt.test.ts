@@ -15,6 +15,7 @@ describe("buildSystemPromptBlock", () => {
 		expect(block).toContain("general-purpose: general");
 		expect(block).toContain("✗ Unconfigured: explore");
 		expect(block).toContain("/home/u/.pi/agent/subagents/<sessionId>/<agentId>/");
+		expect(block).toContain("Every sub-agent launch requires `alias`");
 		expect(block).not.toContain("subagent_wait");
 	});
 
@@ -48,6 +49,7 @@ describe("buildSystemPromptBlock", () => {
 			],
 			currentModel: { provider: "openai-codex", id: "gpt-5.4-mini" },
 		});
+		expect(block).toContain("Active agent UI shows each agent's alias plus provider/model/thinking");
 		expect(block).toContain("accept optional `provider`, `model`, and `thinking` overrides");
 		expect(block).toContain(
 			"If `model` is supplied without `provider`, provider is inferred from the configured slot or current parent model when possible.",

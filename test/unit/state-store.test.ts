@@ -20,6 +20,7 @@ const baseState = (agentId: string): SubagentState => ({
 	parentAgentId: null,
 	sessionId: "sess",
 	agent: "explore",
+	alias: "foo-search",
 	agentSource: "bundled",
 	task: "find foo",
 	cwd: tmp,
@@ -63,12 +64,13 @@ describe("state store", () => {
 		expect(got).toBeNull();
 	});
 
-	it("readState fills thinking for legacy state files", async () => {
+	it("readState fills thinking and alias for legacy state files", async () => {
 		const s = baseState("legacy01");
-		const { thinking: _thinking, ...legacy } = s;
+		const { thinking: _thinking, alias: _alias, ...legacy } = s;
 		await writeState(legacy as SubagentState);
 		const back = await readState(s.paths.state);
 		expect(back?.thinking).toBe("low");
+		expect(back?.alias).toBe("explore");
 	});
 
 	it("readState retries on torn read (SyntaxError) up to 3 times", async () => {
