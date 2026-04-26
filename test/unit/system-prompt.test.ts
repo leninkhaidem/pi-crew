@@ -16,6 +16,12 @@ describe("buildSystemPromptBlock", () => {
 		expect(block).toContain("✗ Unconfigured: explore");
 		expect(block).toContain("/home/u/.pi/agent/subagents/<sessionId>/<agentId>/");
 		expect(block).toContain("Every sub-agent launch requires `alias`");
+		expect(block).toContain(
+			"Prefer background completion notifications and blocking `subagent_run`/foreground `Agent` results",
+		);
+		expect(block).toContain(
+			"Do not use it for routine polling or after a normal completion notification/blocking result",
+		);
 		expect(block).not.toContain("subagent_wait");
 	});
 
@@ -35,7 +41,9 @@ describe("buildSystemPromptBlock", () => {
 			stateDirRoot: "/x",
 		});
 		expect(block).toContain('"what is this project about?"');
-		expect(block).toContain("dispatch `explore` before doing your own file/search reconnaissance");
+		expect(block).toContain("Treat `explore` as the reconnaissance owner");
+		expect(block).toContain("use blocking `subagent_run` or foreground `Agent`");
+		expect(block).toContain("Background `explore` requests are coerced to blocking");
 	});
 
 	it("includes available models and per-call override guidance", () => {

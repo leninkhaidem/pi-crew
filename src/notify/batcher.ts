@@ -7,6 +7,7 @@ const BATCH_WINDOW_MS = 2000;
 export interface CompletionDispatcher {
 	push(state: SubagentState): void;
 	consume(agentId: string): void;
+	wasHandled(agentId: string): boolean;
 	flush(): void;
 }
 
@@ -14,6 +15,7 @@ export function createCompletionDispatcher(pi: ExtensionAPI): CompletionDispatch
 	let queue: SubagentState[] = [];
 	let timer: NodeJS.Timeout | null = null;
 	const consumed = new Set<string>();
+	const delivered = new Set<string>();
 
 	const flushNow = () => {
 		if (queue.length === 0) return;
@@ -30,6 +32,7 @@ export function createCompletionDispatcher(pi: ExtensionAPI): CompletionDispatch
 			{ customType: "pi-crew", display: true, content, details: { states: batch } },
 			{ deliverAs: "followUp", triggerTurn: true },
 		);
+		for (const state of batch) delivered.add(state.agentId);
 	};
 
 	return {
@@ -46,6 +49,9 @@ export function createCompletionDispatcher(pi: ExtensionAPI): CompletionDispatch
 				clearTimeout(timer);
 				timer = null;
 			}
+		},
+		wasHandled(agentId) {
+			return consumed.has(agentId) || delivered.has(agentId);
 		},
 		flush: flushNow,
 	};

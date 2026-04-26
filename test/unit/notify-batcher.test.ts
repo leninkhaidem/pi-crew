@@ -49,12 +49,14 @@ describe("createCompletionDispatcher", () => {
 		const dispatcher = createCompletionDispatcher({ sendMessage } as never);
 
 		dispatcher.push(stateOf({}));
+		expect(dispatcher.wasHandled("abc12345")).toBe(false);
 		vi.runAllTimers();
 
 		expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ customType: "pi-crew", display: true }), {
 			deliverAs: "followUp",
 			triggerTurn: true,
 		});
+		expect(dispatcher.wasHandled("abc12345")).toBe(true);
 	});
 
 	it("keeps complete detailed state text in injected completion messages", () => {
@@ -80,6 +82,7 @@ describe("createCompletionDispatcher", () => {
 		vi.runAllTimers();
 
 		expect(sendMessage).not.toHaveBeenCalled();
+		expect(dispatcher.wasHandled("abc12345")).toBe(true);
 	});
 
 	it("still displays failed completion messages", () => {

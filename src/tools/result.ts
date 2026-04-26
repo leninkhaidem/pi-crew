@@ -8,6 +8,7 @@ import { getRoot } from "../state/paths.js";
 import { readState } from "../state/store.js";
 import { formatParentSummary } from "../summary.js";
 import type { SubagentState } from "../types.js";
+import { renderDispatchResult } from "../ui/render-result.js";
 
 const TERMINAL = new Set<SubagentState["status"]>(["done", "failed", "aborted", "orphaned", "detached"]);
 const POLL_MS = 500;
@@ -19,13 +20,19 @@ export function registerGetSubagentResultTool(pi: ExtensionAPI, rt: ExtensionRun
 		name: "get_subagent_result",
 		label: "Get subagent result",
 		description: [
-			"Check status and retrieve results from a background sub-agent.",
+			"Last-resort recovery/debug retrieval for a sub-agent result.",
+			"Prefer proactive completion notifications and blocking subagent_run/foreground Agent results; do not fetch the same result again after normal completion.",
+			"Use for explicit user requests, missed notifications, failed/aborted/orphaned/detached runs, or verbose transcript inspection.",
 			"Args: { agent_id, wait?, verbose? }.",
-			"If wait is true, blocks until the sub-agent reaches a terminal state.",
 		].join(" "),
 		parameters: Type.Object({
 			agent_id: Type.String({ description: "Sub-agent ID returned by Agent/subagent_dispatch." }),
-			wait: Type.Optional(Type.Boolean({ description: "Wait for completion before returning. Default: false." })),
+			wait: Type.Optional(
+				Type.Boolean({
+					description:
+						"Wait for completion before returning. Prefer blocking run tools unless this is explicit recovery/on-demand.",
+				}),
+			),
 			verbose: Type.Optional(
 				Type.Boolean({
 					description: "Include transcript JSONL text, truncated for safety. Final output is not truncated.",
@@ -54,20 +61,37 @@ export function registerGetSubagentResultTool(pi: ExtensionAPI, rt: ExtensionRun
 				};
 			}
 
+			const alreadyHandled = TERMINAL.has(state.status) && rt.completionHandled(state.agentId);
 			if (TERMINAL.has(state.status)) rt.consumeCompletion(state.agentId);
-			const text = await formatResultText(state, params.verbose ?? false);
+			const text = await formatResultText(state, params.verbose ?? false, alreadyHandled);
 			return {
 				content: [{ type: "text" as const, text }],
-				details: { agentId: state.agentId, status: state.status, paths: state.paths, usage: state.usage } as Record<
-					string,
-					unknown
-				>,
+				details: {
+					agentId: state.agentId,
+					alias: state.alias,
+					agent: state.agent,
+					status: state.status,
+					provider: state.provider,
+					model: state.model,
+					thinking: state.thinking,
+					turns: state.turns,
+					paths: state.paths,
+					usage: state.usage,
+				} as Record<string, unknown>,
 			};
+		},
+		renderResult(result, _options, theme, _context) {
+			return renderDispatchResult(
+				result as Parameters<typeof renderDispatchResult>[0],
+				{ expanded: false } as never,
+				theme,
+			);
 		},
 	});
 }
 
-async function formatResultText(state: SubagentState, verbose: boolean): Promise<string> {
+async function formatResultText(state: SubagentState, verbose: boolean, alreadyHandled = false): Promise<string> {
+	if (alreadyHandled && state.status === "done" && !verbose) return formatAlreadyHandledText(state);
 	const lines = [formatParentSummary(state, { full: true })];
 	if (!TERMINAL.has(state.status)) {
 		lines.push("");
@@ -83,6 +107,13 @@ async function formatResultText(state: SubagentState, verbose: boolean): Promise
 		lines.push(await readTranscript(state.paths.output));
 	}
 	return lines.join("\n");
+}
+
+function formatAlreadyHandledText(state: SubagentState): string {
+	return [
+		`${state.alias} #${state.agentId} (${state.agent}) already completed and its result was already delivered to this conversation.`,
+		"Use the existing completion notification or blocking result in context; call with verbose=true only for transcript debugging.",
+	].join("\n");
 }
 
 async function readTranscript(outputPath: string): Promise<string> {

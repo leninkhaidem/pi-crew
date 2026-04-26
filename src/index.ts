@@ -174,6 +174,7 @@ export default function (pi: ExtensionAPI) {
 			return resumePromise;
 		},
 		consumeCompletion: (agentId) => dispatcher.consume(agentId),
+		completionHandled: (agentId) => dispatcher.wasHandled(agentId),
 		getCurrentBatchId: (ctx) => batches.currentBatchId(resolveSessionId(ctx)),
 		getConfig,
 		resolveSessionId,

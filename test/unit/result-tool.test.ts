@@ -1,10 +1,21 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { visibleWidth } from "@mariozechner/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeState } from "../../src/state/store.js";
 import { registerGetSubagentResultTool } from "../../src/tools/result.js";
 import type { SubagentState } from "../../src/types.js";
+
+type RegisteredResultTool = {
+	execute: (id: string, params: { agent_id: string }, signal?: AbortSignal) => Promise<unknown>;
+	renderResult: (
+		result: unknown,
+		options: unknown,
+		theme: unknown,
+		context: unknown,
+	) => { render: (width: number) => string[] };
+};
 
 const stateOf = (agentDir: string, overrides: Partial<SubagentState>): SubagentState => {
 	const agentId = overrides.agentId ?? "abc12345";
@@ -60,24 +71,62 @@ describe("get_subagent_result", () => {
 		rmSync(tmp, { recursive: true, force: true });
 	});
 
-	it("returns the complete final output without summary truncation", async () => {
+	it("returns the complete final output to the parent while rendering compactly for the user", async () => {
 		const longOutput = `start-${"x".repeat(2000)}-end`;
 		await writeState(stateOf(tmp, { finalOutput: longOutput }));
-		let execute: ((id: string, params: { agent_id: string }, signal?: AbortSignal) => Promise<unknown>) | undefined;
+		let tool: RegisteredResultTool | undefined;
 		const pi = {
-			registerTool: vi.fn((tool) => {
-				execute = tool.execute;
+			registerTool: vi.fn((registeredTool) => {
+				tool = registeredTool;
 			}),
 		};
 		const consumeCompletion = vi.fn();
+		const completionHandled = vi.fn(() => false);
 
-		registerGetSubagentResultTool(pi as never, { agentDir: tmp, consumeCompletion } as never);
-		const result = (await execute?.("call", { agent_id: "abc12345" })) as {
+		registerGetSubagentResultTool(pi as never, { agentDir: tmp, consumeCompletion, completionHandled } as never);
+		const result = (await tool?.execute("call", { agent_id: "abc12345" })) as {
 			content: Array<{ type: "text"; text: string }>;
 		};
 
 		expect(result.content[0]?.text).toContain(longOutput);
 		expect(result.content[0]?.text).not.toContain("Summary truncated");
+		expect(consumeCompletion).toHaveBeenCalledWith("abc12345");
+		expect(completionHandled).toHaveBeenCalledWith("abc12345");
+
+		const theme = {
+			bold: (s: string) => s,
+			fg: (_token: string, s: string) => s,
+		};
+		const component = tool?.renderResult(result, { expanded: true }, theme, {});
+		const lines = component?.render(100) ?? [];
+		const rendered = lines.join("\n");
+
+		expect(rendered).toContain("summarizer #abc12345");
+		expect(rendered).toContain("done");
+		expect(rendered).not.toContain(longOutput);
+		expect(lines.every((line) => visibleWidth(line) <= 100)).toBe(true);
+	});
+
+	it("does not feed duplicate final output back to the parent when completion was already handled", async () => {
+		const longOutput = `start-${"x".repeat(2000)}-end`;
+		await writeState(stateOf(tmp, { finalOutput: longOutput }));
+		let tool: RegisteredResultTool | undefined;
+		const pi = {
+			registerTool: vi.fn((registeredTool) => {
+				tool = registeredTool;
+			}),
+		};
+		const consumeCompletion = vi.fn();
+		const completionHandled = vi.fn(() => true);
+
+		registerGetSubagentResultTool(pi as never, { agentDir: tmp, consumeCompletion, completionHandled } as never);
+		const result = (await tool?.execute("call", { agent_id: "abc12345" })) as {
+			content: Array<{ type: "text"; text: string }>;
+		};
+
+		expect(result.content[0]?.text).toContain("already completed");
+		expect(result.content[0]?.text).toContain("already delivered");
+		expect(result.content[0]?.text).not.toContain(longOutput);
 		expect(consumeCompletion).toHaveBeenCalledWith("abc12345");
 	});
 });

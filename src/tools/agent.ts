@@ -17,6 +17,7 @@ export function registerAgentTool(pi: ExtensionAPI, rt: ExtensionRuntime): void 
 		description: [
 			"Launch a specialized sub-agent, Claude Code style.",
 			"Foreground calls block and return the final result; background calls return an agent ID immediately.",
+			"For explore, run_in_background is ignored and the call blocks to avoid duplicate reconnaissance.",
 			"Requires alias: a short instance name shown in sub-agent UI.",
 			"Supports per-call provider/model/thinking overrides; model without provider infers provider when possible.",
 			"Args: { subagent_type, alias, prompt, run_in_background?, provider?, model?, thinking?, resume? }.",
@@ -25,7 +26,9 @@ export function registerAgentTool(pi: ExtensionAPI, rt: ExtensionRuntime): void 
 			subagent_type: Type.String({ description: "Agent name, e.g. explore, general-purpose, or custom." }),
 			alias: AliasSchema,
 			prompt: Type.String({ description: "Task for the sub-agent." }),
-			run_in_background: Type.Optional(Type.Boolean({ description: "If true, return immediately with an agent ID." })),
+			run_in_background: Type.Optional(
+				Type.Boolean({ description: "If true, return immediately with an agent ID. Ignored for explore." }),
+			),
 			...SlotOverrideProperties,
 			resume: Type.Optional(Type.String({ description: "Existing session-mode agent ID to continue." })),
 			cwd: Type.Optional(Type.String({ description: "Working directory override." })),
@@ -72,6 +75,7 @@ export function registerAgentTool(pi: ExtensionAPI, rt: ExtensionRuntime): void 
 					details: { error: "unknown_agent" },
 				};
 			}
+			const forceBlocking = isExploreAgent(agent.name);
 			const slotResolution = resolveAgentSlot(agent.name, config, ctx, pi, {
 				provider: params.provider,
 				model: params.model,
@@ -121,7 +125,7 @@ export function registerAgentTool(pi: ExtensionAPI, rt: ExtensionRuntime): void 
 			rt.trackHandle(handle);
 			rt.trackParentAbort(signal, handle);
 
-			if (params.run_in_background) {
+			if (params.run_in_background && !forceBlocking) {
 				void handle.donePromise.finally(() => rt.concurrency.active.release());
 				return {
 					content: [
@@ -195,4 +199,8 @@ function limitResult(current: number) {
 		],
 		details: { error: "max_active_reached" },
 	};
+}
+
+function isExploreAgent(agentName: string): boolean {
+	return agentName.toLowerCase() === "explore";
 }

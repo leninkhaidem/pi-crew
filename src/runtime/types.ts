@@ -16,6 +16,7 @@ export interface ExtensionRuntime {
 	steerHandle(agentId: string, message: string): Promise<"ok" | "not_found" | "unsupported">;
 	resumeHandle(agentId: string, task: string, signal?: AbortSignal): Promise<SubagentState | null>;
 	consumeCompletion(agentId: string): void;
+	completionHandled(agentId: string): boolean;
 	getCurrentBatchId(ctx: ExtensionContext): string | null;
 	getConfig(): Promise<PiCrewConfig>;
 	concurrency: {

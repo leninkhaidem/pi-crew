@@ -60,6 +60,24 @@ describe("renderActiveAgentsPanel", () => {
 		expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
 	});
 
+	it("shows the active tool target as a single activity line", () => {
+		const lines = renderActiveAgentsPanel({
+			states: [
+				stateOf({
+					activity: "reading",
+					activeTools: ["read"],
+					lastToolCall: { name: "read", args: { path: "src/ui/widget.ts" } },
+				}),
+			],
+			width: 80,
+			theme: theme as never,
+		});
+
+		const activityLines = lines.filter((line) => line.includes("⎿"));
+		expect(activityLines).toEqual(["     ⎿  reading src/ui/widget.ts"]);
+		expect(lines.join("\n")).not.toContain("⎿  reading\n");
+	});
+
 	it("never emits embedded newlines from multiline task or activity text", () => {
 		const lines = renderActiveAgentsPanel({
 			states: [

@@ -4,6 +4,8 @@ import { Type } from "typebox";
 import { discoverAgents } from "../agents/discovery.js";
 import { dispatch as runDispatch } from "../runtime/lifecycle.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
+import { formatParentSummary } from "../summary.js";
+import type { SubagentState } from "../types.js";
 import { renderDispatchCall } from "../ui/render-call.js";
 import { renderDispatchResult } from "../ui/render-result.js";
 import { AliasSchema, SlotOverrideProperties } from "./shared.js";
@@ -15,15 +17,16 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 		label: "Subagent dispatch",
 		description: [
 			"Dispatch a sub-agent in the background. Returns agentId immediately.",
+			"For explore, this is coerced to a blocking run to avoid duplicate reconnaissance.",
 			"Args: { agent, alias, task, cwd?, provider?, model?, thinking? }",
 			"Requires alias: a short instance name shown in sub-agent UI.",
 			"Supports per-call provider/model/thinking overrides; model without provider infers provider when possible.",
 			"Available agents: see 'pi-crew' section in system prompt.",
-			"Completion is auto-pushed into this conversation when the sub-agent finishes.",
+			"Completion is auto-pushed into this conversation when the sub-agent finishes, except coerced blocking explore runs.",
 		].join(" "),
 		parameters: Type.Object({
 			agent: Type.String({
-				description: "Agent name (general-purpose, explore, or custom)",
+				description: "Agent name. explore is coerced to blocking even through this background tool.",
 			}),
 			alias: AliasSchema,
 			task: Type.String({ description: "Task description" }),
@@ -46,6 +49,7 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 					details: { error: "unknown_agent" },
 				};
 			}
+			const forceBlocking = isExploreAgent(agent.name);
 			const slotResolution = resolveAgentSlot(agent.name, config, ctx, pi, {
 				provider: params.provider,
 				model: params.model,
@@ -107,6 +111,15 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 			}
 			rt.trackHandle(handle);
 			rt.trackParentAbort(signal, handle);
+			if (forceBlocking) {
+				try {
+					rt.consumeCompletion(handle.agentId);
+					const final = await handle.donePromise;
+					return stateResult(final);
+				} finally {
+					rt.concurrency.active.release();
+				}
+			}
 			void handle.donePromise.finally(() => rt.concurrency.active.release());
 			return {
 				content: [
@@ -142,4 +155,28 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 			return renderDispatchResult(result as Parameters<typeof renderDispatchResult>[0], options, theme);
 		},
 	});
+}
+
+function isExploreAgent(agentName: string): boolean {
+	return agentName.toLowerCase() === "explore";
+}
+
+function stateResult(state: SubagentState) {
+	return {
+		content: [{ type: "text" as const, text: formatParentSummary(state, { full: true }) }],
+		details: {
+			agentId: state.agentId,
+			alias: state.alias,
+			agent: state.agent,
+			status: state.status,
+			provider: state.provider,
+			model: state.model,
+			thinking: state.thinking,
+			turns: state.turns,
+			finalOutput: state.finalOutput,
+			errorMessage: state.errorMessage,
+			paths: state.paths,
+			usage: state.usage,
+		},
+	};
 }
