@@ -61,19 +61,26 @@ describe("renderSubagentsPanel", () => {
 		expect(filterCurrentBatchActiveStates([historical, running], null)).toEqual([]);
 	});
 
-	it("renders a bordered overlay panel within the requested width", () => {
+	it("renders a bordered below-input panel with inline details", () => {
 		const lines = renderSubagentsPanel({
 			states: [stateOf({})],
 			selectedIdx: 0,
-			expanded: new Set(["abc12345"]),
+			detailedAgentId: "abc12345",
 			width: 72,
 			theme: theme as never,
 		});
 
 		expect(lines[0]).toContain("╭");
 		expect(lines.at(-1)).toContain("╰");
-		expect(lines.join("\n")).toContain("pi-crew active sub-agents");
+		expect(lines.join("\n")).toContain("pi-crew sub-agents");
+		expect(lines.join("\n")).toContain("enter hide details");
+		expect(lines.join("\n")).toContain("D kill");
 		expect(lines.join("\n")).toContain("esc close");
+		expect(lines.join("\n")).toContain("auth-search #abc12345");
+		expect(lines.join("\n")).toContain("model");
+		expect(lines.join("\n")).toContain("task");
+		expect(lines.join("\n")).not.toContain("output.jsonl");
+		expect(lines.join("\n")).not.toContain("state.json");
 		expect(lines.every((line) => visibleWidth(line) <= 72)).toBe(true);
 	});
 
@@ -81,7 +88,6 @@ describe("renderSubagentsPanel", () => {
 		const lines = renderSubagentsPanel({
 			states: [stateOf({ status: "done", finishedAt: 2, finalOutput: "done" })],
 			selectedIdx: 0,
-			expanded: new Set(),
 			width: 72,
 			theme: theme as never,
 		});
@@ -101,12 +107,12 @@ describe("renderSubagentsPanel", () => {
 				}),
 			],
 			selectedIdx: 0,
-			expanded: new Set(["abc12345"]),
 			width: 72,
 			theme: theme as never,
 		});
 
 		expect(lines.every((line) => !line.includes("\n") && visibleWidth(line) <= 72)).toBe(true);
-		expect(lines.join("\n")).toContain("Task headline Requirements:");
+		expect(lines.join("\n")).toContain("tool $ npm");
+		expect(lines.join("\n")).not.toContain("Task headline Requirements:");
 	});
 });

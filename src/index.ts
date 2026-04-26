@@ -208,14 +208,14 @@ export default function (pi: ExtensionAPI) {
 		batches.noteTurn(resolveSessionId(ctx), event.turnIndex);
 	});
 
+	let widget: WidgetController | null = null;
+	let footer: FooterController | null = null;
+	let watcher: WatcherHandle | null = null;
+
 	registerConfigCommand(pi, rt);
 	registerInstallDefaultsCommand(pi, rt);
 	registerAgentsCommand(pi, rt);
 	registerTreeCommand(pi, rt);
-
-	let widget: WidgetController | null = null;
-	let footer: FooterController | null = null;
-	let watcher: WatcherHandle | null = null;
 
 	pi.on("session_start", async (_event, ctx) => {
 		const config = await getConfig();
