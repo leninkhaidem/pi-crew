@@ -20,13 +20,7 @@ import { sanitizeTranscriptEvent } from "./transcript.js";
 
 const STATE_DEBOUNCE_MS = 80;
 const MAX_TURN_GRACE = 2;
-const EXCLUDED_TOOL_NAMES = new Set([
-	"subagent_dispatch",
-	"subagent_run",
-	"subagent_wait",
-	"subagent_status",
-	"subagent_kill",
-]);
+const EXCLUDED_TOOL_NAMES = new Set(["subagent_dispatch", "subagent_run", "subagent_status", "subagent_kill"]);
 
 export async function dispatchSession(
 	plan: DispatchPlan,

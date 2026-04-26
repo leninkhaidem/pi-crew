@@ -28,7 +28,6 @@ import { registerGetSubagentResultTool } from "./tools/result.js";
 import { registerRunTool } from "./tools/run.js";
 import { registerStatusTool } from "./tools/status.js";
 import { registerSteerTool } from "./tools/steer.js";
-import { registerWaitTool } from "./tools/wait.js";
 import type { PiCrewConfig } from "./types.js";
 import { type FooterController, mountFooter } from "./ui/footer.js";
 import { type WatcherHandle, mountStateWatcher } from "./ui/state-watcher.js";
@@ -198,7 +197,6 @@ export default function (pi: ExtensionAPI) {
 	registerStatusTool(pi, rt);
 	registerGetSubagentResultTool(pi, rt);
 	registerSteerTool(pi, rt);
-	registerWaitTool(pi, rt);
 	registerKillTool(pi, rt);
 
 	pi.on("message_start", (event, ctx) => {

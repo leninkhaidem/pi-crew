@@ -15,6 +15,7 @@ describe("buildSystemPromptBlock", () => {
 		expect(block).toContain("general-purpose: general");
 		expect(block).toContain("✗ Unconfigured: explore");
 		expect(block).toContain("/home/u/.pi/agent/subagents/<sessionId>/<agentId>/");
+		expect(block).not.toContain("subagent_wait");
 	});
 
 	it("omits Unconfigured line when all configured", () => {

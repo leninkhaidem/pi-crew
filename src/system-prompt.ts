@@ -45,7 +45,6 @@ export function buildSystemPromptBlock(args: SystemPromptArgs): string {
 		"    Calling it for a terminal agent consumes the completion to avoid duplicate notifications.",
 		"  - `steer_subagent` — redirect a running session-mode sub-agent.",
 		"  - `subagent_status` — peek at running/completed sub-agents.",
-		"  - `subagent_wait` — block on specific ids when you need their result.",
 		"  - `subagent_kill` — abort if you change your mind.",
 		"",
 		"State directory:",

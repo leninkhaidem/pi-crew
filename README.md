@@ -34,7 +34,6 @@ After install:
 | `subagent_dispatch` | Background dispatch. Returns agentId. |
 | `subagent_run` | Blocking single / parallel / chain modes. |
 | `subagent_status` | Peek at running/recent sub-agents. |
-| `subagent_wait` | Block on specified ids. |
 | `subagent_kill` | Abort a running sub-agent. |
 
 ## Slash commands
