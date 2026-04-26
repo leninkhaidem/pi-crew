@@ -7,7 +7,7 @@ import { openTreeOverlay } from "../ui/overlay.js";
 
 export function registerTreeCommand(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 	pi.registerCommand("subagents", {
-		description: "Open the pi-crew sub-agent tree overlay.",
+		description: "Open the pi-crew active sub-agent overlay.",
 		handler: async (_args, ctx) => {
 			const sessionId = rt.resolveSessionId(ctx);
 			const batchId = rt.getCurrentBatchId(ctx);

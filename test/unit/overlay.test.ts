@@ -1,7 +1,7 @@
 import { visibleWidth } from "@mariozechner/pi-tui";
 import { describe, expect, it } from "vitest";
 import type { SubagentState } from "../../src/types.js";
-import { filterCurrentBatchStates, renderSubagentsPanel } from "../../src/ui/overlay.js";
+import { filterCurrentBatchActiveStates, renderSubagentsPanel } from "../../src/ui/overlay.js";
 
 const theme = {
 	bold: (s: string) => s,
@@ -46,13 +46,18 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 });
 
 describe("renderSubagentsPanel", () => {
-	it("filters states to the current batch", () => {
-		const current = stateOf({ agentId: "current1", batchId: "batch-new" });
+	it("filters states to active agents in the current batch", () => {
+		const running = stateOf({ agentId: "current1", batchId: "batch-new", status: "running" });
+		const starting = stateOf({ agentId: "current2", batchId: "batch-new", status: "starting" });
+		const done = stateOf({ agentId: "done1", batchId: "batch-new", status: "done", finishedAt: 2 });
 		const historical = stateOf({ agentId: "old1", batchId: "batch-old" });
 		const unbatched = stateOf({ agentId: "legacy", batchId: null });
 
-		expect(filterCurrentBatchStates([historical, current, unbatched], "batch-new")).toEqual([current]);
-		expect(filterCurrentBatchStates([historical, current], null)).toEqual([]);
+		expect(filterCurrentBatchActiveStates([historical, running, done, starting, unbatched], "batch-new")).toEqual([
+			running,
+			starting,
+		]);
+		expect(filterCurrentBatchActiveStates([historical, running], null)).toEqual([]);
 	});
 
 	it("renders a bordered overlay panel within the requested width", () => {
@@ -66,9 +71,23 @@ describe("renderSubagentsPanel", () => {
 
 		expect(lines[0]).toContain("╭");
 		expect(lines.at(-1)).toContain("╰");
-		expect(lines.join("\n")).toContain("pi-crew sub-agents");
+		expect(lines.join("\n")).toContain("pi-crew active sub-agents");
 		expect(lines.join("\n")).toContain("esc close");
 		expect(lines.every((line) => visibleWidth(line) <= 72)).toBe(true);
+	});
+
+	it("renders an empty active panel when only terminal agents are present", () => {
+		const lines = renderSubagentsPanel({
+			states: [stateOf({ status: "done", finishedAt: 2, finalOutput: "done" })],
+			selectedIdx: 0,
+			expanded: new Set(),
+			width: 72,
+			theme: theme as never,
+		});
+
+		expect(lines.join("\n")).toContain("0 active");
+		expect(lines.join("\n")).toContain("No running sub-agents in current batch.");
+		expect(lines.join("\n")).not.toContain("done #");
 	});
 
 	it("does not emit embedded newlines for multiline state fields", () => {

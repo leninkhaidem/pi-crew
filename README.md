@@ -43,7 +43,7 @@ After install:
 | `/subagent-config` | TUI to set provider, model, and thinking level for `explore`. |
 | `/subagent-install-defaults` | Copy bundled `.md` agents to `~/.pi/agent/agents/`. |
 | `/subagent-agents` | Create, view, edit, eject, or delete simple `.md` agent definitions. |
-| `/subagents` | Open interactive tree overlay for the current sub-agent batch, with expanded result/transcript preview. |
+| `/subagents` | Open an interactive overlay for active sub-agents in the current batch, mainly for status and killing hung agents. |
 
 ## Hook events on `pi.events`
 

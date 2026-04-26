@@ -41,13 +41,17 @@ class TreeOverlay implements Component {
 	) {}
 
 	setStates(s: SubagentState[]) {
-		this.states = sortStates(s);
-		if (this.selectedIdx >= s.length) this.selectedIdx = Math.max(0, s.length - 1);
+		this.states = sortStates(s.filter(isActiveState));
+		this.selectedIdx = this.states.length === 0 ? 0 : Math.min(Math.max(0, this.selectedIdx), this.states.length - 1);
 		this.ensureSelectionVisible();
 		this.requestRender();
 	}
 
 	handleInput(data: string): void {
+		if (this.states.length === 0) {
+			if (data === KEY_ESC) this.onClose();
+			return;
+		}
 		if (data === KEY_UP) {
 			this.selectedIdx = Math.max(0, this.selectedIdx - 1);
 			this.ensureSelectionVisible();
@@ -124,16 +128,13 @@ class TreeOverlay implements Component {
 }
 
 export function renderSubagentsPanel(args: PanelRenderArgs): string[] {
-	const panelArgs = { ...args, width: Math.max(40, args.width) };
-	const counts = countByStatus(panelArgs.states);
-	const lines = [border("╭", "╮", " pi-crew sub-agents ", panelArgs.width, panelArgs.theme)];
-	lines.push(
-		row(` ${counts.running} running  ${counts.done} done  ${counts.failed} failed`, panelArgs.width, panelArgs.theme),
-	);
-	lines.push(row(" ↑↓ select · enter expand · k kill running · esc close", panelArgs.width, panelArgs.theme, "dim"));
+	const panelArgs = { ...args, states: args.states.filter(isActiveState), width: Math.max(40, args.width) };
+	const lines = [border("╭", "╮", " pi-crew active sub-agents ", panelArgs.width, panelArgs.theme)];
+	lines.push(row(` ${panelArgs.states.length} active`, panelArgs.width, panelArgs.theme));
+	lines.push(row(" ↑↓ select · enter expand · k kill · esc close", panelArgs.width, panelArgs.theme, "dim"));
 	lines.push(border("├", "┤", "", panelArgs.width, panelArgs.theme));
 	if (panelArgs.states.length === 0) {
-		lines.push(row(" No sub-agents for current batch.", panelArgs.width, panelArgs.theme, "muted"));
+		lines.push(row(" No running sub-agents in current batch.", panelArgs.width, panelArgs.theme, "muted"));
 	} else {
 		appendStateRows(lines, panelArgs);
 	}
@@ -141,9 +142,9 @@ export function renderSubagentsPanel(args: PanelRenderArgs): string[] {
 	return lines;
 }
 
-export function filterCurrentBatchStates(states: SubagentState[], batchId: string | null): SubagentState[] {
+export function filterCurrentBatchActiveStates(states: SubagentState[], batchId: string | null): SubagentState[] {
 	if (!batchId) return [];
-	return states.filter((state) => state.batchId === batchId);
+	return states.filter((state) => state.batchId === batchId && isActiveState(state));
 }
 
 export async function openTreeOverlay(
@@ -167,7 +168,7 @@ export async function openTreeOverlay(
 			);
 			watcherHandle = mountStateWatcher({
 				sessionDir: path.join(getRoot({ agentDir }), sessionId),
-				onChange: (states) => overlay.setStates(filterCurrentBatchStates(states, batchId)),
+				onChange: (states) => overlay.setStates(filterCurrentBatchActiveStates(states, batchId)),
 			});
 			return overlay;
 		},
@@ -238,16 +239,8 @@ function row(content: string, width: number, theme: Theme, color: "text" | "mute
 	return `${theme.fg("borderMuted", "│")}${trimmed}${padding}${theme.fg("borderMuted", "│")}`;
 }
 
-function countByStatus(states: SubagentState[]) {
-	let running = 0;
-	let done = 0;
-	let failed = 0;
-	for (const state of states) {
-		if (state.status === "running" || state.status === "starting") running++;
-		else if (state.status === "done") done++;
-		else failed++;
-	}
-	return { running, done, failed };
+function isActiveState(state: SubagentState): boolean {
+	return state.status === "running" || state.status === "starting";
 }
 
 function iconFor(status: SubagentState["status"], theme: Theme): string {
