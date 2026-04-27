@@ -1,9 +1,13 @@
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeSpawnFds, spawnSubagent } from "../../src/runtime/spawn.js";
+import {
+	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV,
+	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE,
+} from "../../src/runtime/tool-suppression.js";
 import { prepareMockPi } from "../fixtures/mock-runner.js";
 
 let tmp: string;
@@ -45,4 +49,50 @@ describe("spawnSubagent", () => {
 			mock.cleanup();
 		}
 	});
+
+	it("marks spawned sub-agents to suppress nested pi-crew tools", async () => {
+		const runDir = path.join(tmp, "run");
+		mkdirSync(runDir, { recursive: true });
+		const envPath = path.join(runDir, "env.json");
+		const binary = path.join(runDir, "pi-env-recorder");
+		writeEnvRecorder(binary, envPath);
+
+		const spawned = spawnSubagent({
+			binary,
+			model: "mock/mock-model",
+			thinking: "low",
+			tools: null,
+			systemPromptPath: path.join(runDir, "prompt.md"),
+			task: "say ok",
+			cwd: runDir,
+			outputPath: path.join(runDir, "output.jsonl"),
+			stderrPath: path.join(runDir, "stderr.log"),
+			parentAgentId: "parent",
+			sessionId: "session",
+		});
+
+		const [code] = await once(spawned.proc, "close");
+		closeSpawnFds(spawned);
+		const recordedEnv = JSON.parse(readFileSync(envPath, "utf-8")) as Record<string, string | null>;
+
+		expect(code).toBe(0);
+		expect(recordedEnv[PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV]).toBe(PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE);
+		expect(recordedEnv.PI_SUBAGENT_PARENT_ID).toBe("parent");
+		expect(recordedEnv.PI_SUBAGENT_SESSION_ID).toBe("session");
+	});
 });
+
+function writeEnvRecorder(binary: string, outputPath: string): void {
+	const scriptPath = `${binary}.mjs`;
+	const script = `import { writeFileSync } from "node:fs";
+const keys = ["${PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV}", "PI_SUBAGENT_PARENT_ID", "PI_SUBAGENT_SESSION_ID"];
+const entries = keys.map((key) => [key, process.env[key] ?? null]);
+writeFileSync(process.env.PI_CREW_ENV_OUTPUT, JSON.stringify(Object.fromEntries(entries)));
+`;
+	writeFileSync(scriptPath, script);
+	writeFileSync(
+		binary,
+		`#!/usr/bin/env bash\nexec env PI_CREW_ENV_OUTPUT="${outputPath}" "${process.execPath}" "${scriptPath}" "$@"\n`,
+	);
+	chmodSync(binary, 0o755);
+}

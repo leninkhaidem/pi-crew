@@ -1,3 +1,6 @@
+export const PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV = "PI_CREW_SUPPRESS_SUBAGENT_TOOLS";
+export const PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE = "1";
+
 export const PI_CREW_ORCHESTRATION_TOOL_NAMES = [
 	"Agent",
 	"subagent_dispatch",
@@ -24,6 +27,10 @@ export function isPiCrewOrchestrationTool(name: string): boolean {
 
 export function withoutPiCrewOrchestrationTools<T extends string>(toolNames: readonly T[]): T[] {
 	return toolNames.filter((name) => !isPiCrewOrchestrationTool(name));
+}
+
+export function shouldSuppressPiCrewSubagentTools(env: NodeJS.ProcessEnv = process.env): boolean {
+	return env[PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV] === PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE;
 }
 
 export function suppressPiCrewOrchestrationTools(session: ToolNameSession): void {
