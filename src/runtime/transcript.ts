@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { formatToolCall } from "../ui/format.js";
 import { parseCompleteJsonl } from "./jsonl.js";
 
 const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
@@ -110,8 +111,7 @@ function formatToolCallStart(event: Record<string, unknown>): string | null {
 	const message = asRecord(event.message);
 	const name = stringField(message, "name");
 	if (!name) return null;
-	const args = message?.arguments === undefined ? "" : ` ${safeJson(message.arguments)}`;
-	return boundedLine(`tool: ${name}${args}`);
+	return boundedLine(`tool: ${formatToolCall(name, asArgs(message?.arguments))}`);
 }
 
 function formatToolCallEnd(event: Record<string, unknown>): string | null {
@@ -123,8 +123,7 @@ function formatToolCallEnd(event: Record<string, unknown>): string | null {
 function formatToolExecutionStart(event: Record<string, unknown>): string | null {
 	const name = stringField(event, "toolName");
 	if (!name) return null;
-	const args = event.args === undefined ? "" : ` ${safeJson(event.args)}`;
-	return boundedLine(`tool: ${name}${args}`);
+	return boundedLine(`tool: ${formatToolCall(name, asArgs(event.args))}`);
 }
 
 function formatToolExecutionUpdate(event: Record<string, unknown>): string | null {
@@ -188,12 +187,8 @@ function formatToolResultContent(value: unknown): string {
 	);
 }
 
-function safeJson(value: unknown): string {
-	try {
-		return oneLine(JSON.stringify(value));
-	} catch {
-		return "{}";
-	}
+function asArgs(value: unknown): Record<string, unknown> {
+	return asRecord(value) ?? {};
 }
 
 function boundedLine(value: string): string {

@@ -111,6 +111,11 @@ describe("readRecentTranscriptExcerpt", () => {
 				}),
 				JSON.stringify({ type: "tool_execution_start", toolName: "read", args: { path: "src/auth.ts" } }),
 				JSON.stringify({
+					type: "tool_execution_start",
+					toolName: "bash",
+					args: { command: "set -euo pipefail\necho hello", timeout: 20 },
+				}),
+				JSON.stringify({
 					type: "tool_execution_update",
 					toolName: "bash",
 					partialResult: { content: [{ type: "text", text: "line one" }] },
@@ -132,7 +137,10 @@ describe("readRecentTranscriptExcerpt", () => {
 			expect(excerpt.kind).toBe("events");
 			if (excerpt.kind !== "events") return;
 			expect(excerpt.events.join("\n")).not.toContain("Task: find auth");
-			expect(excerpt.events).toContain('tool: read {"path":"src/auth.ts"}');
+			expect(excerpt.events).toContain("tool: read src/auth.ts");
+			expect(excerpt.events).toContain("tool: $ set -euo pipefail echo hello");
+			expect(excerpt.events.join("\n")).not.toContain('{"path":"src/auth.ts"}');
+			expect(excerpt.events.join("\n")).not.toContain('{"command":');
 			expect(excerpt.events).toContain("tool output (bash): line one");
 			expect(excerpt.events).toContain("tool: read completed");
 			expect(excerpt.events).toContain("assistant: working");
