@@ -4,6 +4,7 @@ import type { ExtensionCommandContext, Theme } from "@mariozechner/pi-coding-age
 import { type Component, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { getRoot } from "../state/paths.js";
 import type { SubagentState } from "../types.js";
+import { formatStateActivity } from "./activity.js";
 import { formatToolCall, formatUsageStats } from "./format.js";
 import { mountStateWatcher } from "./state-watcher.js";
 
@@ -13,6 +14,7 @@ const KEY_DOWN = "\x1b[B";
 const KEY_ENTER = "\r";
 const KEY_ESC = "\x1b";
 const KEY_D = "D";
+const KEY_D_LOWER = "d";
 const KEY_J = "j";
 const KEY_K = "k";
 const KEY_Y = "y";
@@ -78,7 +80,7 @@ class SubagentsPanel implements Component {
 			this.toggleDetailsSelected();
 			return true;
 		}
-		if (data === KEY_D) {
+		if (data === KEY_D || data === KEY_D_LOWER) {
 			const state = this.states[this.selectedIdx];
 			if (state && isActiveState(state)) {
 				this.pendingKillAgentId = state.agentId;
@@ -226,7 +228,7 @@ function helpLine(args: PanelRenderArgs): string {
 	const pending = args.states.find((state) => state.agentId === args.pendingKillAgentId);
 	if (pending) return row(` Kill ${pending.alias} #${pending.agentId}? y/N`, args.width, args.theme, "warning");
 	const detailVerb = args.detailedAgentId ? "enter hide details" : "enter details";
-	return row(` ↑↓/j/k select · ${detailVerb} · D kill · esc close`, args.width, args.theme, "dim");
+	return row(` ↑↓/j/k select · ${detailVerb} · d kill · esc esc kills batch`, args.width, args.theme, "dim");
 }
 
 function appendStateRows(lines: string[], args: PanelRenderArgs): void {
@@ -258,7 +260,7 @@ function appendDetailRowsForSelection(lines: string[], args: PanelRenderArgs): v
 	);
 	lines.push(row(detailLine(args.theme, "task", state.task), args.width, args.theme));
 	lines.push(row(detailLine(args.theme, "cwd", state.cwd), args.width, args.theme));
-	lines.push(row(detailLine(args.theme, "now", activityFor(state)), args.width, args.theme));
+	lines.push(row(detailLine(args.theme, "now", formatStateActivity(state)), args.width, args.theme));
 	if (state.lastToolCall) {
 		lines.push(
 			row(
@@ -291,15 +293,7 @@ function summaryLine(state: SubagentState, selected: boolean, detailed: boolean,
 	const detail = detailed ? theme.fg("accent", "◉") : " ";
 	const icon = iconFor(state.status, theme);
 	const elapsed = formatDuration(Date.now() - state.startedAt);
-	return `${pointer}${detail} ${icon} ${state.alias} · ${state.agent} · ${state.status} · ${elapsed} · ${activityFor(state)}`;
-}
-
-function activityFor(state: SubagentState): string {
-	if (state.activity) return state.activity;
-	if (state.activeTools && state.activeTools.length > 0) return `using ${state.activeTools.join(", ")}`;
-	if (state.lastToolCall) return `tool ${formatToolCall(state.lastToolCall.name, state.lastToolCall.args)}`;
-	if (state.lastText) return state.lastText;
-	return "thinking…";
+	return `${pointer}${detail} ${icon} ${state.alias} · ${state.agent} · ${state.status} · ${elapsed} · ${formatStateActivity(state)}`;
 }
 
 function border(left: string, right: string, title: string, width: number, theme: Theme): string {

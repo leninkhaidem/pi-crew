@@ -7,12 +7,13 @@ Sub-agent extension for the [pi coding assistant](https://github.com/badlogic/pi
 - **Claude-style tools.** `Agent`, `get_subagent_result`, and `steer_subagent` are available alongside the `subagent_*` tools.
 - **Background dispatch.** Sub-agents return an `agentId` immediately; the main agent stays interactive.
 - **Push notification on completion.** Each sub-agent's final summary is auto-injected into the main session — no polling.
-- **Live status.** Widget above the editor appears while sub-agents are active and shows status, model, and recent activity.
+- **Live status.** Widget above the editor appears while sub-agents are active and shows status, model, and one-line current activity.
 - **Multi-provider.** Each agent slot's model is configured via TUI from your authenticated providers. No hardcoded model IDs.
 - **Per-call model overrides.** `Agent`, `subagent_dispatch`, and `subagent_run` accept optional `provider`, `model`, and `thinking` overrides; available models are injected into the prompt.
 - **Per-slot thinking budget.** Reasoning effort (`off|minimal|low|medium|high|xhigh`) is configurable for `explore`; `general-purpose` inherits the parent model and thinking effort by default.
 - **Two bundled defaults.** `general-purpose` and `explore`. Override by creating same-named `.md` in `~/.pi/agent/agents/`.
 - **Tmux integration.** Optional live view of sub-agents in tmux windows or a separate session.
+- **Deliberate cancellation.** `Ctrl+C` aborts active current-batch sub-agents immediately; double `Esc` within 3 seconds aborts them after a warning.
 
 ## Install
 
@@ -43,7 +44,7 @@ After install:
 | `/subagent-config` | TUI to set provider, model, and thinking level for `explore`. |
 | `/subagent-install-defaults` | Copy bundled `.md` agents to `~/.pi/agent/agents/`. |
 | `/subagent-agents` | Create, view, edit, eject, or delete simple `.md` agent definitions. |
-| `/tasks` | Open an interactive below-input panel for the current batch. Press `Enter` to show selected run details in the same panel; press `D` to kill with confirmation. |
+| `/tasks` | Open an interactive below-input panel for the current batch. Press `Enter` to show selected run details in the same panel; press `d` to kill with confirmation. |
 
 ## Hook events on `pi.events`
 

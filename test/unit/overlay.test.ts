@@ -74,8 +74,8 @@ describe("renderSubagentsPanel", () => {
 		expect(lines.at(-1)).toContain("╰");
 		expect(lines.join("\n")).toContain("pi-crew sub-agents");
 		expect(lines.join("\n")).toContain("enter hide details");
-		expect(lines.join("\n")).toContain("D kill");
-		expect(lines.join("\n")).toContain("esc close");
+		expect(lines.join("\n")).toContain("d kill");
+		expect(lines.join("\n")).toContain("esc esc kills batch");
 		expect(lines.join("\n")).toContain("auth-search #abc12345");
 		expect(lines.join("\n")).toContain("model");
 		expect(lines.join("\n")).toContain("task");
@@ -112,7 +112,26 @@ describe("renderSubagentsPanel", () => {
 		});
 
 		expect(lines.every((line) => !line.includes("\n") && visibleWidth(line) <= 72)).toBe(true);
-		expect(lines.join("\n")).toContain("tool $ npm");
+		expect(lines.join("\n")).toContain("running npm");
 		expect(lines.join("\n")).not.toContain("Task headline Requirements:");
+	});
+
+	it("shows the last tool target when activity is generic", () => {
+		const lines = renderSubagentsPanel({
+			states: [
+				stateOf({
+					activity: "thinking…",
+					lastToolCall: { name: "read", args: { path: "src/ui/overlay.ts" } },
+				}),
+			],
+			selectedIdx: 0,
+			detailedAgentId: "abc12345",
+			width: 90,
+			theme: theme as never,
+		});
+
+		const rendered = lines.join("\n");
+		expect(rendered).toContain("reading src/ui/overlay.ts");
+		expect(rendered).not.toContain("now thinking…");
 	});
 });

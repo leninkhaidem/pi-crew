@@ -78,6 +78,22 @@ describe("renderActiveAgentsPanel", () => {
 		expect(lines.join("\n")).not.toContain("⎿  reading\n");
 	});
 
+	it("keeps the last tool target visible when activity falls back to thinking", () => {
+		const lines = renderActiveAgentsPanel({
+			states: [
+				stateOf({
+					activity: "thinking…",
+					activeTools: [],
+					lastToolCall: { name: "edit", args: { path: "src/ui/widget.ts" } },
+				}),
+			],
+			width: 80,
+			theme: theme as never,
+		});
+
+		expect(lines.filter((line) => line.includes("⎿"))).toEqual(["     ⎿  editing src/ui/widget.ts"]);
+	});
+
 	it("never emits embedded newlines from multiline task or activity text", () => {
 		const lines = renderActiveAgentsPanel({
 			states: [

@@ -2,7 +2,8 @@
 import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
 import { type Component, type TUI, truncateToWidth } from "@mariozechner/pi-tui";
 import type { SubagentState } from "../types.js";
-import { formatToolCall, formatUsageStats } from "./format.js";
+import { formatStateActivity } from "./activity.js";
+import { formatUsageStats } from "./format.js";
 
 const MAX_WIDGET_LINES = 12;
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -156,7 +157,7 @@ function appendAgent(
 	const stem = isLast ? "   " : "│  ";
 	const spinner = state.status === "starting" ? "◌" : (SPINNER[frame % SPINNER.length] ?? "⠋");
 	const stats = compactStats(state);
-	const activity = oneLine(activityFor(state));
+	const activity = oneLine(formatStateActivity(state));
 	lines.push(
 		truncateToWidth(
 			`${theme.fg("dim", connector)} ${theme.fg("accent", spinner)} ${theme.bold(state.alias)} ${theme.fg("dim", `(${state.agent})`)} ${theme.fg("dim", "·")} ${theme.fg("dim", stats)}`,
@@ -174,45 +175,6 @@ function compactStats(state: SubagentState): string {
 	if (usage) parts.push(usage);
 	parts.push(formatDuration(Date.now() - state.startedAt));
 	return parts.join(" · ");
-}
-
-function activityFor(state: SubagentState): string {
-	const activeTool = activeToolActivityFor(state);
-	if (activeTool) return activeTool;
-	if (state.activity) return state.activity;
-	if (state.lastToolCall) return `tool ${formatToolCall(state.lastToolCall.name, state.lastToolCall.args)}`;
-	if (state.lastText) return state.lastText;
-	return "thinking…";
-}
-
-function activeToolActivityFor(state: SubagentState): string | null {
-	if (!state.activeTools || state.activeTools.length === 0) return null;
-	if (state.lastToolCall && state.activeTools.includes(state.lastToolCall.name)) {
-		return formatToolActivity(state.lastToolCall.name, state.lastToolCall.args);
-	}
-	return `using ${state.activeTools.join(", ")}`;
-}
-
-function formatToolActivity(name: string, args: Record<string, unknown>): string {
-	const rendered = formatToolCall(name, args);
-	switch (name) {
-		case "read":
-			return `reading ${rendered.replace(/^read\s+/, "")}`;
-		case "edit":
-			return `editing ${rendered.replace(/^edit\s+/, "")}`;
-		case "write":
-			return `writing ${rendered.replace(/^write\s+/, "")}`;
-		case "bash":
-			return `running ${rendered.replace(/^\$\s+/, "")}`;
-		case "grep":
-			return `searching ${rendered.replace(/^grep\s+/, "")}`;
-		case "find":
-			return `finding ${rendered.replace(/^find\s+/, "")}`;
-		case "ls":
-			return `listing ${rendered.replace(/^ls\s+/, "")}`;
-		default:
-			return `using ${rendered}`;
-	}
 }
 
 function oneLine(value: string): string {

@@ -14,11 +14,12 @@ import { registerNotificationRenderer } from "./notify/renderer.js";
 import { createApprovalGate } from "./runtime/approval.js";
 import { createBatchTracker } from "./runtime/batch.js";
 import { createActiveCounter, createPoolLimiter } from "./runtime/concurrency.js";
+import { abortSubagentByStatePath } from "./runtime/kill.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./runtime/lifecycle.js";
 import { createParentAbortTracker } from "./runtime/parent-abort.js";
 import { killTmuxWindow, launchTmuxView } from "./runtime/tmux.js";
 import type { ExtensionRuntime } from "./runtime/types.js";
-import { readState, writeState } from "./state/store.js";
+import { listStates, readState, writeState } from "./state/store.js";
 import { sweep } from "./state/sweep.js";
 import { buildSystemPromptBlock } from "./system-prompt.js";
 import { registerAgentTool } from "./tools/agent.js";
@@ -30,6 +31,7 @@ import { registerStatusTool } from "./tools/status.js";
 import { registerSteerTool } from "./tools/steer.js";
 import type { PiCrewConfig } from "./types.js";
 import { type FooterController, mountFooter } from "./ui/footer.js";
+import { type InterruptController, mountInterruptHandler } from "./ui/interrupt.js";
 import { type WatcherHandle, mountStateWatcher } from "./ui/state-watcher.js";
 import { type WidgetController, mountWidget } from "./ui/widget.js";
 
@@ -211,6 +213,7 @@ export default function (pi: ExtensionAPI) {
 
 	let widget: WidgetController | null = null;
 	let footer: FooterController | null = null;
+	let interrupt: InterruptController | null = null;
 	let watcher: WatcherHandle | null = null;
 
 	registerConfigCommand(pi, rt);
@@ -225,11 +228,26 @@ export default function (pi: ExtensionAPI) {
 		const sessionDir = path.join(agentDir, "subagents", sessionId);
 		widget = mountWidget(ctx);
 		footer = mountFooter(ctx);
+		interrupt = mountInterruptHandler({
+			ctx,
+			getBatchId: () => rt.getCurrentBatchId(ctx),
+			loadStates: () => listStates(sessionDir, { includeDetached: true }),
+			abortStates: async (states, reason) => {
+				await Promise.all(
+					states.map(async (state) => {
+						const handled = await rt.abortActiveHandle(state.agentId, reason);
+						const result = handled ? null : await abortSubagentByStatePath(state.paths.state, reason);
+						emitter.killed({ agentId: state.agentId, reason, killed: handled || result?.ok === true });
+					}),
+				);
+			},
+		});
 		watcher = mountStateWatcher({
 			sessionDir,
 			onChange: (states) => {
 				widget?.update(states);
 				footer?.update(states);
+				interrupt?.update(states);
 			},
 		});
 	});
@@ -269,9 +287,11 @@ export default function (pi: ExtensionAPI) {
 		watcher?.stop();
 		widget?.stop();
 		footer?.stop();
+		interrupt?.stop();
 		watcher = null;
 		widget = null;
 		footer = null;
+		interrupt = null;
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
