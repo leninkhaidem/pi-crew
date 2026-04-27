@@ -105,10 +105,10 @@ function resolveBaseSlot(
 	pi: ExtensionAPI,
 ): { slot: AgentSlot; inherited: boolean } | null {
 	if (agentName === "general-purpose") {
+		const configured = config.agents[agentName];
+		if (configured) return { slot: configured, inherited: false };
 		const inherited = inheritedGeneralPurposeSlot(ctx, pi);
 		if (inherited) return { slot: inherited, inherited: true };
-		const fallback = config.agents[agentName];
-		if (fallback) return { slot: fallback, inherited: false };
 		return null;
 	}
 

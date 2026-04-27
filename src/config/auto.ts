@@ -2,7 +2,7 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import { type PiCrewConfig, defaultThinkingForAgent } from "../types.js";
 import { emptyConfig } from "./schema.js";
 
-const AGENTS = ["explore"] as const;
+const AGENTS = ["explore", "general-purpose"] as const;
 
 function pickCheapestNonReasoning(models: Model<Api>[]): Model<Api> | null {
 	const candidates = models.filter((m) => !m.reasoning);
