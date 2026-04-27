@@ -16,7 +16,11 @@ import { describeActivity } from "./activity.js";
 import { abortSubagentByStatePath } from "./kill.js";
 import type { DispatchHandle, DispatchPlan, LifecycleEnv, LifecycleHooks } from "./lifecycle.js";
 import { appendFinalResultContract } from "./result-contract.js";
-import { suppressPiCrewOrchestrationTools, withoutPiCrewOrchestrationTools } from "./tool-suppression.js";
+import {
+	suppressPiCrewOrchestrationTools,
+	withoutPiCrewOrchestrationExtensions,
+	withoutPiCrewOrchestrationTools,
+} from "./tool-suppression.js";
 import { sanitizeTranscriptEvent } from "./transcript.js";
 
 const STATE_DEBOUNCE_MS = 80;
@@ -163,6 +167,7 @@ export async function dispatchSession(
 			noContextFiles: true,
 			systemPromptOverride: () => systemPrompt,
 			appendSystemPromptOverride: () => [],
+			extensionsOverride: withoutPiCrewOrchestrationExtensions,
 		});
 		await loader.reload();
 		const sessionOptions: Parameters<typeof createAgentSession>[0] = {

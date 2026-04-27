@@ -6,6 +6,7 @@ import type { AgentConfig } from "../../src/types.js";
 
 let tmp: string;
 let activeToolNames: string[];
+let createdResourceLoaderOptions: unknown;
 let createdSessionOptions: unknown;
 let setActiveToolsByNameMock: ReturnType<typeof vi.fn>;
 let fakeSession: {
@@ -22,6 +23,10 @@ let fakeSession: {
 
 vi.mock("@mariozechner/pi-coding-agent", () => ({
 	DefaultResourceLoader: class {
+		constructor(options: unknown) {
+			createdResourceLoaderOptions = options;
+		}
+
 		async reload() {
 			return undefined;
 		}
@@ -68,6 +73,7 @@ describe("dispatchSession", () => {
 	beforeEach(() => {
 		tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-session-"));
 		subscriber = undefined;
+		createdResourceLoaderOptions = undefined;
 		createdSessionOptions = undefined;
 		activeToolNames = ["read", "Agent", "subagent_dispatch", "get_subagent_result", "steer_subagent", "bash"];
 		setActiveToolsByNameMock = vi.fn((toolNames: string[]) => {
@@ -158,6 +164,41 @@ describe("dispatchSession", () => {
 		expect(setActiveToolsByNameMock).toHaveBeenCalledWith(["read", "bash"]);
 		expect(fakeSession.bindExtensions).toHaveBeenCalledTimes(1);
 		expect(fakeSession.bindExtensions).toHaveBeenCalledWith(expect.objectContaining({ onError: expect.any(Function) }));
+	});
+
+	it("filters pi-crew extension handlers before binding session-mode sub-agents", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const { PI_CREW_ORCHESTRATION_TOOL_NAMES } = await import("../../src/runtime/tool-suppression.js");
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "say ok" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		await handle.donePromise;
+
+		const options = createdResourceLoaderOptions as {
+			extensionsOverride?: (base: { extensions: Array<{ tools: Map<string, unknown> }> }) => {
+				extensions: Array<{ tools: Map<string, unknown> }>;
+			};
+		};
+		const piCrewExtension = { tools: new Map([[PI_CREW_ORCHESTRATION_TOOL_NAMES[0], {}]]) };
+		const nonPiCrewExtension = { tools: new Map([["extension_tool", {}]]) };
+
+		const filtered = options.extensionsOverride?.({ extensions: [piCrewExtension, nonPiCrewExtension] });
+
+		expect(filtered?.extensions).toEqual([nonPiCrewExtension]);
 	});
 
 	it("keeps pi-crew orchestration tools inactive after extension binding and tool refresh", async () => {

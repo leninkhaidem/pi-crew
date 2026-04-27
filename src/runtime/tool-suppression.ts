@@ -21,6 +21,14 @@ interface ToolNameSession {
 	setActiveToolsByName(toolNames: string[]): void;
 }
 
+interface ToolRegisteringExtension {
+	tools: Map<string, unknown>;
+}
+
+interface ExtensionLoadResult {
+	extensions: ToolRegisteringExtension[];
+}
+
 export function isPiCrewOrchestrationTool(name: string): boolean {
 	return PI_CREW_ORCHESTRATION_TOOL_NAME_SET.has(name);
 }
@@ -31,6 +39,20 @@ export function withoutPiCrewOrchestrationTools<T extends string>(toolNames: rea
 
 export function shouldSuppressPiCrewSubagentTools(env: NodeJS.ProcessEnv = process.env): boolean {
 	return env[PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV] === PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE;
+}
+
+export function withoutPiCrewOrchestrationExtensions<T extends ExtensionLoadResult>(result: T): T {
+	return {
+		...result,
+		extensions: result.extensions.filter((extension) => !hasPiCrewOrchestrationTool(extension)),
+	};
+}
+
+function hasPiCrewOrchestrationTool(extension: ToolRegisteringExtension): boolean {
+	for (const toolName of extension.tools.keys()) {
+		if (isPiCrewOrchestrationTool(toolName)) return true;
+	}
+	return false;
 }
 
 export function suppressPiCrewOrchestrationTools(session: ToolNameSession): void {
