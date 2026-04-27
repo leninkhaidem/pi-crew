@@ -57,7 +57,7 @@ export class SubagentsPanel implements Component {
 		}
 		this.selectedIdx = this.states.length === 0 ? 0 : Math.min(Math.max(0, this.selectedIdx), this.states.length - 1);
 		this.ensureSelectionVisible();
-		this.loadDetailedTranscript();
+		this.loadDetailedTranscript(true);
 		this.args.requestRender();
 	}
 
@@ -150,19 +150,24 @@ export class SubagentsPanel implements Component {
 		const cur = this.states[this.selectedIdx];
 		if (!cur) return;
 		this.detailedAgentId = cur.agentId;
-		this.ensureTranscriptLoaded(cur);
+		this.ensureTranscriptLoaded(cur, true);
 		this.args.requestRender();
 	}
 
-	private loadDetailedTranscript(): void {
+	private loadDetailedTranscript(force = false): void {
 		const state = this.states.find((candidate) => candidate.agentId === this.detailedAgentId);
-		if (state) this.ensureTranscriptLoaded(state);
+		if (state) this.ensureTranscriptLoaded(state, force);
 	}
 
-	private ensureTranscriptLoaded(state: SubagentState): void {
+	private ensureTranscriptLoaded(state: SubagentState, force = false): void {
 		const cached = this.transcripts.get(state.agentId);
-		if (cached?.lastUpdate === state.lastUpdate) return;
-		this.transcripts.set(state.agentId, { lastUpdate: state.lastUpdate, status: "loading" });
+		if (!force && cached?.lastUpdate === state.lastUpdate) return;
+		if (cached?.status === "loading") return;
+		this.transcripts.set(state.agentId, {
+			lastUpdate: state.lastUpdate,
+			status: cached?.excerpt ? "ready" : "loading",
+			excerpt: cached?.excerpt,
+		});
 		void this.loadTranscript(state).then(
 			(excerpt) => {
 				this.transcripts.set(state.agentId, { lastUpdate: state.lastUpdate, status: "ready", excerpt });

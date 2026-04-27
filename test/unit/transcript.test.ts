@@ -20,11 +20,23 @@ describe("sanitizeTranscriptEvent", () => {
 		expect(sanitizeTranscriptEvent(event)).toBeNull();
 	});
 
-	it("drops streaming text deltas from persisted transcripts", () => {
+	it("keeps visible streaming text deltas while dropping hidden thinking updates", () => {
 		expect(
 			sanitizeTranscriptEvent({
 				type: "message_update",
 				assistantMessageEvent: { type: "text_delta", partial: { content: [{ type: "text", text: "partial" }] } },
+			}),
+		).toEqual({
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", partial: { content: [{ type: "text", text: "partial" }] } },
+		});
+		expect(
+			sanitizeTranscriptEvent({
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "thinking_delta",
+					partial: { content: [{ type: "thinking", thinking: "hidden" }] },
+				},
 			}),
 		).toBeNull();
 	});
@@ -83,6 +95,48 @@ describe("readRecentTranscriptExcerpt", () => {
 			expect(excerpt.events.at(-1)).toContain("event 24");
 			expect(JSON.stringify(excerpt)).not.toContain("hidden");
 			expect(JSON.stringify(excerpt)).not.toContain("partial");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("formats live transcript events without duplicating the task prompt", async () => {
+		const dir = mkdtempSync(path.join(tmpdir(), "pi-crew-transcript-"));
+		try {
+			const outputPath = path.join(dir, "output.jsonl");
+			const lines = [
+				JSON.stringify({
+					type: "message_end",
+					message: { role: "user", content: [{ type: "text", text: "Task: find auth" }] },
+				}),
+				JSON.stringify({ type: "tool_execution_start", toolName: "read", args: { path: "src/auth.ts" } }),
+				JSON.stringify({
+					type: "tool_execution_update",
+					toolName: "bash",
+					partialResult: { content: [{ type: "text", text: "line one" }] },
+				}),
+				JSON.stringify({ type: "tool_execution_end", toolName: "read" }),
+				JSON.stringify({
+					type: "message_update",
+					assistantMessageEvent: { type: "text_delta", partial: { content: [{ type: "text", text: "working" }] } },
+				}),
+				JSON.stringify({
+					type: "message_end",
+					message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+				}),
+			];
+			writeFileSync(outputPath, `${lines.join("\n")}\n`);
+
+			const excerpt = await readRecentTranscriptExcerpt(outputPath);
+
+			expect(excerpt.kind).toBe("events");
+			if (excerpt.kind !== "events") return;
+			expect(excerpt.events.join("\n")).not.toContain("Task: find auth");
+			expect(excerpt.events).toContain('tool: read {"path":"src/auth.ts"}');
+			expect(excerpt.events).toContain("tool output (bash): line one");
+			expect(excerpt.events).toContain("tool: read completed");
+			expect(excerpt.events).toContain("assistant: working");
+			expect(excerpt.events).toContain("assistant: done");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

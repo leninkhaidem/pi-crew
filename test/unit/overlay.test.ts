@@ -183,4 +183,25 @@ describe("renderSubagentsPanel", () => {
 		expect(panel.handleInput("\x1b[D")).toBe(true);
 		expect(closed).toBe(true);
 	});
+
+	it("refreshes the detail transcript when the output changes without a state timestamp change", async () => {
+		let loadCount = 0;
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => undefined,
+			requestRender: () => undefined,
+			onKill: () => undefined,
+			loadTranscript: async () => ({ kind: "events", events: [`assistant: transcript ${++loadCount}`] }),
+		});
+		const running = stateOf({ agentId: "abc12345", alias: "auth-search", lastUpdate: 1 });
+
+		panel.setStates([running]);
+		expect(panel.handleInput("\x1b[C")).toBe(true);
+		await Promise.resolve();
+		expect(panel.render(80).join("\n")).toContain("assistant: transcript 1");
+
+		panel.setStates([running]);
+		await Promise.resolve();
+		expect(panel.render(80).join("\n")).toContain("assistant: transcript 2");
+	});
 });

@@ -21,12 +21,12 @@ export type TranscriptExcerpt =
 
 /**
  * Keep persisted sub-agent transcripts useful without storing hidden reasoning
- * payloads or noisy streaming deltas. The returned event is safe to JSON.stringify;
- * null means the event should not be written at all.
+ * payloads. The returned event is safe to JSON.stringify; null means the event
+ * should not be written at all.
  */
 export function sanitizeTranscriptEvent(event: unknown): unknown | null {
-	const ev = event as { type?: string } | null;
-	if (ev?.type === "message_update") return null;
+	const ev = event as { type?: string; assistantMessageEvent?: unknown } | null;
+	if (ev?.type === "message_update" && !hasVisibleTextDelta(ev.assistantMessageEvent)) return null;
 
 	const sanitized = sanitizeValue(event);
 	return sanitized === undefined ? null : sanitized;
@@ -76,20 +76,34 @@ function formatTranscriptEvent(event: unknown | null): string | null {
 	const record = asRecord(event);
 	if (!record) return null;
 	const type = stringField(record, "type");
+	if (type === "message_update") return formatMessageUpdate(record);
 	if (type === "message_end") return formatMessageEnd(record);
 	if (type === "tool_call_start") return formatToolCallStart(record);
-	if (type === "tool_call_end") return "tool: completed";
+	if (type === "tool_call_end") return formatToolCallEnd(record);
+	if (type === "tool_execution_start") return formatToolExecutionStart(record);
+	if (type === "tool_execution_update") return formatToolExecutionUpdate(record);
+	if (type === "tool_execution_end") return formatToolExecutionEnd(record);
 	if (type === "agent_start") return "agent: started";
 	if (type === "agent_end") return formatAgentEnd(record);
 	return formatGenericEvent(record, type);
+}
+
+function formatMessageUpdate(event: Record<string, unknown>): string | null {
+	const update = asRecord(event.assistantMessageEvent);
+	if (!hasVisibleTextDelta(update)) return null;
+	const partial = asRecord(update?.partial);
+	const content = formatContent(partial?.content);
+	return content ? boundedLine(`assistant: ${content}`) : null;
 }
 
 function formatMessageEnd(event: Record<string, unknown>): string | null {
 	const message = asRecord(event.message);
 	if (!message) return null;
 	const role = stringField(message, "role") ?? "assistant";
+	if (role === "user") return null;
 	const content = formatContent(message.content);
-	return content ? boundedLine(`${role}: ${content}`) : null;
+	if (!content) return null;
+	return boundedLine(role === "toolResult" ? `tool result: ${content}` : `${role}: ${content}`);
 }
 
 function formatToolCallStart(event: Record<string, unknown>): string | null {
@@ -98,6 +112,32 @@ function formatToolCallStart(event: Record<string, unknown>): string | null {
 	if (!name) return null;
 	const args = message?.arguments === undefined ? "" : ` ${safeJson(message.arguments)}`;
 	return boundedLine(`tool: ${name}${args}`);
+}
+
+function formatToolCallEnd(event: Record<string, unknown>): string | null {
+	const message = asRecord(event.message);
+	const name = stringField(message, "name") ?? stringField(event, "toolName") ?? "tool";
+	return boundedLine(`tool: ${name} completed`);
+}
+
+function formatToolExecutionStart(event: Record<string, unknown>): string | null {
+	const name = stringField(event, "toolName");
+	if (!name) return null;
+	const args = event.args === undefined ? "" : ` ${safeJson(event.args)}`;
+	return boundedLine(`tool: ${name}${args}`);
+}
+
+function formatToolExecutionUpdate(event: Record<string, unknown>): string | null {
+	const content = formatToolResultContent(event.partialResult);
+	if (!content) return null;
+	const name = stringField(event, "toolName") ?? "tool";
+	return boundedLine(`tool output (${name}): ${content}`);
+}
+
+function formatToolExecutionEnd(event: Record<string, unknown>): string | null {
+	const name = stringField(event, "toolName") ?? "tool";
+	const content = formatToolResultContent(event.result);
+	return boundedLine(content ? `tool result (${name}): ${content}` : `tool: ${name} completed`);
 }
 
 function formatAgentEnd(event: Record<string, unknown>): string | null {
@@ -129,9 +169,23 @@ function formatContentPart(part: unknown): string {
 	if (!record) return "";
 	const type = stringField(record, "type");
 	if (type === "text") return stringField(record, "text") ?? "";
-	if (type === "tool_use" || type === "tool_call") return `[tool use: ${stringField(record, "name") ?? "tool"}]`;
-	if (type === "tool_result") return `tool result: ${formatContent(record.content)}`;
+	if (type === "tool_use" || type === "tool_call" || type === "toolCall") {
+		return `[tool use: ${stringField(record, "name") ?? "tool"}]`;
+	}
+	if (type === "tool_result" || type === "toolResult") return `tool result: ${formatContent(record.content)}`;
 	return stringField(record, "text") ?? "";
+}
+
+function formatToolResultContent(value: unknown): string {
+	const record = asRecord(value);
+	if (!record) return formatContent(value);
+	return (
+		formatContent(record.content) ||
+		stringField(record, "text") ||
+		stringField(record, "output") ||
+		stringField(record, "message") ||
+		""
+	);
 }
 
 function safeJson(value: unknown): string {
@@ -180,6 +234,23 @@ function sanitizeValue(value: unknown, key?: string): unknown {
 	}
 
 	return value;
+}
+
+function hasVisibleTextDelta(update: unknown): boolean {
+	const record = asRecord(update);
+	if (stringField(record, "type") !== "text_delta") return false;
+	const partial = asRecord(record?.partial);
+	return containsVisibleText(partial?.content);
+}
+
+function containsVisibleText(value: unknown): boolean {
+	if (typeof value === "string") return value.trim().length > 0;
+	if (!Array.isArray(value)) return false;
+	return value.some((part) => {
+		if (typeof part === "string") return part.trim().length > 0;
+		const record = asRecord(part);
+		return stringField(record, "type") === "text" && Boolean(stringField(record, "text")?.trim());
+	});
 }
 
 function isThinkingPart(value: unknown): boolean {
