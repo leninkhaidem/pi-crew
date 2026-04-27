@@ -16,11 +16,11 @@ import { describeActivity } from "./activity.js";
 import { abortSubagentByStatePath } from "./kill.js";
 import type { DispatchHandle, DispatchPlan, LifecycleEnv, LifecycleHooks } from "./lifecycle.js";
 import { appendFinalResultContract } from "./result-contract.js";
+import { withoutPiCrewOrchestrationTools } from "./tool-suppression.js";
 import { sanitizeTranscriptEvent } from "./transcript.js";
 
 const STATE_DEBOUNCE_MS = 80;
 const MAX_TURN_GRACE = 2;
-const EXCLUDED_TOOL_NAMES = new Set(["subagent_dispatch", "subagent_run", "subagent_status", "subagent_kill"]);
 
 export async function dispatchSession(
 	plan: DispatchPlan,
@@ -178,7 +178,7 @@ export async function dispatchSession(
 		if (plan.agent.tools) sessionOptions.tools = plan.agent.tools;
 		const created = await createAgentSession(sessionOptions);
 		session = created.session;
-		session.setActiveToolsByName(session.getActiveToolNames().filter((name) => !EXCLUDED_TOOL_NAMES.has(name)));
+		session.setActiveToolsByName(withoutPiCrewOrchestrationTools(session.getActiveToolNames()));
 		await session.bindExtensions({
 			onError: (err) => {
 				void fs

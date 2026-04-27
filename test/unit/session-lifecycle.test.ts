@@ -40,6 +40,25 @@ const fakeAgent: AgentConfig = {
 describe("dispatchSession", () => {
 	let subscriber: ((event: unknown) => void) | undefined;
 
+	it("defines the pi-crew orchestration tools suppressed from sub-agents", async () => {
+		const requiredTools = [
+			"Agent",
+			"subagent_dispatch",
+			"subagent_run",
+			"subagent_status",
+			"get_subagent_result",
+			"steer_subagent",
+			"subagent_kill",
+		];
+		const { PI_CREW_ORCHESTRATION_TOOL_NAMES, withoutPiCrewOrchestrationTools } = await import(
+			"../../src/runtime/tool-suppression.js"
+		);
+
+		expect(PI_CREW_ORCHESTRATION_TOOL_NAMES).toEqual(expect.arrayContaining(requiredTools));
+		expect(new Set(PI_CREW_ORCHESTRATION_TOOL_NAMES).size).toBe(PI_CREW_ORCHESTRATION_TOOL_NAMES.length);
+		expect(withoutPiCrewOrchestrationTools([...requiredTools, "read", "bash"])).toEqual(["read", "bash"]);
+	});
+
 	beforeEach(() => {
 		tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-session-"));
 		subscriber = undefined;
