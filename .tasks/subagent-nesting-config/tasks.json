@@ -1,0 +1,156 @@
+{
+  "feature": "subagent-nesting-config",
+  "title": "Subagent Nesting Guard and Config Slots",
+  "description": "Expose general-purpose in pi-crew config and prevent invoked sub-agents from launching nested sub-agents by default.",
+  "created_at": "2026-04-27T10:54:22Z",
+  "status": "completed",
+  "work_packages": [
+    {
+      "id": "WP1",
+      "title": "Config slot coverage",
+      "description": "Make general-purpose visible and configurable in the existing pi-crew configuration flow while preserving inheritance behavior.",
+      "task_ids": ["P1-T001", "P1-T002"],
+      "depends_on": [],
+      "parallel_safe_with": ["WP2"],
+      "primary_paths": [
+        "src/config/auto.ts",
+        "src/config/tui.ts",
+        "src/tools/slot.ts",
+        "test/unit/config-auto.test.ts",
+        "test/unit/slot.test.ts"
+      ],
+      "verification_commands": [
+        "npx vitest run test/unit/config-auto.test.ts test/unit/config-schema.test.ts test/unit/slot.test.ts test/unit/tool-schema.test.ts"
+      ],
+      "rationale": "The slot list, default suggestion behavior, and inheritance tests form one small configuration surface that should be changed and verified together."
+    },
+    {
+      "id": "WP2",
+      "title": "Nested subagent runtime guard",
+      "description": "Enforce code-level nested sub-agent suppression in both session and subprocess execution paths, including prompt/tool exposure tests.",
+      "task_ids": ["P2-T001", "P2-T002", "P2-T003", "P2-T004"],
+      "depends_on": [],
+      "parallel_safe_with": ["WP1"],
+      "primary_paths": [
+        "src/runtime/session-lifecycle.ts",
+        "src/runtime/spawn.ts",
+        "src/index.ts",
+        "src/system-prompt.ts",
+        "test/unit/session-lifecycle.test.ts",
+        "test/unit/spawn.test.ts",
+        "test/unit/system-prompt.test.ts"
+      ],
+      "verification_commands": [
+        "npx vitest run test/unit/session-lifecycle.test.ts test/unit/spawn.test.ts test/unit/system-prompt.test.ts"
+      ],
+      "rationale": "Session-mode and subprocess-mode suppression share the same safety goal and tool-name contract, so one implementer should keep the guard consistent across runtime paths."
+    }
+  ],
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Configuration slot visibility",
+      "description": "General-purpose becomes configurable through the existing slash command without losing parent-model inheritance when unset.",
+      "order": 1,
+      "tasks": [
+        {
+          "id": "P1-T001",
+          "title": "Expose general-purpose in config flow",
+          "description": "Update the config slot list so `/subagent-config` presents both `explore` and `general-purpose`. Keep the existing skip/unset behavior so general-purpose can remain inherited when the user does not explicitly configure it.",
+          "status": "done",
+          "completed_at": "2026-04-27T11:47:51Z",
+          "dependencies": [],
+          "acceptance_criteria": [
+            "The exported config slot list contains both `explore` and `general-purpose`.",
+            "Default suggestion behavior does not force-create a `general-purpose` slot when the user has not configured one.",
+            "The config TUI still saves selected provider, model, and thinking values for every listed slot.",
+            "Dispatch uses a saved `general-purpose` slot when one exists and falls back to inheritance only when it is unset."
+          ],
+          "context": "Covers REQ-1, REQ-2, REQ-3, AC-1, AC-2, and AC-3. The user noticed that only explore appears in `/subagent-config`, but general-purpose should also be configurable and meaningful when saved."
+        },
+        {
+          "id": "P1-T002",
+          "title": "Verify inheritance remains intact",
+          "description": "Add or update focused tests proving that an explicit general-purpose slot is honored and that parent model/thinking inheritance applies only when no slot exists. Keep tests aligned with existing config and slot-resolution patterns.",
+          "status": "done",
+          "completed_at": "2026-04-27T11:47:51Z",
+          "dependencies": ["P1-T001"],
+          "acceptance_criteria": [
+            "Tests fail if `general-purpose` is removed from the config slot list.",
+            "Tests continue to prove `suggestDefaults()` leaves `general-purpose` unset by default.",
+            "Tests prove `resolveAgentSlot()` honors an explicit configured `general-purpose` slot.",
+            "Tests prove `resolveAgentSlot()` inherits parent model/thinking when `general-purpose` is unset."
+          ],
+          "context": "Covers REQ-2, REQ-3, AC-2, and AC-3. The config UI change must not accidentally turn general-purpose into a mandatory slot or a no-op configured slot."
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Nested subagent prevention",
+      "description": "Sub-agents lose access to pi-crew delegation tools and do not receive prompt guidance encouraging nested delegation.",
+      "order": 2,
+      "tasks": [
+        {
+          "id": "P2-T001",
+          "title": "Define pi-crew tool suppression contract",
+          "description": "Create a shared code-level contract for pi-crew orchestration tools that must be hidden from invoked sub-agents. Include `Agent`, all `subagent_*` orchestration tools, `get_subagent_result`, and `steer_subagent`.",
+          "status": "done",
+          "completed_at": "2026-04-27T11:47:51Z",
+          "dependencies": [],
+          "acceptance_criteria": [
+            "The suppression list includes `Agent`, `subagent_dispatch`, `subagent_run`, `subagent_status`, `get_subagent_result`, `steer_subagent`, and `subagent_kill`.",
+            "Runtime code imports or reuses the shared contract instead of duplicating a partial local list.",
+            "A focused test fails if one of the required pi-crew orchestration tool names is omitted from the contract."
+          ],
+          "context": "Covers REQ-4, REQ-5, and AC-4. The previous session-mode filter missed `Agent`, which allowed a general-purpose sub-agent to launch another sub-agent."
+        },
+        {
+          "id": "P2-T002",
+          "title": "Enforce guard in session-mode subagents",
+          "description": "Apply the shared suppression contract when creating session-mode sub-agent sessions. The guard must remove pi-crew orchestration tools even when custom agent frontmatter omits `tools:` or includes those names.",
+          "status": "done",
+          "completed_at": "2026-04-27T11:47:51Z",
+          "dependencies": ["P2-T001"],
+          "acceptance_criteria": [
+            "Session-mode sub-agents do not have active pi-crew orchestration tools after session creation.",
+            "Denied pi-crew orchestration tools remain inactive after extension binding or tool refresh.",
+            "Filtering still preserves ordinary allowed tools such as `read` and `bash` and preserves non-pi-crew extension behavior where practical.",
+            "Tests cover `Agent`, `get_subagent_result`, and `steer_subagent` in addition to the older `subagent_*` names."
+          ],
+          "context": "Covers REQ-4, REQ-5, REQ-6, AC-4, and AC-8. Users should not need to know internal tool names in agent markdown."
+        },
+        {
+          "id": "P2-T003",
+          "title": "Enforce guard in subprocess-mode subagents",
+          "description": "Ensure subprocess-mode children launched by pi-crew suppress pi-crew orchestration tool registration. Parent sessions must keep registering tools normally, while child processes launched as sub-agents must not.",
+          "status": "done",
+          "completed_at": "2026-04-27T11:47:51Z",
+          "dependencies": ["P2-T001"],
+          "acceptance_criteria": [
+            "Subprocess launch includes an explicit pi-crew-owned child marker, `PI_CREW_SUPPRESS_SUBAGENT_TOOLS=1`, for invoked sub-agents.",
+            "When `PI_CREW_SUPPRESS_SUBAGENT_TOOLS=1` is present, pi-crew does not register orchestration tools in that process.",
+            "When the marker is absent, parent sessions still register the existing pi-crew tools.",
+            "Tests distinguish the new pi-crew marker from existing lineage variables such as `PI_SUBAGENT_PARENT_ID` and `PI_SUBAGENT_SESSION_ID`."
+          ],
+          "context": "Covers REQ-6, AC-5, and AC-7. The code-level guard must work for both execution backends without disabling legitimate parent sessions."
+        },
+        {
+          "id": "P2-T004",
+          "title": "Suppress subagent prompt guidance for children",
+          "description": "Prevent invoked sub-agents from receiving the pi-crew system-prompt block that advertises delegation tools. Keep the prompt block available to normal parent sessions where pi-crew tools are active.",
+          "status": "done",
+          "completed_at": "2026-04-27T11:47:51Z",
+          "dependencies": ["P2-T002", "P2-T003"],
+          "acceptance_criteria": [
+            "Session-mode final child system prompt content does not include the `## pi-crew sub-agents` guidance block.",
+            "Subprocess-mode tests exercise child pi-crew extension startup under `PI_CREW_SUPPRESS_SUBAGENT_TOOLS=1` and assert the final system prompt delivered after `before_agent_start` omits the `## pi-crew sub-agents` block.",
+            "Subprocess-mode persisted child prompt content also does not include the `## pi-crew sub-agents` guidance block.",
+            "Unmarked parent session prompts still include pi-crew guidance when pi-crew is loaded normally."
+          ],
+          "context": "Covers REQ-7, REQ-8, AC-6, and AC-7. Removing tools alone is insufficient if the child prompt still tells sub-agents to delegate."
+        }
+      ]
+    }
+  ]
+}
