@@ -3,7 +3,7 @@
   "title": "Config Inherit and Footer Details",
   "description": "Add explicit inherit model configuration and footer-driven active sub-agent transcript details.",
   "created_at": "2026-04-27T13:46:30Z",
-  "status": "reviewed",
+  "status": "completed",
   "work_packages": [
     {
       "id": "WP1",
