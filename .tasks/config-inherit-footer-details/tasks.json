@@ -120,7 +120,7 @@
           "id": "P2-T001",
           "title": "Add footer status navigation",
           "description": "Make the below-input `\u27f3 N running` status keyboard-navigable when the editor is empty and sub-agents are active. Down focuses the status, Down or Enter opens the active list, and Escape or Left closes/backtracks before abort handling. Keep the above-input tracker unchanged.",
-          "status": "in-progress",
+          "status": "done",
           "dependencies": [],
           "acceptance_criteria": [
             "With an empty editor and active sub-agents, Down focuses the below-input running status.",
@@ -130,13 +130,14 @@
             "Escape closes or backs out of the footer/details widget before active-sub-agent abort handling.",
             "The above-input active tracker behavior and rendering remain unchanged."
           ],
-          "context": "Covers REQ-6, REQ-7, REQ-8, REQ-12, REQ-13, AC-7, AC-8, and AC-12. The user specifically wants to navigate from the below-input status, not change the existing tracker, and approved only activating Down when the editor is empty."
+          "context": "Covers REQ-6, REQ-7, REQ-8, REQ-12, REQ-13, AC-7, AC-8, and AC-12. The user specifically wants to navigate from the below-input status, not change the existing tracker, and approved only activating Down when the editor is empty.",
+          "completed_at": "2026-04-27T14:29:30Z"
         },
         {
           "id": "P2-T002",
           "title": "Show transcript-focused subagent details",
           "description": "Update the active sub-agent list and drill-down view so arrows select agents and Enter or Right opens a selected detail view. The detail view shows metadata, task text, and a bounded formatted recent transcript excerpt without separate activity/tool/output/file sections.",
-          "status": "in-progress",
+          "status": "done",
           "dependencies": [
             "P2-T001"
           ],
@@ -150,7 +151,8 @@
             "The detail view omits current activity, active tools, last tool call, latest output, and file path sections.",
             "Transcript rendering uses sanitized persisted transcript data and does not show hidden reasoning content."
           ],
-          "context": "Covers REQ-9, REQ-10, REQ-11, REQ-12, REQ-13, REQ-14, AC-9, AC-10, AC-11, AC-12, and AC-13. The user preferred formatted recent transcript content directly in the selected agent detail view and approved the 64 KiB / 20 event / 30 wrapped line bounds."
+          "context": "Covers REQ-9, REQ-10, REQ-11, REQ-12, REQ-13, REQ-14, AC-9, AC-10, AC-11, AC-12, and AC-13. The user preferred formatted recent transcript content directly in the selected agent detail view and approved the 64 KiB / 20 event / 30 wrapped line bounds.",
+          "completed_at": "2026-04-27T14:29:30Z"
         }
       ]
     }
