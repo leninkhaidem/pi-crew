@@ -1,6 +1,10 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
 import type { ThinkingLevel } from "../types.js";
+import {
+	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV,
+	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE,
+} from "./tool-suppression.js";
 import { resolvePiInvocation } from "./invocation.js";
 
 export interface SpawnArgs {
@@ -52,6 +56,7 @@ export function spawnSubagent(args: SpawnArgs): SpawnedSubagent {
 			...process.env,
 			PI_SUBAGENT_PARENT_ID: args.parentAgentId,
 			PI_SUBAGENT_SESSION_ID: args.sessionId,
+			[PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV]: PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE,
 		},
 		detached: false,
 	});
