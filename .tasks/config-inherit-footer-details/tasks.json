@@ -77,7 +77,7 @@
           "id": "P1-T001",
           "title": "Support inherited slot resolution",
           "description": "Extend the persisted slot contract and resolver so any configurable sub-agent slot can explicitly inherit parent provider, model, and thinking. Preserve concrete slots, general-purpose default inheritance, and per-dispatch override precedence.",
-          "status": "in-progress",
+          "status": "done",
           "dependencies": [],
           "acceptance_criteria": [
             "Config parsing accepts and reloads explicit inherit slots while keeping existing concrete slot configs valid.",
@@ -86,13 +86,14 @@
             "Per-call provider, model, and thinking overrides take precedence over inherited and concrete slot configuration.",
             "general-purpose still inherits by default when no explicit concrete or inherit slot exists."
           ],
-          "context": "Covers REQ-1, REQ-2, REQ-4, REQ-5, AC-2, AC-3, and AC-4. The user wants inherit as a first-class config choice without regressing dispatch-time override behavior."
+          "context": "Covers REQ-1, REQ-2, REQ-4, REQ-5, AC-2, AC-3, and AC-4. The user wants inherit as a first-class config choice without regressing dispatch-time override behavior.",
+          "completed_at": "2026-04-27T14:14:48Z"
         },
         {
           "id": "P1-T002",
           "title": "Expose inherit in subagent config",
           "description": "Update `/subagent-config` so every configurable slot offers an inherit option. Selecting inherit must save durable inherited state and skip thinking selection; selecting a concrete model must keep the existing thinking selection behavior.",
-          "status": "in-progress",
+          "status": "done",
           "dependencies": [
             "P1-T001"
           ],
@@ -104,7 +105,8 @@
             "Selecting a concrete model still prompts for and saves a thinking level.",
             "Default suggestions continue to provide a concrete explore slot and leave general-purpose inherit-by-default behavior intact."
           ],
-          "context": "Covers REQ-1, REQ-2, REQ-3, REQ-5, AC-1, AC-5, and AC-6. The TUI should make inherit obvious without making users choose a redundant thinking level."
+          "context": "Covers REQ-1, REQ-2, REQ-3, REQ-5, AC-1, AC-5, and AC-6. The TUI should make inherit obvious without making users choose a redundant thinking level.",
+          "completed_at": "2026-04-27T14:14:48Z"
         }
       ]
     },
