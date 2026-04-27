@@ -2,6 +2,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { discoverAgents } from "../agents/discovery.js";
+import type { DetachScope } from "../runtime/detach.js";
 import { dispatch as runDispatch } from "../runtime/lifecycle.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import { formatParentSummary } from "../summary.js";
@@ -10,6 +11,19 @@ import { renderRunCall } from "../ui/render-call.js";
 import { renderDispatchResult } from "../ui/render-result.js";
 import { AliasSchema, ChainItemSchema, SlotOverrideProperties, TaskItemSchema } from "./shared.js";
 import { type SlotOverrides, resolveAgentSlot } from "./slot.js";
+
+type RunOutcome =
+	| { kind: "completed"; state: SubagentState }
+	| { kind: "backgrounded"; agentId: string; alias: string; agent: string };
+
+type BackgroundedOutcome = Extract<RunOutcome, { kind: "backgrounded" }>;
+
+interface BatchResultOpts {
+	partial?: boolean;
+	errors?: string[];
+	backgrounded?: BackgroundedOutcome[];
+	abandoned?: string[];
+}
 
 export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 	pi.registerTool({
@@ -58,27 +72,23 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 				task: string,
 				cwd: string | undefined,
 				overrides: SlotOverrides = {},
-			): Promise<SubagentState> => {
+				scope?: DetachScope,
+			): Promise<RunOutcome> => {
 				if (signal?.aborted) throw new Error("Interrupted before sub-agent launch.");
 				if (!rt.concurrency.active.tryAcquire()) {
 					throw new Error(`Active sub-agent limit reached (${rt.concurrency.active.current()}). Wait or kill some.`);
 				}
+				let wasDetached = false;
 				try {
 					const agent = discovered.agents.find((a) => a.name === agentName);
 					if (!agent) throw new Error(`Unknown agent "${agentName}".`);
 					const slotResolution = resolveAgentSlot(agent.name, config, ctx, pi, overrides);
 					if (!slotResolution.ok) throw new Error(slotResolution.message);
 					const slot = slotResolution.slot;
-					const approved = await rt.ensureProjectAgentApproved({
-						agentName: agent.name,
-						agentSource: agent.source,
-						ctx,
-					});
-					if (!approved) {
-						throw new Error(
-							`Project agent "${agent.name}" not approved. Set confirmProjectAgents: false in /subagent-config to disable prompts.`,
-						);
-					}
+					const approved = await rt.ensureProjectAgentApproved({ agentName: agent.name, agentSource: agent.source, ctx });
+					if (!approved) throw new Error(
+						`Project agent "${agent.name}" not approved. Set confirmProjectAgents: false in /subagent-config to disable prompts.`,
+					);
 					const handle = await runDispatch(
 						{ agent, model: slot, options: { agent: agentName, alias: alias.trim(), task, cwd } },
 						rt.envFor(ctx),
@@ -86,10 +96,20 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					);
 					rt.trackHandle(handle);
 					rt.trackParentAbort(signal, handle);
+					if (scope) {
+						const result = await raceScope(handle.donePromise, scope);
+						if (!result) {
+							wasDetached = true;
+							void handle.donePromise.finally(() => rt.concurrency.active.release());
+							return { kind: "backgrounded", agentId: handle.agentId, alias: handle.state.alias, agent: handle.state.agent };
+						}
+						rt.consumeCompletion(handle.agentId);
+						return { kind: "completed", state: result };
+					}
 					rt.consumeCompletion(handle.agentId);
-					return await handle.donePromise;
+					return { kind: "completed", state: await handle.donePromise };
 				} finally {
-					rt.concurrency.active.release();
+					if (!wasDetached) rt.concurrency.active.release();
 				}
 			};
 
@@ -101,12 +121,18 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 							details: { error: "alias_required" },
 						};
 					}
-					const final = await oneShot(single.agent, single.alias, single.task, params.cwd, {
-						provider: params.provider,
-						model: params.model,
-						thinking: params.thinking,
-					});
-					return toolResult(final);
+					const singleScope = rt.detach.createScope();
+					try {
+						const outcome = await oneShot(single.agent, single.alias, single.task, params.cwd, {
+							provider: params.provider,
+							model: params.model,
+							thinking: params.thinking,
+						}, singleScope);
+						if (outcome.kind === "backgrounded") return backgroundedToolResult(outcome);
+						return toolResult(outcome.state);
+					} finally {
+						singleScope.dispose();
+					}
 				}
 				if (tasks) {
 					if (tasks.length > config.global.maxParallelTasksPerCall) {
@@ -120,38 +146,55 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 							details: { error: "too_many_tasks", maxParallelTasksPerCall: config.global.maxParallelTasksPerCall },
 						};
 					}
-					const settled = await Promise.allSettled(
-						tasks.map((t) =>
-							rt.concurrency.pool.run(() =>
-								oneShot(t.agent, t.alias, t.task, t.cwd, {
-									provider: t.provider,
-									model: t.model,
-									thinking: t.thinking,
-								}),
+					const tasksScope = rt.detach.createScope();
+					try {
+						const settled = await Promise.allSettled(
+							tasks.map((t) =>
+								rt.concurrency.pool.run(() =>
+									oneShot(t.agent, t.alias, t.task, t.cwd, {
+										provider: t.provider,
+										model: t.model,
+										thinking: t.thinking,
+									}, tasksScope),
+								),
 							),
-						),
-					);
-					const states: SubagentState[] = [];
-					const errors: string[] = [];
-					for (const r of settled) {
-						if (r.status === "fulfilled") states.push(r.value);
-						else errors.push((r.reason as Error).message);
+						);
+						const states: SubagentState[] = [];
+						const backgrounded: BackgroundedOutcome[] = [];
+						const errors: string[] = [];
+						for (const r of settled) {
+							if (r.status === "rejected") errors.push((r.reason as Error).message);
+							else if (r.value.kind === "completed") states.push(r.value.state);
+							else backgrounded.push(r.value);
+						}
+						return toolResultBatch(states, { backgrounded, errors });
+					} finally {
+						tasksScope.dispose();
 					}
-					return toolResultBatch(states, errors.length > 0, errors);
 				}
 				if (chain) {
+					const chainScope = rt.detach.createScope();
 					const results: SubagentState[] = [];
 					let previous = "";
-					for (const step of chain) {
-						const taskText = step.task.replace(/\{previous\}/g, previous);
-						const r = await oneShot(step.agent, step.alias, taskText, step.cwd, {
-							provider: step.provider,
-							model: step.model,
-							thinking: step.thinking,
-						});
-						results.push(r);
-						if (r.status !== "done") return toolResultBatch(results, true);
-						previous = r.finalOutput ?? "";
+					try {
+						for (let i = 0; i < chain.length; i++) {
+							const step = chain[i]!;
+							const taskText = step.task.replace(/\{previous\}/g, previous);
+							const outcome = await oneShot(step.agent, step.alias, taskText, step.cwd, {
+								provider: step.provider,
+								model: step.model,
+								thinking: step.thinking,
+							}, chainScope);
+							if (outcome.kind === "backgrounded") {
+								const abandoned = chain.slice(i + 1).map((s) => s.alias);
+								return toolResultBatch(results, { backgrounded: [outcome], abandoned });
+							}
+							results.push(outcome.state);
+							if (outcome.state.status !== "done") return toolResultBatch(results, { partial: true });
+							previous = outcome.state.finalOutput ?? "";
+						}
+					} finally {
+						chainScope.dispose();
 					}
 					return toolResultBatch(results);
 				}
@@ -195,10 +238,25 @@ function toolResult(state: SubagentState) {
 	};
 }
 
-function toolResultBatch(states: SubagentState[], partial = false, errors: string[] = []) {
+function backgroundedToolResult(outcome: BackgroundedOutcome) {
+	const text = `Sub-agent ${outcome.alias} #${outcome.agentId} moved to background. Result will arrive via completion notification.`;
+	return {
+		content: [{ type: "text" as const, text }],
+		details: { agentId: outcome.agentId, alias: outcome.alias, agent: outcome.agent, status: "backgrounded" },
+	};
+}
+
+async function raceScope(donePromise: Promise<SubagentState>, scope: DetachScope): Promise<SubagentState | null> {
+	return Promise.race([donePromise, scope.detached.then(() => null)]);
+}
+
+function toolResultBatch(states: SubagentState[], opts: BatchResultOpts = {}) {
+	const { partial = false, errors = [], backgrounded = [], abandoned = [] } = opts;
 	const stateLines = states.map((s) => formatRunStateResult(s));
+	const bgLines = backgrounded.map((b) => `[backgrounded] ${b.alias} #${b.agentId} — result will arrive via notification`);
+	const abLines = abandoned.map((a) => `[abandoned] ${a} — step was not started`);
 	const errLines = errors.map((e) => `[error] ${e}`);
-	const text = [...stateLines, ...errLines].join("\n\n");
+	const text = [...stateLines, ...bgLines, ...abLines, ...errLines].join("\n\n");
 	return {
 		content: [{ type: "text" as const, text }],
 		details: {
@@ -215,7 +273,9 @@ function toolResultBatch(states: SubagentState[], partial = false, errors: strin
 				errorMessage: s.errorMessage,
 				paths: s.paths,
 			})),
-			...(partial ? { partial: true } : {}),
+			...(backgrounded.length > 0 ? { backgrounded: backgrounded.map((b) => ({ agentId: b.agentId, alias: b.alias, agent: b.agent, status: "backgrounded" })) } : {}),
+			...(abandoned.length > 0 ? { abandoned } : {}),
+			...(partial || errors.length > 0 || backgrounded.length > 0 || abandoned.length > 0 ? { partial: true } : {}),
 			...(errors.length > 0 ? { errors } : {}),
 		},
 	};
