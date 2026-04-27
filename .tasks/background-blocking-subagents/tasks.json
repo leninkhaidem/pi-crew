@@ -1,0 +1,158 @@
+{
+  "feature": "background-blocking-subagents",
+  "title": "Background Blocking Sub-Agents via Keyboard Shortcut",
+  "description": "Allow users to push currently-blocking sub-agents to the background via a keyboard shortcut, freeing the parent agent while sub-agents continue running",
+  "created_at": "2026-04-27T17:30:00Z",
+  "status": "completed",
+  "work_packages": [
+    {
+      "id": "WP1",
+      "title": "Detach controller and runtime wiring",
+      "description": "Create the detach controller module, extend the ExtensionRuntime interface, and wire the detach trigger into the TUI interrupt handler. This establishes the signal path from keyboard input to tool execution.",
+      "task_ids": ["P1-T001", "P1-T002"],
+      "depends_on": [],
+      "parallel_safe_with": [],
+      "primary_paths": ["src/runtime/", "src/ui/interrupt.ts", "src/index.ts"],
+      "verification_commands": ["npm run build"],
+      "rationale": "The detach controller, runtime integration, and TUI key handler form a single signal path — the controller API shapes the interrupt handler integration and the runtime interface changes."
+    },
+    {
+      "id": "WP2",
+      "title": "Tool integration for Agent and subagent_run",
+      "description": "Modify the blocking paths in both the Agent tool and subagent_run tool to race their donePromise against the detach signal, handle partial results, and defer concurrency release for detached sub-agents.",
+      "task_ids": ["P2-T001", "P2-T002"],
+      "depends_on": ["WP1"],
+      "parallel_safe_with": [],
+      "primary_paths": ["src/tools/agent.ts", "src/tools/run.ts", "src/runtime/types.ts"],
+      "verification_commands": ["npm run build"],
+      "rationale": "Both tools share the same detach integration pattern and touch the same runtime API surface. Implementing them together ensures consistent behavior and avoids divergent approaches."
+    },
+    {
+      "id": "WP3",
+      "title": "Unit tests for detach functionality",
+      "description": "Add unit tests covering the detach controller, tool detach behavior across all modes (single, parallel tasks, chain), concurrency tracking correctness, and interrupt handler key binding.",
+      "task_ids": ["P3-T001"],
+      "depends_on": ["WP1", "WP2"],
+      "parallel_safe_with": [],
+      "primary_paths": ["test/unit/"],
+      "verification_commands": ["npm test"],
+      "rationale": "Tests span the full detach feature and need both the controller and tool integration to be complete before meaningful assertions can be written. A single test task avoids artificial splits of tightly-coupled test scenarios."
+    }
+  ],
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Core Infrastructure",
+      "description": "Create the detach signaling mechanism and wire it through the runtime and TUI layers",
+      "order": 1,
+      "tasks": [
+        {
+          "id": "P1-T001",
+          "title": "Create detach controller module",
+          "description": "Create `src/runtime/detach.ts` exporting a `DetachController` that manages detach scopes. Each scope provides a Promise that resolves when the user triggers a detach. The controller exposes `createScope()`, `detachAll()`, and `hasActiveScopes()`. Scopes auto-clean on dispose to prevent leaks.",
+          "status": "done",
+          "dependencies": [],
+          "acceptance_criteria": [
+            "Exported `createDetachController()` returns a `DetachController` with `createScope()`, `detachAll()`, and `hasActiveScopes()`",
+            "`createScope()` returns a `DetachScope` with a Promise, a manual `resolve()`, and `dispose()` for cleanup",
+            "`detachAll()` resolves all active scopes' promises and clears them",
+            "`dispose()` on a scope removes it from the controller without resolving its promise",
+            "Calling `detachAll()` when no scopes are active is a no-op"
+          ],
+          "completed_at": "2026-04-27T18:00:00Z",
+          "context": "REQ-1 requires a mechanism to signal blocking tools to release their await. This controller is the coordination primitive between the TUI key handler and tool execution."
+        },
+        {
+          "id": "P1-T002",
+          "title": "Wire detach controller into runtime and TUI",
+          "description": "Extend the `ExtensionRuntime` interface in `src/runtime/types.ts` with a `detach` property exposing the `DetachController`. Instantiate the controller in `src/index.ts` and add it to the runtime object. Add a new key binding (Ctrl+B) to `src/ui/interrupt.ts` that calls `detachAll()` on the controller when active blocking scopes exist. Show a notification to the user when sub-agents are backgrounded.",
+          "status": "done",
+          "dependencies": ["P1-T001"],
+          "acceptance_criteria": [
+            "ExtensionRuntime has a `detach` property typed as DetachController",
+            "The controller is instantiated in index.ts and accessible via rt.detach",
+            "Ctrl+B in the TUI triggers detachAll() when hasActiveScopes() is true",
+            "Ctrl+B is consumed (not passed through) when active scopes exist",
+            "Ctrl+B passes through normally when no active scopes exist",
+            "A non-empty notification message is rendered in the TUI when detach is triggered",
+            "The new key binding does not conflict with Ctrl+C or double-Escape"
+          ],
+          "completed_at": "2026-04-27T18:00:00Z",
+          "context": "REQ-1 and REQ-8 require a non-conflicting keyboard trigger. Ctrl+B is chosen as a mnemonic for 'background' and is not currently bound in the interrupt handler."
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Tool Integration",
+      "description": "Modify the blocking tool paths to race against detach signals and handle backgrounding correctly",
+      "order": 2,
+      "tasks": [
+        {
+          "id": "P2-T001",
+          "title": "Integrate detach into Agent tool foreground path",
+          "description": "Modify the foreground blocking path in `src/tools/agent.ts` so that when a detach signal fires, the tool resolves immediately with a 'backgrounded' result. The sub-agent process must continue running, completion notification must be delivered later via CompletionDispatcher, and the active concurrency slot must only be released when the sub-agent actually finishes.",
+          "status": "done",
+          "dependencies": ["P1-T002"],
+          "acceptance_criteria": [
+            "Foreground Agent calls can be detached mid-execution via the detach signal",
+            "Detached sub-agent processes continue running uninterrupted",
+            "Tool returns a result with status 'backgrounded' and the sub-agent's agentId/alias",
+            "consumeCompletion() is NOT called for detached sub-agents (so CompletionDispatcher delivers the result later)",
+            "active.release() is deferred to handle.donePromise.finally() when detached, not released immediately",
+            "The detach scope is disposed in all code paths (normal completion, error, detach)",
+            "Background dispatch path (run_in_background=true) is unaffected"
+          ],
+          "completed_at": "2026-04-27T18:15:00Z",
+          "context": "REQ-1, REQ-2, REQ-3, REQ-4, and REQ-7 require the Agent tool's foreground path to support mid-execution detach while maintaining correct concurrency tracking and enabling completion notifications."
+        },
+        {
+          "id": "P2-T002",
+          "title": "Integrate detach into subagent_run tool across all modes",
+          "description": "Modify `src/tools/run.ts` so all three execution modes (single, tasks, chain) support mid-execution detach. Single mode resolves immediately with a backgrounded result. Tasks mode returns completed results for finished sub-agents and backgrounded status for in-flight ones. Chain mode returns completed steps, backgrounds the current step, and marks remaining steps as abandoned. Concurrency slots are released only when each sub-agent actually finishes.",
+          "status": "done",
+          "dependencies": ["P1-T002"],
+          "acceptance_criteria": [
+            "Single-mode subagent_run can be detached, returning a 'backgrounded' tool result",
+            "Tasks-mode subagent_run detaches all in-flight tasks; completed tasks show normal results, in-flight ones show 'backgrounded'",
+            "Chain-mode subagent_run detaches the current step; completed steps show normal results, current shows 'backgrounded', remaining show 'abandoned'",
+            "consumeCompletion() is skipped for all detached sub-agents",
+            "active.release() is deferred for each detached sub-agent independently",
+            "The single shared detach scope is disposed after the tool returns",
+            "Non-detached completion (all tasks finish before user presses Ctrl+B) is unaffected"
+          ],
+          "completed_at": "2026-04-27T18:15:00Z",
+          "context": "REQ-5 and REQ-6 define specific behavior for tasks and chain modes. REQ-7 requires correct concurrency tracking across all modes."
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Testing",
+      "description": "Unit tests covering the detach controller, tool integration, and TUI key handling",
+      "order": 3,
+      "tasks": [
+        {
+          "id": "P3-T001",
+          "title": "Unit tests for detach feature",
+          "description": "Create `test/unit/detach.test.ts` covering: detach controller lifecycle (create scope, detachAll resolves promises, dispose cleans up, no-op when empty); Agent tool detach behavior (foreground detach returns backgrounded result, completion notification arrives later); subagent_run detach for single/tasks/chain modes (partial results, concurrency tracking); interrupt handler Ctrl+B integration (key consumed when scopes active, passed through when not). Follow existing test patterns in `test/unit/interrupt.test.ts` and `test/unit/concurrency.test.ts`.",
+          "status": "done",
+          "completed_at": "2026-04-27T18:30:00Z",
+          "dependencies": ["P2-T001", "P2-T002"],
+          "acceptance_criteria": [
+            "DetachController unit tests pass: createScope, detachAll, dispose, hasActiveScopes, multiple scopes",
+            "Agent tool detach test passes: foreground path returns backgrounded result when detach fires",
+            "subagent_run single mode detach test passes",
+            "subagent_run tasks mode detach test passes with mixed completed/backgrounded results",
+            "subagent_run chain mode detach test passes with completed/backgrounded/abandoned results",
+            "Interrupt handler Ctrl+B test passes: key consumed when scopes active, transparent when not",
+            "Concurrency tracking test passes: active counter correct after detach and after eventual completion",
+            "Completion notification delivery test passes: detached sub-agent completion triggers a CompletionDispatcher notification that injects into the parent conversation",
+            "All existing tests continue to pass"
+          ],
+          "context": "AC-1 through AC-7 require verifiable behavior. Tests validate correctness of the detach signal path, tool result formatting, concurrency invariants, and TUI key handling."
+        }
+      ]
+    }
+  ]
+}

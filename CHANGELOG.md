@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.4.0 — 2026-04-27
+
+### Added
+
+- **Background blocking sub-agents via Ctrl+B.** Press Ctrl+B while a blocking sub-agent is running (`subagent_run`, foreground `Agent`) to push it to the background. The parent agent resumes immediately and receives the result via completion notification when the sub-agent finishes.
+- New `DetachController` module (`src/runtime/detach.ts`) providing scope-based signaling between TUI keyboard input and blocking tool execution.
+- `subagent_run` tasks mode returns mixed completed/backgrounded results when detached mid-batch.
+- `subagent_run` chain mode returns completed + backgrounded + abandoned step statuses when detached.
+- 22 new unit tests covering the detach controller, tool integration, interrupt handler, concurrency tracking, and completion dispatcher.
+
+### Changed
+
+- Agent tool (`Agent`) now returns full sub-agent output instead of truncating at 1200 chars, matching `subagent_run` behavior and eliminating unnecessary `get_subagent_result` follow-up calls.
+- `ExtensionRuntime` interface extended with `detach: DetachController` property.
+- Interrupt handler (`src/ui/interrupt.ts`) extended with Ctrl+B key binding.
+
+### Fixed
+
+- Cross-terminal arrow key support for TUI panel navigation.
+- Panel height capped to prevent viewport overflow flickering.
+
 ## v0.3.0 — 2026-04-27
 
 ### Added
