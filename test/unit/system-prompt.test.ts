@@ -1,5 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	PI_CREW_ORCHESTRATION_TOOL_NAMES,
+	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV,
+	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE,
+} from "../../src/runtime/tool-suppression.js";
 import { buildSystemPromptBlock } from "../../src/system-prompt.js";
+
+const mockedPiCodingAgent = vi.hoisted(() => ({ agentDir: "" }));
+
+vi.mock("@mariozechner/pi-coding-agent", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@mariozechner/pi-coding-agent")>();
+	return { ...actual, getAgentDir: () => mockedPiCodingAgent.agentDir };
+});
 
 describe("buildSystemPromptBlock", () => {
 	it("includes default agents and ✗ for unconfigured", () => {
@@ -66,3 +81,136 @@ describe("buildSystemPromptBlock", () => {
 		expect(block).toContain("provider: local, model: qwen — non-reasoning");
 	});
 });
+
+describe("pi-crew extension startup", () => {
+	const envKeys = [PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV, "PI_SUBAGENT_PARENT_ID", "PI_SUBAGENT_SESSION_ID"];
+	let tmp: string;
+	let previousEnv: Record<string, string | undefined>;
+
+	beforeEach(() => {
+		tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-index-"));
+		mockedPiCodingAgent.agentDir = path.join(tmp, "agent");
+		previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+		for (const key of envKeys) delete process.env[key];
+	});
+
+	afterEach(() => {
+		for (const key of envKeys) restoreEnv(key, previousEnv[key]);
+		rmSync(tmp, { recursive: true, force: true });
+	});
+
+	it("registers orchestration tools for unmarked parent sessions even with lineage variables", async () => {
+		process.env.PI_SUBAGENT_PARENT_ID = "parent";
+		process.env.PI_SUBAGENT_SESSION_ID = "session";
+		const pi = createFakePi();
+
+		await loadPiCrewExtension(pi);
+
+		expect([...pi.tools.keys()]).toEqual(expect.arrayContaining([...PI_CREW_ORCHESTRATION_TOOL_NAMES]));
+	});
+
+	it("skips orchestration tool registration when the pi-crew suppress marker is present", async () => {
+		process.env.PI_SUBAGENT_PARENT_ID = "parent";
+		process.env.PI_SUBAGENT_SESSION_ID = "session";
+		process.env[PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV] = PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE;
+		const pi = createFakePi();
+
+		await loadPiCrewExtension(pi);
+
+		for (const toolName of PI_CREW_ORCHESTRATION_TOOL_NAMES) {
+			expect(pi.tools.has(toolName)).toBe(false);
+		}
+	});
+
+	it("injects sub-agent prompt guidance for unmarked parent sessions", async () => {
+		const pi = createFakePi();
+		await loadPiCrewExtension(pi);
+
+		const prompt = await runBeforeAgentStart(pi, tmp, "parent prompt");
+
+		expect(prompt).toContain("parent prompt");
+		expect(prompt).toContain("## pi-crew sub-agents");
+	});
+
+	it("omits sub-agent prompt guidance when the pi-crew suppress marker is present", async () => {
+		process.env[PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV] = PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE;
+		const pi = createFakePi();
+		await loadPiCrewExtension(pi);
+
+		const prompt = await runBeforeAgentStart(pi, tmp, "child prompt");
+
+		expect(prompt).toBe("child prompt");
+		expect(prompt).not.toContain("## pi-crew sub-agents");
+	});
+});
+
+interface FakePi {
+	tools: Map<string, RegisteredTool>;
+	handlers: Map<string, PiHandler[]>;
+	registerTool: ReturnType<typeof vi.fn>;
+	registerCommand: ReturnType<typeof vi.fn>;
+	registerMessageRenderer: ReturnType<typeof vi.fn>;
+	on: ReturnType<typeof vi.fn>;
+}
+
+interface RegisteredTool {
+	name: string;
+}
+
+interface PiEvent {
+	systemPrompt: string;
+	message?: unknown;
+	turnIndex?: number;
+}
+
+interface PiContext {
+	cwd: string;
+	sessionManager: { getSessionFile(): string | undefined };
+	modelRegistry: { getAvailable(): unknown[] };
+	model: null;
+}
+
+type PiHandler = (event: PiEvent, ctx: PiContext) => unknown;
+
+function createFakePi(): FakePi {
+	const tools = new Map<string, RegisteredTool>();
+	const handlers = new Map<string, PiHandler[]>();
+	return {
+		tools,
+		handlers,
+		registerTool: vi.fn((tool: RegisteredTool) => {
+			tools.set(tool.name, tool);
+		}),
+		registerCommand: vi.fn(),
+		registerMessageRenderer: vi.fn(),
+		on: vi.fn((event: string, handler: PiHandler) => {
+			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+		}),
+	};
+}
+
+async function loadPiCrewExtension(pi: FakePi): Promise<void> {
+	const { default: piCrew } = await import("../../src/index.js");
+	piCrew(pi as never);
+}
+
+async function runBeforeAgentStart(pi: FakePi, cwd: string, systemPrompt: string): Promise<string> {
+	const handler = pi.handlers.get("before_agent_start")?.[0];
+	if (!handler) throw new Error("before_agent_start handler was not registered");
+	const result = await handler({ systemPrompt }, createFakeContext(cwd));
+	return (result as { systemPrompt: string }).systemPrompt;
+}
+
+function createFakeContext(cwd: string): PiContext {
+	return {
+		cwd,
+		sessionManager: { getSessionFile: () => path.join(cwd, "session.jsonl") },
+		modelRegistry: { getAvailable: () => [] },
+		model: null,
+	};
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+	if (value === undefined) delete process.env[key];
+	else process.env[key] = value;
+}

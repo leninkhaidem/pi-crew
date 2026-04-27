@@ -17,6 +17,7 @@ import { createActiveCounter, createPoolLimiter } from "./runtime/concurrency.js
 import { abortSubagentByStatePath } from "./runtime/kill.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./runtime/lifecycle.js";
 import { createParentAbortTracker } from "./runtime/parent-abort.js";
+import { shouldSuppressPiCrewSubagentTools } from "./runtime/tool-suppression.js";
 import { killTmuxWindow, launchTmuxView } from "./runtime/tmux.js";
 import type { ExtensionRuntime } from "./runtime/types.js";
 import { listStates, readState, writeState } from "./state/store.js";
@@ -40,6 +41,7 @@ const PACKAGE_ROOT = path.resolve(path.dirname(__filename), "..");
 const BUNDLED_AGENTS_DIR = path.join(PACKAGE_ROOT, "src", "agents", "defaults");
 
 export default function (pi: ExtensionAPI) {
+	const suppressSubagentTools = shouldSuppressPiCrewSubagentTools();
 	const agentDir = getAgentDir();
 	const userAgentsDir = path.join(agentDir, "agents");
 	const handles = new Map<string, DispatchHandle>();
@@ -195,13 +197,15 @@ export default function (pi: ExtensionAPI) {
 
 	registerNotificationRenderer(pi);
 
-	registerAgentTool(pi, rt);
-	registerDispatchTool(pi, rt);
-	registerRunTool(pi, rt);
-	registerStatusTool(pi, rt);
-	registerGetSubagentResultTool(pi, rt);
-	registerSteerTool(pi, rt);
-	registerKillTool(pi, rt);
+	if (!suppressSubagentTools) {
+		registerAgentTool(pi, rt);
+		registerDispatchTool(pi, rt);
+		registerRunTool(pi, rt);
+		registerStatusTool(pi, rt);
+		registerGetSubagentResultTool(pi, rt);
+		registerSteerTool(pi, rt);
+		registerKillTool(pi, rt);
+	}
 
 	pi.on("message_start", (event, ctx) => {
 		if ((event.message as { role?: string }).role === "user") batches.noteUserMessage(resolveSessionId(ctx));
@@ -295,6 +299,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (suppressSubagentTools) return { systemPrompt: event.systemPrompt };
 		const config = await getConfig();
 		const discovered = discoverAgents({
 			cwd: ctx.cwd,

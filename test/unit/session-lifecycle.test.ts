@@ -1,15 +1,19 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig } from "../../src/types.js";
 
 let tmp: string;
+let activeToolNames: string[];
+let createdResourceLoaderOptions: unknown;
+let createdSessionOptions: unknown;
+let setActiveToolsByNameMock: ReturnType<typeof vi.fn>;
 let fakeSession: {
 	messages: unknown[];
 	subscribe: ReturnType<typeof vi.fn>;
 	getActiveToolNames: ReturnType<typeof vi.fn>;
-	setActiveToolsByName: ReturnType<typeof vi.fn>;
+	setActiveToolsByName: (toolNames: string[]) => void;
 	bindExtensions: ReturnType<typeof vi.fn>;
 	prompt: ReturnType<typeof vi.fn>;
 	abort: ReturnType<typeof vi.fn>;
@@ -19,13 +23,20 @@ let fakeSession: {
 
 vi.mock("@mariozechner/pi-coding-agent", () => ({
 	DefaultResourceLoader: class {
+		constructor(options: unknown) {
+			createdResourceLoaderOptions = options;
+		}
+
 		async reload() {
 			return undefined;
 		}
 	},
 	SessionManager: { inMemory: vi.fn(() => ({})) },
 	SettingsManager: { create: vi.fn(() => ({})) },
-	createAgentSession: vi.fn(async () => ({ session: fakeSession })),
+	createAgentSession: vi.fn(async (options: unknown) => {
+		createdSessionOptions = options;
+		return { session: fakeSession };
+	}),
 }));
 
 const fakeAgent: AgentConfig = {
@@ -40,17 +51,42 @@ const fakeAgent: AgentConfig = {
 describe("dispatchSession", () => {
 	let subscriber: ((event: unknown) => void) | undefined;
 
+	it("defines the pi-crew orchestration tools suppressed from sub-agents", async () => {
+		const requiredTools = [
+			"Agent",
+			"subagent_dispatch",
+			"subagent_run",
+			"subagent_status",
+			"get_subagent_result",
+			"steer_subagent",
+			"subagent_kill",
+		];
+		const { PI_CREW_ORCHESTRATION_TOOL_NAMES, withoutPiCrewOrchestrationTools } = await import(
+			"../../src/runtime/tool-suppression.js"
+		);
+
+		expect(PI_CREW_ORCHESTRATION_TOOL_NAMES).toEqual(expect.arrayContaining(requiredTools));
+		expect(new Set(PI_CREW_ORCHESTRATION_TOOL_NAMES).size).toBe(PI_CREW_ORCHESTRATION_TOOL_NAMES.length);
+		expect(withoutPiCrewOrchestrationTools([...requiredTools, "read", "bash"])).toEqual(["read", "bash"]);
+	});
+
 	beforeEach(() => {
 		tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-session-"));
 		subscriber = undefined;
+		createdResourceLoaderOptions = undefined;
+		createdSessionOptions = undefined;
+		activeToolNames = ["read", "Agent", "subagent_dispatch", "get_subagent_result", "steer_subagent", "bash"];
+		setActiveToolsByNameMock = vi.fn((toolNames: string[]) => {
+			activeToolNames = [...toolNames];
+		});
 		fakeSession = {
 			messages: [{ role: "assistant", content: [{ type: "text", text: "ok" }] }],
 			subscribe: vi.fn((listener) => {
 				subscriber = listener;
 				return () => undefined;
 			}),
-			getActiveToolNames: vi.fn(() => ["read", "subagent_dispatch", "bash"]),
-			setActiveToolsByName: vi.fn(),
+			getActiveToolNames: vi.fn(() => activeToolNames),
+			setActiveToolsByName: setActiveToolsByNameMock,
 			bindExtensions: vi.fn(async () => undefined),
 			prompt: vi.fn(async () => undefined),
 			abort: vi.fn(async () => undefined),
@@ -125,8 +161,105 @@ describe("dispatchSession", () => {
 		);
 		await handle.donePromise;
 
-		expect(fakeSession.setActiveToolsByName).toHaveBeenCalledWith(["read", "bash"]);
+		expect(setActiveToolsByNameMock).toHaveBeenCalledWith(["read", "bash"]);
 		expect(fakeSession.bindExtensions).toHaveBeenCalledTimes(1);
 		expect(fakeSession.bindExtensions).toHaveBeenCalledWith(expect.objectContaining({ onError: expect.any(Function) }));
+	});
+
+	it("filters pi-crew extension handlers before binding session-mode sub-agents", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const { PI_CREW_ORCHESTRATION_TOOL_NAMES } = await import("../../src/runtime/tool-suppression.js");
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "say ok" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		await handle.donePromise;
+
+		const options = createdResourceLoaderOptions as {
+			extensionsOverride?: (base: { extensions: Array<{ tools: Map<string, unknown> }> }) => {
+				extensions: Array<{ tools: Map<string, unknown> }>;
+			};
+		};
+		const piCrewExtension = { tools: new Map([[PI_CREW_ORCHESTRATION_TOOL_NAMES[0], {}]]) };
+		const nonPiCrewExtension = { tools: new Map([["extension_tool", {}]]) };
+
+		const filtered = options.extensionsOverride?.({ extensions: [piCrewExtension, nonPiCrewExtension] });
+
+		expect(filtered?.extensions).toEqual([nonPiCrewExtension]);
+	});
+
+	it("keeps pi-crew orchestration tools inactive after extension binding and tool refresh", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const { PI_CREW_ORCHESTRATION_TOOL_NAMES } = await import("../../src/runtime/tool-suppression.js");
+		fakeSession.bindExtensions = vi.fn(async () => {
+			fakeSession.setActiveToolsByName([...activeToolNames, "subagent_status", "extension_tool"]);
+		});
+
+		const handle = await dispatchSession(
+			{
+				agent: { ...fakeAgent, tools: ["read", "Agent", "get_subagent_result", "steer_subagent", "bash"] },
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "say ok" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		await handle.donePromise;
+		fakeSession.setActiveToolsByName(["read", "Agent", "steer_subagent", "extension_tool"]);
+
+		const createdTools = (createdSessionOptions as { tools?: string[] }).tools;
+		expect(createdTools).toEqual(["read", "bash"]);
+		expect(activeToolNames).toEqual(["read", "extension_tool"]);
+		for (const call of setActiveToolsByNameMock.mock.calls) {
+			for (const toolName of PI_CREW_ORCHESTRATION_TOOL_NAMES) {
+				expect(call[0]).not.toContain(toolName);
+			}
+		}
+	});
+
+	it("persists session-mode child prompts without pi-crew delegation guidance", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "say ok" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		await handle.donePromise;
+
+		const prompt = readFileSync(handle.state.paths.prompt, "utf-8");
+		expect(prompt).toContain("be brief");
+		expect(prompt).not.toContain("## pi-crew sub-agents");
 	});
 });

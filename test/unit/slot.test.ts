@@ -3,13 +3,26 @@ import { emptyConfig } from "../../src/config/schema.js";
 import { resolveAgentSlot } from "../../src/tools/slot.js";
 
 describe("resolveAgentSlot", () => {
-	it("general-purpose inherits parent model and thinking", () => {
+	it("general-purpose honors an explicit configured slot", () => {
 		const cfg = emptyConfig();
-		cfg.agents["general-purpose"] = { provider: "configured", modelId: "ignored", thinking: "low" };
-		const ctx = { model: { provider: "parent", id: "model-id" } } as never;
+		cfg.agents["general-purpose"] = { provider: "configured", modelId: "configured-model", thinking: "low" };
+		const ctx = { model: { provider: "parent", id: "parent-model" } } as never;
 		const pi = { getThinkingLevel: () => "xhigh" } as never;
 
 		const result = resolveAgentSlot("general-purpose", cfg, ctx, pi);
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.inherited).toBe(false);
+			expect(result.slot).toEqual({ provider: "configured", modelId: "configured-model", thinking: "low" });
+		}
+	});
+
+	it("general-purpose inherits parent model and thinking when unset", () => {
+		const ctx = { model: { provider: "parent", id: "model-id" } } as never;
+		const pi = { getThinkingLevel: () => "xhigh" } as never;
+
+		const result = resolveAgentSlot("general-purpose", emptyConfig(), ctx, pi);
 
 		expect(result.ok).toBe(true);
 		if (result.ok) {

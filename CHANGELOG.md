@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.2.0 — 2026-04-27
+
+### Added
+
+- `/subagent-config` now exposes the built-in `general-purpose` agent slot alongside `explore`.
+- Added a shared pi-crew orchestration tool suppression contract for child sub-agents.
+- Added subprocess child marker `PI_CREW_SUPPRESS_SUBAGENT_TOOLS=1` so invoked child processes suppress pi-crew orchestration tools and prompt guidance.
+
+### Changed
+
+- `general-purpose` now honors an explicit configured provider/model/thinking slot when present, while still inheriting the parent model/thinking when unset.
+- Session-mode sub-agents filter pi-crew orchestration extensions before binding so child prompts do not advertise nested delegation.
+
+### Fixed
+
+- Invoked sub-agents no longer receive pi-crew orchestration tools (`Agent`, `subagent_dispatch`, `subagent_run`, `subagent_status`, `get_subagent_result`, `steer_subagent`, or `subagent_kill`) by default.
+- Nested sub-agent prevention no longer depends on users adding internal pi-crew tool names to agent frontmatter.
+- Child sub-agent prompts no longer include the `## pi-crew sub-agents` guidance block when nested delegation tools are suppressed.
+
+### Known limitations
+
+- Nested sub-agent suppression is not an OS sandbox or adversarial security boundary; a child with unrestricted process-launch capability can intentionally start a fresh unmarked `pi` process. Stronger prevention requires a separate parent-controlled capability or sandbox design.
+
 ## v0.1.0 — 2026-04-27
 
 Initial release.
