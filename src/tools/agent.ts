@@ -2,7 +2,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { discoverAgents } from "../agents/discovery.js";
-import { dispatch as runDispatch } from "../runtime/lifecycle.js";
+import { type DispatchHandle, dispatch as runDispatch } from "../runtime/lifecycle.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import { formatParentSummary } from "../summary.js";
 import type { AgentConfig, SubagentState } from "../types.js";
@@ -151,12 +151,23 @@ export function registerAgentTool(pi: ExtensionAPI, rt: ExtensionRuntime): void 
 				};
 			}
 
+			const scope = rt.detach.createScope();
+			let wasDetached = false;
 			try {
+				const winner = await Promise.race([
+					handle.donePromise.then((s) => ({ kind: "done" as const, state: s })),
+					scope.detached.then(() => ({ kind: "detached" as const })),
+				]);
+				if (winner.kind === "detached") {
+					wasDetached = true;
+					void handle.donePromise.finally(() => rt.concurrency.active.release());
+					return backgroundedResult(handle);
+				}
 				rt.consumeCompletion(handle.agentId);
-				const final = await handle.donePromise;
-				return stateResult(final);
+				return stateResult(winner.state);
 			} finally {
-				rt.concurrency.active.release();
+				if (!wasDetached) rt.concurrency.active.release();
+				scope.dispose();
 			}
 		},
 		renderResult(result, options, theme, _context) {
@@ -185,6 +196,23 @@ function stateResult(state: SubagentState) {
 			errorMessage: state.errorMessage,
 			paths: state.paths,
 			usage: state.usage,
+		},
+	};
+}
+
+function backgroundedResult(handle: DispatchHandle) {
+	return {
+		content: [
+			{
+				type: "text" as const,
+				text: `Sub-agent ${handle.state.alias} #${handle.agentId} moved to background. Result will arrive via completion notification.`,
+			},
+		],
+		details: {
+			agentId: handle.agentId,
+			alias: handle.state.alias,
+			agent: handle.state.agent,
+			status: "backgrounded",
 		},
 	};
 }
