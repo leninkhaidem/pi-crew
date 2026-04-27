@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDetachController } from "../../src/runtime/detach.js";
 import { registerAgentTool } from "../../src/tools/agent.js";
 import { registerDispatchTool } from "../../src/tools/dispatch.js";
 import {
@@ -96,6 +97,7 @@ function runtime(userAgentsDir: string, bundledAgentsDir: string) {
 			trackParentAbort: vi.fn(),
 			consumeCompletion,
 			concurrency: { active: { tryAcquire: vi.fn(() => true), release, current: vi.fn(() => 0) } },
+			detach: createDetachController(),
 		},
 		release,
 		consumeCompletion,
