@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -190,7 +190,35 @@ describe("dispatchSession", () => {
 		expect(createdTools).toEqual(["read", "bash"]);
 		expect(activeToolNames).toEqual(["read", "extension_tool"]);
 		for (const call of setActiveToolsByNameMock.mock.calls) {
-			for (const toolName of PI_CREW_ORCHESTRATION_TOOL_NAMES) expect(call[0]).not.toContain(toolName);
+			for (const toolName of PI_CREW_ORCHESTRATION_TOOL_NAMES) {
+				expect(call[0]).not.toContain(toolName);
+			}
 		}
+	});
+
+	it("persists session-mode child prompts without pi-crew delegation guidance", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "say ok" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		await handle.donePromise;
+
+		const prompt = readFileSync(handle.state.paths.prompt, "utf-8");
+		expect(prompt).toContain("be brief");
+		expect(prompt).not.toContain("## pi-crew sub-agents");
 	});
 });

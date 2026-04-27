@@ -11,9 +11,10 @@ import { buildSystemPromptBlock } from "../../src/system-prompt.js";
 
 const mockedPiCodingAgent = vi.hoisted(() => ({ agentDir: "" }));
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
-	getAgentDir: () => mockedPiCodingAgent.agentDir,
-}));
+vi.mock("@mariozechner/pi-coding-agent", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@mariozechner/pi-coding-agent")>();
+	return { ...actual, getAgentDir: () => mockedPiCodingAgent.agentDir };
+});
 
 describe("buildSystemPromptBlock", () => {
 	it("includes default agents and ✗ for unconfigured", () => {
@@ -120,6 +121,27 @@ describe("pi-crew extension startup", () => {
 			expect(pi.tools.has(toolName)).toBe(false);
 		}
 	});
+
+	it("injects sub-agent prompt guidance for unmarked parent sessions", async () => {
+		const pi = createFakePi();
+		await loadPiCrewExtension(pi);
+
+		const prompt = await runBeforeAgentStart(pi, tmp, "parent prompt");
+
+		expect(prompt).toContain("parent prompt");
+		expect(prompt).toContain("## pi-crew sub-agents");
+	});
+
+	it("omits sub-agent prompt guidance when the pi-crew suppress marker is present", async () => {
+		process.env[PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV] = PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE;
+		const pi = createFakePi();
+		await loadPiCrewExtension(pi);
+
+		const prompt = await runBeforeAgentStart(pi, tmp, "child prompt");
+
+		expect(prompt).toBe("child prompt");
+		expect(prompt).not.toContain("## pi-crew sub-agents");
+	});
 });
 
 interface FakePi {
@@ -170,6 +192,22 @@ function createFakePi(): FakePi {
 async function loadPiCrewExtension(pi: FakePi): Promise<void> {
 	const { default: piCrew } = await import("../../src/index.js");
 	piCrew(pi as never);
+}
+
+async function runBeforeAgentStart(pi: FakePi, cwd: string, systemPrompt: string): Promise<string> {
+	const handler = pi.handlers.get("before_agent_start")?.[0];
+	if (!handler) throw new Error("before_agent_start handler was not registered");
+	const result = await handler({ systemPrompt }, createFakeContext(cwd));
+	return (result as { systemPrompt: string }).systemPrompt;
+}
+
+function createFakeContext(cwd: string): PiContext {
+	return {
+		cwd,
+		sessionManager: { getSessionFile: () => path.join(cwd, "session.jsonl") },
+		modelRegistry: { getAvailable: () => [] },
+		model: null,
+	};
 }
 
 function restoreEnv(key: string, value: string | undefined): void {

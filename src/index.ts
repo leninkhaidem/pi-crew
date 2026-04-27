@@ -299,6 +299,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (suppressSubagentTools) return { systemPrompt: event.systemPrompt };
 		const config = await getConfig();
 		const discovered = discoverAgents({
 			cwd: ctx.cwd,
