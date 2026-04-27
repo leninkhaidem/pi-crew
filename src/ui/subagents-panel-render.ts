@@ -6,7 +6,7 @@ import { formatStateActivity } from "./activity.js";
 import { formatUsageStats } from "./format.js";
 
 const MAX_PANEL_ITEMS = 5;
-const MAX_TRANSCRIPT_LINES = 30;
+const MAX_TRANSCRIPT_LINES = 15;
 const ESC = "\\u001B";
 const BEL = "\\u0007";
 const ANSI_OR_OSC_PATTERN = new RegExp(
@@ -24,6 +24,7 @@ export interface PanelRenderArgs {
 	pendingKillAgentId?: string | null;
 	transcript?: TranscriptExcerpt | "loading";
 	canKill?: boolean;
+	maxHeight?: number;
 }
 
 export function renderSubagentsPanel(args: PanelRenderArgs): string[] {
@@ -41,6 +42,10 @@ export function renderSubagentsPanel(args: PanelRenderArgs): string[] {
 		appendStateRows(lines, panelArgs);
 	}
 	lines.push(border("╰", "╯", "", panelArgs.width, panelArgs.theme));
+	if (args.maxHeight && lines.length > args.maxHeight) {
+		lines.length = args.maxHeight;
+		lines[lines.length - 1] = border("╰", "╯", "", panelArgs.width, panelArgs.theme);
+	}
 	return lines;
 }
 

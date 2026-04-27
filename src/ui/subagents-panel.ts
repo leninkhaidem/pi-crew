@@ -75,6 +75,8 @@ export class SubagentsPanel implements Component {
 	}
 
 	render(width: number): string[] {
+		const termRows = process.stdout.rows || 24;
+		const maxHeight = Math.max(10, termRows - 2);
 		return renderSubagentsPanel({
 			states: this.states,
 			selectedIdx: this.selectedIdx,
@@ -85,6 +87,7 @@ export class SubagentsPanel implements Component {
 			pendingKillAgentId: this.pendingKillAgentId,
 			canKill: this.canKill(),
 			transcript: this.currentTranscript(),
+			maxHeight,
 		});
 	}
 
