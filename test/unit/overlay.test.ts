@@ -75,7 +75,8 @@ describe("renderSubagentsPanel", () => {
 		expect(lines.join("\n")).toContain("pi-crew sub-agents");
 		expect(lines.join("\n")).toContain("enter hide details");
 		expect(lines.join("\n")).toContain("d kill");
-		expect(lines.join("\n")).toContain("esc esc kills batch");
+		expect(lines.join("\n")).toContain("esc back");
+		expect(lines.join("\n")).not.toContain("esc esc kills batch");
 		expect(lines.join("\n")).toContain("auth-search #abc12345");
 		expect(lines.join("\n")).toContain("model");
 		expect(lines.join("\n")).toContain("task");
