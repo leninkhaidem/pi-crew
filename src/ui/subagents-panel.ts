@@ -1,5 +1,6 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Component } from "@mariozechner/pi-tui";
+import { type TranscriptExcerpt, readRecentTranscriptExcerpt } from "../runtime/transcript.js";
 import type { SubagentState } from "../types.js";
 import { isActiveSubagentState, renderSubagentsPanel } from "./subagents-panel-render.js";
 
@@ -8,6 +9,7 @@ export { isActiveSubagentState, renderSubagentsPanel } from "./subagents-panel-r
 const KEY_UP = "\x1b[A";
 const KEY_DOWN = "\x1b[B";
 const KEY_LEFT = "\x1b[D";
+const KEY_RIGHT = "\x1b[C";
 const KEY_ENTER = "\r";
 const KEY_ESC = "\x1b";
 const KEY_D = "D";
@@ -26,6 +28,13 @@ interface SubagentsPanelArgs {
 	onClose: () => void;
 	requestRender: () => void;
 	onKill: (state: SubagentState) => void | Promise<void>;
+	loadTranscript?: (state: SubagentState) => Promise<TranscriptExcerpt>;
+}
+
+interface TranscriptCacheEntry {
+	lastUpdate: number;
+	status: "loading" | "ready";
+	excerpt?: TranscriptExcerpt;
 }
 
 export class SubagentsPanel implements Component {
@@ -34,6 +43,7 @@ export class SubagentsPanel implements Component {
 	private scrollOffset = 0;
 	private detailedAgentId: string | null = null;
 	private pendingKillAgentId: string | null = null;
+	private transcripts = new Map<string, TranscriptCacheEntry>();
 
 	constructor(private args: SubagentsPanelArgs) {}
 
@@ -47,6 +57,7 @@ export class SubagentsPanel implements Component {
 		}
 		this.selectedIdx = this.states.length === 0 ? 0 : Math.min(Math.max(0, this.selectedIdx), this.states.length - 1);
 		this.ensureSelectionVisible();
+		this.loadDetailedTranscript();
 		this.args.requestRender();
 	}
 
@@ -57,23 +68,21 @@ export class SubagentsPanel implements Component {
 			if (data === KEY_ESC || data === KEY_LEFT) this.args.onClose();
 			return true;
 		}
-		if (data === KEY_LEFT) {
-			if (this.detailedAgentId) this.detailedAgentId = null;
-			else this.args.onClose();
-			this.args.requestRender();
+		if (data === KEY_LEFT || data === KEY_ESC) return this.closeOrBackOut();
+		if (this.detailedAgentId) {
+			if (data === KEY_D || data === KEY_D_LOWER) this.requestKillSelected();
 			return true;
 		}
 		if (data === KEY_UP || data === KEY_K) return this.moveSelection(-1);
 		if (data === KEY_DOWN || data === KEY_J) return this.moveSelection(1);
-		if (data === KEY_ENTER) {
-			this.toggleDetailsSelected();
+		if (data === KEY_ENTER || data === KEY_RIGHT) {
+			this.drillIntoSelected();
 			return true;
 		}
 		if (data === KEY_D || data === KEY_D_LOWER) {
 			this.requestKillSelected();
 			return true;
 		}
-		if (data === KEY_ESC) return this.closeOrBackOut();
 		return true;
 	}
 
@@ -86,6 +95,7 @@ export class SubagentsPanel implements Component {
 			scrollOffset: this.scrollOffset,
 			detailedAgentId: this.detailedAgentId,
 			pendingKillAgentId: this.pendingKillAgentId,
+			transcript: this.currentTranscript(),
 		});
 	}
 
@@ -118,7 +128,6 @@ export class SubagentsPanel implements Component {
 	private moveSelection(delta: number): true {
 		this.selectedIdx = Math.min(this.states.length - 1, Math.max(0, this.selectedIdx + delta));
 		this.ensureSelectionVisible();
-		if (this.detailedAgentId) this.showDetailsForSelected();
 		this.args.requestRender();
 		return true;
 	}
@@ -137,17 +146,45 @@ export class SubagentsPanel implements Component {
 		return true;
 	}
 
-	private toggleDetailsSelected(): void {
+	private drillIntoSelected(): void {
 		const cur = this.states[this.selectedIdx];
 		if (!cur) return;
-		this.detailedAgentId = this.detailedAgentId === cur.agentId ? null : cur.agentId;
+		this.detailedAgentId = cur.agentId;
+		this.ensureTranscriptLoaded(cur);
 		this.args.requestRender();
 	}
 
-	private showDetailsForSelected(): void {
-		const cur = this.states[this.selectedIdx];
-		if (!cur || this.detailedAgentId === cur.agentId) return;
-		this.detailedAgentId = cur.agentId;
+	private loadDetailedTranscript(): void {
+		const state = this.states.find((candidate) => candidate.agentId === this.detailedAgentId);
+		if (state) this.ensureTranscriptLoaded(state);
+	}
+
+	private ensureTranscriptLoaded(state: SubagentState): void {
+		const cached = this.transcripts.get(state.agentId);
+		if (cached?.lastUpdate === state.lastUpdate) return;
+		this.transcripts.set(state.agentId, { lastUpdate: state.lastUpdate, status: "loading" });
+		void this.loadTranscript(state).then(
+			(excerpt) => {
+				this.transcripts.set(state.agentId, { lastUpdate: state.lastUpdate, status: "ready", excerpt });
+				this.args.requestRender();
+			},
+			() => {
+				const excerpt: TranscriptExcerpt = { kind: "unreadable", message: "Transcript unavailable." };
+				this.transcripts.set(state.agentId, { lastUpdate: state.lastUpdate, status: "ready", excerpt });
+				this.args.requestRender();
+			},
+		);
+	}
+
+	private loadTranscript(state: SubagentState): Promise<TranscriptExcerpt> {
+		return this.args.loadTranscript?.(state) ?? readRecentTranscriptExcerpt(state.paths.output);
+	}
+
+	private currentTranscript(): TranscriptExcerpt | "loading" | undefined {
+		const state = this.states.find((candidate) => candidate.agentId === this.detailedAgentId);
+		if (!state) return undefined;
+		const cached = this.transcripts.get(state.agentId);
+		return cached?.status === "ready" ? cached.excerpt : "loading";
 	}
 
 	private ensureSelectionVisible(): void {

@@ -1,10 +1,12 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import type { TranscriptExcerpt } from "../runtime/transcript.js";
 import type { SubagentState } from "../types.js";
 import { formatStateActivity } from "./activity.js";
-import { formatToolCall, formatUsageStats } from "./format.js";
+import { formatUsageStats } from "./format.js";
 
 const MAX_PANEL_ITEMS = 5;
+const MAX_TRANSCRIPT_LINES = 30;
 
 export interface PanelRenderArgs {
 	states: SubagentState[];
@@ -14,29 +16,37 @@ export interface PanelRenderArgs {
 	scrollOffset?: number;
 	detailedAgentId?: string | null;
 	pendingKillAgentId?: string | null;
+	transcript?: TranscriptExcerpt | "loading";
 }
 
 export function renderSubagentsPanel(args: PanelRenderArgs): string[] {
 	const panelArgs = { ...args, states: args.states.filter(isActiveSubagentState), width: Math.max(40, args.width) };
 	const lines = [border("╭", "╮", " pi-crew sub-agents ", panelArgs.width, panelArgs.theme)];
-	lines.push(row(` ${panelArgs.states.length} active`, panelArgs.width, panelArgs.theme));
-	lines.push(helpLine(panelArgs));
+	const detailed = panelArgs.states.find((state) => state.agentId === panelArgs.detailedAgentId);
+	lines.push(row(headerLine(panelArgs, detailed), panelArgs.width, panelArgs.theme));
+	lines.push(helpLine(panelArgs, Boolean(detailed)));
 	lines.push(border("├", "┤", "", panelArgs.width, panelArgs.theme));
 	if (panelArgs.states.length === 0) {
 		lines.push(row(" No running sub-agents in current batch.", panelArgs.width, panelArgs.theme, "muted"));
+	} else if (detailed) {
+		appendDetailRows(lines, panelArgs, detailed);
 	} else {
 		appendStateRows(lines, panelArgs);
-		appendDetailRowsForSelection(lines, panelArgs);
 	}
 	lines.push(border("╰", "╯", "", panelArgs.width, panelArgs.theme));
 	return lines;
 }
 
-function helpLine(args: PanelRenderArgs): string {
+function headerLine(args: PanelRenderArgs, detailed: SubagentState | undefined): string {
+	if (!detailed) return ` ${args.states.length} active`;
+	return ` ${args.states.length} active · ${detailed.alias} #${detailed.agentId}`;
+}
+
+function helpLine(args: PanelRenderArgs, isDetail: boolean): string {
 	const pending = args.states.find((state) => state.agentId === args.pendingKillAgentId);
 	if (pending) return row(` Kill ${pending.alias} #${pending.agentId}? y/N`, args.width, args.theme, "warning");
-	const detailVerb = args.detailedAgentId ? "enter hide details" : "enter details";
-	return row(` ↑↓/j/k select · ${detailVerb} · ← close/back · d kill · esc back`, args.width, args.theme, "dim");
+	if (isDetail) return row(" ←/esc list · d kill", args.width, args.theme, "dim");
+	return row(" ↑↓/j/k select · enter/→ details · ←/esc close · d kill", args.width, args.theme, "dim");
 }
 
 function appendStateRows(lines: string[], args: PanelRenderArgs): void {
@@ -45,8 +55,7 @@ function appendStateRows(lines: string[], args: PanelRenderArgs): void {
 	for (const [idx, state] of visible.entries()) {
 		const absoluteIdx = offset + idx;
 		const selected = absoluteIdx === args.selectedIdx;
-		const detailed = state.agentId === args.detailedAgentId;
-		lines.push(row(summaryLine(state, selected, detailed, args.theme), args.width, args.theme));
+		lines.push(row(summaryLine(state, selected, args.theme), args.width, args.theme));
 	}
 	const hiddenBefore = offset;
 	const hiddenAfter = Math.max(0, args.states.length - offset - visible.length);
@@ -55,10 +64,17 @@ function appendStateRows(lines: string[], args: PanelRenderArgs): void {
 	}
 }
 
-function appendDetailRowsForSelection(lines: string[], args: PanelRenderArgs): void {
-	const state = args.states.find((candidate) => candidate.agentId === args.detailedAgentId);
-	if (!state) return;
-	lines.push(border("├", "┤", ` ${state.alias} #${state.agentId} `, args.width, args.theme));
+function appendDetailRows(lines: string[], args: PanelRenderArgs, state: SubagentState): void {
+	appendMetadataRows(lines, args, state);
+	lines.push(border("├", "┤", " task ", args.width, args.theme));
+	appendWrappedDetail(lines, args, "task", state.task);
+	lines.push(border("├", "┤", " transcript ", args.width, args.theme));
+	appendTranscriptRows(lines, args);
+}
+
+function appendMetadataRows(lines: string[], args: PanelRenderArgs, state: SubagentState): void {
+	lines.push(row(detailLine(args.theme, "status", state.status), args.width, args.theme));
+	lines.push(row(detailLine(args.theme, "alias", state.alias), args.width, args.theme));
 	lines.push(
 		row(
 			detailLine(args.theme, "model", `${state.agent} · ${state.provider}/${state.model} · ${state.thinking}`),
@@ -66,36 +82,74 @@ function appendDetailRowsForSelection(lines: string[], args: PanelRenderArgs): v
 			args.theme,
 		),
 	);
-	lines.push(row(detailLine(args.theme, "task", state.task), args.width, args.theme));
 	lines.push(row(detailLine(args.theme, "cwd", state.cwd), args.width, args.theme));
-	lines.push(row(detailLine(args.theme, "now", formatStateActivity(state)), args.width, args.theme));
-	if (state.lastToolCall) {
-		lines.push(
-			row(
-				detailLine(args.theme, "tool", formatToolCall(state.lastToolCall.name, state.lastToolCall.args)),
-				args.width,
-				args.theme,
-			),
-		);
-	}
-	if (state.lastText) lines.push(row(detailLine(args.theme, "text", state.lastText), args.width, args.theme));
-	lines.push(row(detailLine(args.theme, "usage", detailUsage(state)), args.width, args.theme));
+	lines.push(
+		row(detailLine(args.theme, "elapsed", formatDuration(Date.now() - state.startedAt)), args.width, args.theme),
+	);
+	lines.push(
+		row(
+			detailLine(args.theme, "usage", formatUsageStats({ ...state.usage, turns: state.turns }) || "no usage yet"),
+			args.width,
+			args.theme,
+		),
+	);
 }
 
-function detailUsage(state: SubagentState): string {
-	return `${formatUsageStats({ ...state.usage, turns: state.turns })} · ${formatDuration(Date.now() - state.startedAt)}`;
+function appendWrappedDetail(lines: string[], args: PanelRenderArgs, label: string, value: string): void {
+	const chunks = wrapText(value, Math.max(10, args.width - 12));
+	for (const [idx, chunk] of chunks.entries()) {
+		lines.push(row(detailLine(args.theme, idx === 0 ? label : "", chunk), args.width, args.theme));
+	}
+}
+
+function appendTranscriptRows(lines: string[], args: PanelRenderArgs): void {
+	const chunks = transcriptChunks(args.transcript, Math.max(10, args.width - 6));
+	for (const chunk of chunks) lines.push(row(` ${chunk}`, args.width, args.theme));
+}
+
+function transcriptChunks(excerpt: TranscriptExcerpt | "loading" | undefined, width: number): string[] {
+	if (!excerpt || excerpt === "loading") return ["Loading recent transcript…"];
+	if (excerpt.kind !== "events") return [excerpt.message];
+	const out: string[] = [];
+	for (const event of excerpt.events) {
+		for (const line of wrapText(`• ${event}`, width)) {
+			if (out.length >= MAX_TRANSCRIPT_LINES) return out;
+			out.push(line);
+		}
+	}
+	return out.length > 0 ? out : ["No recent transcript events."];
 }
 
 function detailLine(theme: Theme, label: string, value: string): string {
-	return ` ${theme.fg("dim", label.padEnd(5))} ${oneLine(value)}`;
+	return ` ${theme.fg("dim", label.padEnd(7))} ${oneLine(value)}`;
 }
 
-function summaryLine(state: SubagentState, selected: boolean, detailed: boolean, theme: Theme): string {
+function summaryLine(state: SubagentState, selected: boolean, theme: Theme): string {
 	const pointer = selected ? theme.fg("accent", "▸") : " ";
-	const detail = detailed ? theme.fg("accent", "◉") : " ";
 	const icon = iconFor(state.status, theme);
 	const elapsed = formatDuration(Date.now() - state.startedAt);
-	return `${pointer}${detail} ${icon} ${state.alias} · ${state.agent} · ${state.status} · ${elapsed} · ${formatStateActivity(state)}`;
+	return `${pointer} ${icon} ${state.alias} · ${state.agent} · ${state.status} · ${elapsed} · ${formatStateActivity(state)}`;
+}
+
+function wrapText(value: string, width: number): string[] {
+	const words = oneLine(value).split(" ").filter(Boolean);
+	if (words.length === 0) return ["—"];
+	const lines: string[] = [];
+	let current = "";
+	for (const word of words) {
+		if (visibleWidth(word) > width) {
+			if (current) lines.push(current);
+			lines.push(truncateToWidth(word, width, "…"));
+			current = "";
+		} else if (!current || visibleWidth(`${current} ${word}`) <= width) {
+			current = current ? `${current} ${word}` : word;
+		} else {
+			lines.push(current);
+			current = word;
+		}
+	}
+	if (current) lines.push(current);
+	return lines;
 }
 
 function border(left: string, right: string, title: string, width: number, theme: Theme): string {

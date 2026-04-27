@@ -2,6 +2,7 @@ import { visibleWidth } from "@mariozechner/pi-tui";
 import { describe, expect, it } from "vitest";
 import type { SubagentState } from "../../src/types.js";
 import { filterCurrentBatchActiveStates, renderSubagentsPanel } from "../../src/ui/overlay.js";
+import { SubagentsPanel } from "../../src/ui/subagents-panel.js";
 
 const theme = {
 	bold: (s: string) => s,
@@ -61,27 +62,45 @@ describe("renderSubagentsPanel", () => {
 		expect(filterCurrentBatchActiveStates([historical, running], null)).toEqual([]);
 	});
 
-	it("renders a bordered below-input panel with inline details", () => {
+	it("renders a bordered transcript-focused detail view", () => {
 		const lines = renderSubagentsPanel({
-			states: [stateOf({})],
+			states: [
+				stateOf({
+					activity: "reading files",
+					activeTools: ["read"],
+					lastToolCall: { name: "bash", args: { command: "secret command" } },
+					lastText: "latest output text",
+				}),
+			],
 			selectedIdx: 0,
 			detailedAgentId: "abc12345",
+			transcript: { kind: "events", events: ["assistant: sanitized transcript excerpt"] },
 			width: 72,
 			theme: theme as never,
 		});
+		const rendered = lines.join("\n");
 
 		expect(lines[0]).toContain("╭");
 		expect(lines.at(-1)).toContain("╰");
-		expect(lines.join("\n")).toContain("pi-crew sub-agents");
-		expect(lines.join("\n")).toContain("enter hide details");
-		expect(lines.join("\n")).toContain("d kill");
-		expect(lines.join("\n")).toContain("esc back");
-		expect(lines.join("\n")).not.toContain("esc esc kills batch");
-		expect(lines.join("\n")).toContain("auth-search #abc12345");
-		expect(lines.join("\n")).toContain("model");
-		expect(lines.join("\n")).toContain("task");
-		expect(lines.join("\n")).not.toContain("output.jsonl");
-		expect(lines.join("\n")).not.toContain("state.json");
+		expect(rendered).toContain("pi-crew sub-agents");
+		expect(rendered).toContain("←/esc list");
+		expect(rendered).toContain("d kill");
+		expect(rendered).not.toContain("esc esc kills batch");
+		expect(rendered).toContain("auth-search #abc12345");
+		expect(rendered).toContain("status running");
+		expect(rendered).toContain("alias auth-search");
+		expect(rendered).toContain("model explore · openai-codex/gpt-5.4-mini · low");
+		expect(rendered).toContain("cwd /proj");
+		expect(rendered).toContain("elapsed");
+		expect(rendered).toContain("usage");
+		expect(rendered).toContain("task");
+		expect(rendered).toContain("transcript");
+		expect(rendered).toContain("sanitized transcript excerpt");
+		expect(rendered).not.toContain("now");
+		expect(rendered).not.toContain("secret command");
+		expect(rendered).not.toContain("latest output text");
+		expect(rendered).not.toContain("output.jsonl");
+		expect(rendered).not.toContain("state.json");
 		expect(lines.every((line) => visibleWidth(line) <= 72)).toBe(true);
 	});
 
@@ -117,7 +136,7 @@ describe("renderSubagentsPanel", () => {
 		expect(lines.join("\n")).not.toContain("Task headline Requirements:");
 	});
 
-	it("shows the last tool target when activity is generic", () => {
+	it("shows the last tool target in the active list when activity is generic", () => {
 		const lines = renderSubagentsPanel({
 			states: [
 				stateOf({
@@ -126,7 +145,6 @@ describe("renderSubagentsPanel", () => {
 				}),
 			],
 			selectedIdx: 0,
-			detailedAgentId: "abc12345",
 			width: 90,
 			theme: theme as never,
 		});
@@ -134,5 +152,35 @@ describe("renderSubagentsPanel", () => {
 		const rendered = lines.join("\n");
 		expect(rendered).toContain("reading src/ui/overlay.ts");
 		expect(rendered).not.toContain("now thinking…");
+	});
+
+	it("supports selection, drill-in, and left-arrow backtracking", async () => {
+		let closed = false;
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => {
+				closed = true;
+			},
+			requestRender: () => undefined,
+			onKill: () => undefined,
+			loadTranscript: async (state) => ({ kind: "events", events: [`assistant: ${state.alias} transcript`] }),
+		});
+		panel.setStates([
+			stateOf({ agentId: "abc12345", alias: "auth-search", startedAt: 1 }),
+			stateOf({ agentId: "def67890", alias: "api-search", startedAt: 2 }),
+		]);
+
+		expect(panel.handleInput("\x1b[B")).toBe(true);
+		expect(panel.handleInput("\x1b[C")).toBe(true);
+		await Promise.resolve();
+
+		const detail = panel.render(80).join("\n");
+		expect(detail).toContain("api-search #def67890");
+		expect(detail).toContain("assistant: api-search transcript");
+
+		expect(panel.handleInput("\x1b[D")).toBe(true);
+		expect(panel.render(80).join("\n")).toContain("enter/→ details");
+		expect(panel.handleInput("\x1b[D")).toBe(true);
+		expect(closed).toBe(true);
 	});
 });
