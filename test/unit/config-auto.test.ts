@@ -22,7 +22,7 @@ describe("agent slot config", () => {
 			M("openai", "gpt-5-mini", false, 0.15),
 		];
 		const r = suggestDefaults(models);
-		expect(r.agents.explore?.modelId).toBe("gpt-5-mini");
+		expect(r.agents.explore).toMatchObject({ modelId: "gpt-5-mini" });
 	});
 
 	it("does not configure general-purpose because it inherits parent model/thinking", () => {

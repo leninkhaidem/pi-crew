@@ -10,6 +10,7 @@ import {
 	THINKING_LEVELS,
 	type ThinkingLevel,
 	defaultThinkingForAgent,
+	isInheritedAgentSlot,
 } from "../types.js";
 import { AGENT_SLOT_NAMES } from "./auto.js";
 import { saveConfig } from "./store.js";
@@ -36,10 +37,11 @@ export async function runConfigTui(ctx: ExtensionCommandContext, args: ConfigTui
 		items.unshift({ value: "__skip__", label: "(skip — leave unchanged/unset)", description: "" });
 
 		const current = cfg.agents[slot];
-		const initialIndex = current
+		const currentConcrete = isInheritedAgentSlot(current) ? undefined : current;
+		const initialIndex = currentConcrete
 			? Math.max(
 					0,
-					items.findIndex((i) => i.value === `${current.provider}::${current.modelId}`),
+					items.findIndex((i) => i.value === `${currentConcrete.provider}::${currentConcrete.modelId}`),
 				)
 			: 0;
 
@@ -77,12 +79,12 @@ export async function runConfigTui(ctx: ExtensionCommandContext, args: ConfigTui
 			cfg.agents[slot] = {
 				provider,
 				modelId,
-				thinking: cfg.agents[slot]?.thinking ?? defaultThinkingForAgent(slot),
+				thinking: currentConcrete?.thinking ?? defaultThinkingForAgent(slot),
 			};
 		}
 
 		const configured = cfg.agents[slot];
-		if (!configured) continue;
+		if (!configured || isInheritedAgentSlot(configured)) continue;
 		const thinking = await selectThinking(ctx, slot, configured.thinking ?? defaultThinkingForAgent(slot));
 		if (thinking === null) return { saved: false };
 		configured.thinking = thinking;

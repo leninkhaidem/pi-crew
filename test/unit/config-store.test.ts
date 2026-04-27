@@ -38,7 +38,7 @@ describe("config store", () => {
 			tmux: { mode: "off", killOnComplete: "off", graceSeconds: 30 },
 		});
 		const r = await loadConfig(target);
-		expect(r.config.agents.explore?.provider).toBe("anthropic");
+		expect(r.config.agents.explore).toMatchObject({ provider: "anthropic" });
 		expect(r.fromDisk).toBe(true);
 	});
 

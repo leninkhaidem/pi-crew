@@ -1,11 +1,12 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import {
-	type AgentSlot,
+	type AgentSlotConfig,
 	DEFAULT_GLOBAL_SETTINGS,
 	DEFAULT_TMUX_SETTINGS,
 	type PiCrewConfig,
 	defaultThinkingForAgent,
+	isInheritedAgentSlot,
 } from "../types.js";
 
 const ThinkingLevelSchema = Type.Union([
@@ -17,11 +18,17 @@ const ThinkingLevelSchema = Type.Union([
 	Type.Literal("xhigh"),
 ]);
 
-const AgentSlotSchema = Type.Object({
+const ConcreteAgentSlotSchema = Type.Object({
 	provider: Type.String({ minLength: 1 }),
 	modelId: Type.String({ minLength: 1 }),
 	thinking: Type.Optional(ThinkingLevelSchema),
 });
+
+const InheritedAgentSlotSchema = Type.Object({
+	mode: Type.Literal("inherit"),
+});
+
+const AgentSlotSchema = Type.Union([ConcreteAgentSlotSchema, InheritedAgentSlotSchema]);
 
 const ExecutionModeSchema = Type.Union([Type.Literal("session"), Type.Literal("subprocess")]);
 
@@ -61,8 +68,12 @@ export function parsePiCrewConfig(input: unknown): ParseResult {
 		return { ok: false, errors };
 	}
 	const parsed = input as Static<typeof RawSchema>;
-	const agents: Record<string, AgentSlot> = {};
+	const agents: Record<string, AgentSlotConfig> = {};
 	for (const [name, slot] of Object.entries(parsed.agents)) {
+		if (isInheritedAgentSlot(slot)) {
+			agents[name] = { ...slot };
+			continue;
+		}
 		agents[name] = {
 			...slot,
 			thinking: slot.thinking ?? defaultThinkingForAgent(name),
