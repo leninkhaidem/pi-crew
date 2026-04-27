@@ -120,7 +120,7 @@
           "id": "P2-T001",
           "title": "Add footer status navigation",
           "description": "Make the below-input `\u27f3 N running` status keyboard-navigable when the editor is empty and sub-agents are active. Down focuses the status, Down or Enter opens the active list, and Escape or Left closes/backtracks before abort handling. Keep the above-input tracker unchanged.",
-          "status": "pending",
+          "status": "in-progress",
           "dependencies": [],
           "acceptance_criteria": [
             "With an empty editor and active sub-agents, Down focuses the below-input running status.",
@@ -136,7 +136,7 @@
           "id": "P2-T002",
           "title": "Show transcript-focused subagent details",
           "description": "Update the active sub-agent list and drill-down view so arrows select agents and Enter or Right opens a selected detail view. The detail view shows metadata, task text, and a bounded formatted recent transcript excerpt without separate activity/tool/output/file sections.",
-          "status": "pending",
+          "status": "in-progress",
           "dependencies": [
             "P2-T001"
           ],
