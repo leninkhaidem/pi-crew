@@ -2,6 +2,7 @@
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { PiCrewConfig, SubagentState } from "../types.js";
 import type { ActiveCounter, PoolLimiter } from "./concurrency.js";
+import type { DetachController } from "./detach.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./lifecycle.js";
 
 export interface ExtensionRuntime {
@@ -23,6 +24,7 @@ export interface ExtensionRuntime {
 		pool: PoolLimiter;
 		active: ActiveCounter;
 	};
+	detach: DetachController;
 	/** Resolve the current session id consistently across tools/commands/UI. */
 	resolveSessionId(ctx: ExtensionContext): string;
 	/**

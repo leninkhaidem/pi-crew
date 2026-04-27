@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Key, matchesKey } from "@mariozechner/pi-tui";
+import type { DetachController } from "../runtime/detach.js";
 import type { SubagentState } from "../types.js";
 
 export interface InterruptController {
@@ -12,6 +13,7 @@ interface InterruptArgs {
 	getBatchId(): string | null;
 	abortStates(states: SubagentState[], reason: string): void | Promise<void>;
 	loadStates?(): SubagentState[] | Promise<SubagentState[]>;
+	detach?: DetachController;
 	doubleEscapeMs?: number;
 	now?: () => number;
 }
@@ -22,6 +24,12 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 	const doubleEscapeMs = args.doubleEscapeMs ?? 3000;
 	const now = args.now ?? (() => Date.now());
 	const unsubscribe = args.ctx.ui.onTerminalInput((data) => {
+		if (matchesKey(data, Key.ctrl("b"))) {
+			if (!args.detach?.hasActiveScopes()) return undefined;
+			args.detach.detachAll();
+			args.ctx.ui.notify?.("Sub-agents backgrounded — results will arrive via notification.", "info");
+			return { consume: true };
+		}
 		if (matchesKey(data, Key.ctrl("c"))) {
 			const targets = currentBatchActiveStates(latestStates, args.getBatchId());
 			if (targets.length === 0) return undefined;

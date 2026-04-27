@@ -14,6 +14,7 @@ import { registerNotificationRenderer } from "./notify/renderer.js";
 import { createApprovalGate } from "./runtime/approval.js";
 import { createBatchTracker } from "./runtime/batch.js";
 import { createActiveCounter, createPoolLimiter } from "./runtime/concurrency.js";
+import { createDetachController } from "./runtime/detach.js";
 import { abortSubagentByStatePath } from "./runtime/kill.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./runtime/lifecycle.js";
 import { createParentAbortTracker } from "./runtime/parent-abort.js";
@@ -79,6 +80,7 @@ export default function (pi: ExtensionAPI) {
 	// Using setMax avoids swapping instances, which would invalidate references held by in-flight tools.
 	const pool = createPoolLimiter(4);
 	const activeCounter = createActiveCounter(16);
+	const detachController = createDetachController();
 
 	applyLoadedConfig = (c) => {
 		pool.setMax(c.global.maxConcurrent);
@@ -193,6 +195,7 @@ export default function (pi: ExtensionAPI) {
 			pool,
 			active: activeCounter,
 		},
+		detach: detachController,
 	};
 
 	registerNotificationRenderer(pi);
@@ -236,6 +239,7 @@ export default function (pi: ExtensionAPI) {
 			ctx,
 			getBatchId: () => rt.getCurrentBatchId(ctx),
 			loadStates: () => listStates(sessionDir, { includeDetached: true }),
+			detach: rt.detach,
 			abortStates: async (states, reason) => {
 				await Promise.all(
 					states.map(async (state) => {
