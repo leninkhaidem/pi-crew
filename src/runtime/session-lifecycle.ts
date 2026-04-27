@@ -16,7 +16,7 @@ import { describeActivity } from "./activity.js";
 import { abortSubagentByStatePath } from "./kill.js";
 import type { DispatchHandle, DispatchPlan, LifecycleEnv, LifecycleHooks } from "./lifecycle.js";
 import { appendFinalResultContract } from "./result-contract.js";
-import { withoutPiCrewOrchestrationTools } from "./tool-suppression.js";
+import { suppressPiCrewOrchestrationTools, withoutPiCrewOrchestrationTools } from "./tool-suppression.js";
 import { sanitizeTranscriptEvent } from "./transcript.js";
 
 const STATE_DEBOUNCE_MS = 80;
@@ -175,10 +175,10 @@ export async function dispatchSession(
 			sessionManager: SessionManager.inMemory(cwd),
 			settingsManager: SettingsManager.create(cwd, env.agentDir),
 		};
-		if (plan.agent.tools) sessionOptions.tools = plan.agent.tools;
+		if (plan.agent.tools) sessionOptions.tools = withoutPiCrewOrchestrationTools(plan.agent.tools);
 		const created = await createAgentSession(sessionOptions);
 		session = created.session;
-		session.setActiveToolsByName(withoutPiCrewOrchestrationTools(session.getActiveToolNames()));
+		suppressPiCrewOrchestrationTools(session);
 		await session.bindExtensions({
 			onError: (err) => {
 				void fs
@@ -186,6 +186,7 @@ export async function dispatchSession(
 					.catch(() => undefined);
 			},
 		});
+		suppressPiCrewOrchestrationTools(session);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		await fs.appendFile(paths.stderr, `${message}\n`).catch(() => undefined);
