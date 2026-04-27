@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import type { AgentSlot, PiCrewConfig, ThinkingLevel } from "../types.js";
+import { type AgentSlot, type PiCrewConfig, type ThinkingLevel, isInheritedAgentSlot } from "../types.js";
 
 export interface SlotOverrides {
 	provider?: string;
@@ -82,13 +82,14 @@ function resolveConfiguredSlot(
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 ): SlotResolution {
+	const configured = config.agents[agentName];
 	const base = resolveBaseSlot(agentName, config, ctx, pi);
 	if (base) return { ok: true, ...base };
-	if (agentName === "general-purpose") {
+	if (agentName === "general-purpose" || isInheritedAgentSlot(configured)) {
 		return {
 			ok: false,
 			error: "no_parent_model",
-			message: "general-purpose needs a current parent model to inherit. Select a model in the parent session first.",
+			message: `${agentName} needs a current parent model to inherit. Select a model in the parent session first.`,
 		};
 	}
 	return {
@@ -104,16 +105,17 @@ function resolveBaseSlot(
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 ): { slot: AgentSlot; inherited: boolean } | null {
-	if (agentName === "general-purpose") {
-		const configured = config.agents[agentName];
-		if (configured) return { slot: configured, inherited: false };
-		const inherited = inheritedGeneralPurposeSlot(ctx, pi);
-		if (inherited) return { slot: inherited, inherited: true };
-		return null;
+	const configured = config.agents[agentName];
+	if (isInheritedAgentSlot(configured)) {
+		const inherited = inheritedParentSlot(ctx, pi);
+		return inherited ? { slot: inherited, inherited: true } : null;
 	}
-
-	const slot = config.agents[agentName];
-	return slot ? { slot, inherited: false } : null;
+	if (configured) return { slot: configured, inherited: false };
+	if (agentName === "general-purpose") {
+		const inherited = inheritedParentSlot(ctx, pi);
+		if (inherited) return { slot: inherited, inherited: true };
+	}
+	return null;
 }
 
 function isKnownModel(ctx: ExtensionContext, provider: string, modelId: string): boolean {
@@ -121,7 +123,7 @@ function isKnownModel(ctx: ExtensionContext, provider: string, modelId: string):
 	return registry?.find ? Boolean(registry.find(provider, modelId)) : true;
 }
 
-function inheritedGeneralPurposeSlot(ctx: ExtensionContext, pi: ExtensionAPI): AgentSlot | null {
+function inheritedParentSlot(ctx: ExtensionContext, pi: ExtensionAPI): AgentSlot | null {
 	if (!ctx.model) return null;
 	return {
 		provider: ctx.model.provider,

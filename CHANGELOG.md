@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.3.0 — 2026-04-27
+
+### Added
+
+- `/subagent-config` now supports an explicit `inherit parent model/thinking` option for every configurable sub-agent slot.
+- The below-input `⟳ N running` footer status can be focused and opened with the keyboard when the editor is empty.
+- Added an active sub-agent list and transcript-focused details view with metadata, task text, and sanitized recent transcript events.
+
+### Changed
+
+- Inherited sub-agent slots now resolve to the parent provider, model, and thinking level while preserving dispatch-time override precedence.
+- Transcript details render recent assistant and tool events in a compact readable form instead of exposing raw JSON payloads.
+
+### Fixed
+
+- Footer/details Escape and Left handling now closes or backs out of the details UI before active-sub-agent abort handling.
+- Transcript details omit the duplicated initial task prompt, ignore malformed or partial JSONL lines, and avoid hidden reasoning content.
+
 ## v0.2.0 — 2026-04-27
 
 ### Added

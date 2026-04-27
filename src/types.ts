@@ -67,6 +67,8 @@ export interface SubagentState {
 	startedAt: number;
 	finishedAt: number | null;
 	lastUpdate: number;
+	transcriptSize?: number;
+	transcriptMtimeMs?: number;
 	status: SubagentStatus;
 	exitCode: number | null;
 	stopReason: string | null;
@@ -101,6 +103,16 @@ export interface AgentSlot {
 	thinking?: ThinkingLevel;
 }
 
+export interface InheritedAgentSlot {
+	mode: "inherit";
+}
+
+export type AgentSlotConfig = AgentSlot | InheritedAgentSlot;
+
+export function isInheritedAgentSlot(slot: AgentSlotConfig | undefined): slot is InheritedAgentSlot {
+	return slot !== undefined && "mode" in slot && slot.mode === "inherit";
+}
+
 export interface GlobalSettings {
 	maxConcurrent: number;
 	maxActive: number;
@@ -120,7 +132,7 @@ export interface TmuxSettings {
 
 export interface PiCrewConfig {
 	version: 1;
-	agents: Record<string, AgentSlot>;
+	agents: Record<string, AgentSlotConfig>;
 	global: GlobalSettings;
 	tmux: TmuxSettings;
 }

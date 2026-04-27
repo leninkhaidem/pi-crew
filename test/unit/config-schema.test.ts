@@ -52,6 +52,21 @@ describe("parsePiCrewConfig", () => {
 		if (r.ok) expect(r.value.global.executionMode).toBe("subprocess");
 	});
 
+	it("accepts and reloads explicit inherited slots", () => {
+		const r = parsePiCrewConfig({
+			version: 1,
+			agents: {
+				explore: { mode: "inherit" },
+				"general-purpose": { mode: "inherit" },
+			},
+		});
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.value.agents.explore).toEqual({ mode: "inherit" });
+			expect(r.value.agents["general-purpose"]).toEqual({ mode: "inherit" });
+		}
+	});
+
 	it("fills per-slot thinking defaults when missing", () => {
 		const r = parsePiCrewConfig({
 			version: 1,
