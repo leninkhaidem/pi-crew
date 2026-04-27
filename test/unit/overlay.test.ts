@@ -117,6 +117,23 @@ describe("renderSubagentsPanel", () => {
 		expect(lines.join("\n")).not.toContain("done #");
 	});
 
+	it("strips terminal control sequences from untrusted state and transcript text", () => {
+		const rendered = renderSubagentsPanel({
+			states: [stateOf({ alias: "\u001b]52;c;bad\u0007auth-search", task: "safe\u001b[31m task" })],
+			selectedIdx: 0,
+			detailedAgentId: "abc12345",
+			transcript: { kind: "events", events: ["assistant: hi\u001b[31mred\u001b[0m"] },
+			width: 72,
+			theme: theme as never,
+		}).join("\n");
+
+		expect(rendered).toContain("auth-search");
+		expect(rendered).toContain("safe task");
+		expect(rendered).toContain("assistant: hired");
+		expect(rendered).not.toContain("\u001b");
+		expect(rendered).not.toContain("52;c;bad");
+	});
+
 	it("does not emit embedded newlines for multiline state fields", () => {
 		const lines = renderSubagentsPanel({
 			states: [
@@ -184,7 +201,7 @@ describe("renderSubagentsPanel", () => {
 		expect(closed).toBe(true);
 	});
 
-	it("refreshes the detail transcript when the output changes without a state timestamp change", async () => {
+	it("refreshes detail transcript output when the transcript fingerprint changes", async () => {
 		let loadCount = 0;
 		const panel = new SubagentsPanel({
 			theme: theme as never,
@@ -193,7 +210,13 @@ describe("renderSubagentsPanel", () => {
 			onKill: () => undefined,
 			loadTranscript: async () => ({ kind: "events", events: [`assistant: transcript ${++loadCount}`] }),
 		});
-		const running = stateOf({ agentId: "abc12345", alias: "auth-search", lastUpdate: 1 });
+		const running = stateOf({
+			agentId: "abc12345",
+			alias: "auth-search",
+			lastUpdate: 1,
+			transcriptSize: 100,
+			transcriptMtimeMs: 1,
+		});
 
 		panel.setStates([running]);
 		expect(panel.handleInput("\x1b[C")).toBe(true);
@@ -201,6 +224,14 @@ describe("renderSubagentsPanel", () => {
 		expect(panel.render(80).join("\n")).toContain("assistant: transcript 1");
 
 		panel.setStates([running]);
+		await Promise.resolve();
+		expect(panel.render(80).join("\n")).toContain("assistant: transcript 1");
+
+		panel.setStates([{ ...running, lastUpdate: 2 }]);
+		await Promise.resolve();
+		expect(panel.render(80).join("\n")).toContain("assistant: transcript 1");
+
+		panel.setStates([{ ...running, transcriptSize: 120, transcriptMtimeMs: 2 }]);
 		await Promise.resolve();
 		expect(panel.render(80).join("\n")).toContain("assistant: transcript 2");
 	});

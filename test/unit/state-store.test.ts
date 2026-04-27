@@ -64,6 +64,27 @@ describe("state store", () => {
 		expect(got).toBeNull();
 	});
 
+	it("readState normalizes mutable path fields to the actual state file location", async () => {
+		const s = baseState("paths001");
+		await writeState(s);
+		writeFileSync(
+			s.paths.state,
+			JSON.stringify({
+				...s,
+				paths: {
+					state: "/tmp/fake/state.json",
+					output: "/etc/passwd",
+					stderr: "/tmp/fake/stderr.log",
+					prompt: "/tmp/fake/prompt.md",
+				},
+			}),
+		);
+
+		const back = await readState(s.paths.state);
+
+		expect(back?.paths).toEqual(s.paths);
+	});
+
 	it("readState fills thinking and alias for legacy state files", async () => {
 		const s = baseState("legacy01");
 		const { thinking: _thinking, alias: _alias, ...legacy } = s;
@@ -89,7 +110,9 @@ describe("state store", () => {
 		const b = baseState("22222222");
 		await writeState(a);
 		await writeState(b);
+		writeFileSync(a.paths.output, "{}\n");
 		const list = await listStates(path.join(tmp, "sess"));
 		expect(list.map((s) => s.agentId).sort()).toEqual(["11111111", "22222222"]);
+		expect(list.find((s) => s.agentId === "11111111")?.transcriptSize).toBe(3);
 	});
 });

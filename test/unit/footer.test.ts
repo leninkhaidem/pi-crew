@@ -130,10 +130,12 @@ describe("mountFooter", () => {
 		expect(widgetCalls.at(-1)).toMatchObject({ id: "pi-crew-footer-details", options: { placement: "belowEditor" } });
 
 		expect(typeof widgetFactory).toBe("function");
-		(widgetFactory as (tui: { requestRender(): void }, theme: unknown) => unknown)(
-			{ requestRender: () => undefined },
-			theme,
-		);
+		const panel = (
+			widgetFactory as (tui: { requestRender(): void }, theme: unknown) => { render(width: number): string[] }
+		)({ requestRender: () => undefined }, theme);
+		expect(panel.render(80).join("\n")).not.toContain("d kill");
+		expect(handler?.("d")).toEqual({ consume: true });
+		expect(panel.render(80).join("\n")).not.toContain("Kill auth-search");
 		expect(handler?.("\x1b")).toEqual({ consume: true });
 		expect(widgetCalls.at(-1)).toEqual({ id: "pi-crew-footer-details", value: undefined, options: undefined });
 	});

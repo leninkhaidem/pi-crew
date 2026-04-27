@@ -67,6 +67,8 @@ export interface SubagentState {
 	startedAt: number;
 	finishedAt: number | null;
 	lastUpdate: number;
+	transcriptSize?: number;
+	transcriptMtimeMs?: number;
 	status: SubagentStatus;
 	exitCode: number | null;
 	stopReason: string | null;

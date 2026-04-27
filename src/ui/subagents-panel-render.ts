@@ -7,6 +7,12 @@ import { formatUsageStats } from "./format.js";
 
 const MAX_PANEL_ITEMS = 5;
 const MAX_TRANSCRIPT_LINES = 30;
+const ESC = "\\u001B";
+const BEL = "\\u0007";
+const ANSI_OR_OSC_PATTERN = new RegExp(
+	`${ESC}(?:\\][\\s\\S]*?(?:${BEL}|${ESC}\\\\)|[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])`,
+	"g",
+);
 
 export interface PanelRenderArgs {
 	states: SubagentState[];
@@ -17,6 +23,7 @@ export interface PanelRenderArgs {
 	detailedAgentId?: string | null;
 	pendingKillAgentId?: string | null;
 	transcript?: TranscriptExcerpt | "loading";
+	canKill?: boolean;
 }
 
 export function renderSubagentsPanel(args: PanelRenderArgs): string[] {
@@ -39,14 +46,16 @@ export function renderSubagentsPanel(args: PanelRenderArgs): string[] {
 
 function headerLine(args: PanelRenderArgs, detailed: SubagentState | undefined): string {
 	if (!detailed) return ` ${args.states.length} active`;
-	return ` ${args.states.length} active · ${detailed.alias} #${detailed.agentId}`;
+	return ` ${args.states.length} active · ${oneLine(detailed.alias)} #${oneLine(detailed.agentId)}`;
 }
 
 function helpLine(args: PanelRenderArgs, isDetail: boolean): string {
 	const pending = args.states.find((state) => state.agentId === args.pendingKillAgentId);
-	if (pending) return row(` Kill ${pending.alias} #${pending.agentId}? y/N`, args.width, args.theme, "warning");
-	if (isDetail) return row(" ←/esc list · d kill", args.width, args.theme, "dim");
-	return row(" ↑↓/j/k select · enter/→ details · ←/esc close · d kill", args.width, args.theme, "dim");
+	if (pending)
+		return row(` Kill ${oneLine(pending.alias)} #${oneLine(pending.agentId)}? y/N`, args.width, args.theme, "warning");
+	const killHelp = args.canKill === false ? "" : " · d kill";
+	if (isDetail) return row(` ←/esc list${killHelp}`, args.width, args.theme, "dim");
+	return row(` ↑↓/j/k select · enter/→ details · ←/esc close${killHelp}`, args.width, args.theme, "dim");
 }
 
 function appendStateRows(lines: string[], args: PanelRenderArgs): void {
@@ -77,7 +86,11 @@ function appendMetadataRows(lines: string[], args: PanelRenderArgs, state: Subag
 	lines.push(row(detailLine(args.theme, "alias", state.alias), args.width, args.theme));
 	lines.push(
 		row(
-			detailLine(args.theme, "model", `${state.agent} · ${state.provider}/${state.model} · ${state.thinking}`),
+			detailLine(
+				args.theme,
+				"model",
+				`${oneLine(state.agent)} · ${oneLine(state.provider)}/${oneLine(state.model)} · ${oneLine(state.thinking)}`,
+			),
 			args.width,
 			args.theme,
 		),
@@ -128,7 +141,7 @@ function summaryLine(state: SubagentState, selected: boolean, theme: Theme): str
 	const pointer = selected ? theme.fg("accent", "▸") : " ";
 	const icon = iconFor(state.status, theme);
 	const elapsed = formatDuration(Date.now() - state.startedAt);
-	return `${pointer} ${icon} ${state.alias} · ${state.agent} · ${state.status} · ${elapsed} · ${formatStateActivity(state)}`;
+	return `${pointer} ${icon} ${oneLine(state.alias)} · ${oneLine(state.agent)} · ${oneLine(state.status)} · ${elapsed} · ${oneLine(formatStateActivity(state))}`;
 }
 
 function wrapText(value: string, width: number): string[] {
@@ -189,5 +202,15 @@ function formatDuration(ms: number): string {
 }
 
 function oneLine(value: string): string {
-	return value.replace(/\s+/g, " ").trim();
+	return stripUnsafeControls(value).replace(/\s+/g, " ").trim();
+}
+
+function stripUnsafeControls(value: string): string {
+	let out = "";
+	for (const ch of value.replace(ANSI_OR_OSC_PATTERN, "")) {
+		const code = ch.charCodeAt(0);
+		if ((code < 32 && code !== 9 && code !== 10 && code !== 13) || (code >= 127 && code <= 159)) continue;
+		out += ch;
+	}
+	return out;
 }

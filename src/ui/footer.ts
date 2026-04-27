@@ -62,7 +62,8 @@ export function mountFooter(ctx: ExtensionContext, args: FooterArgs = {}): Foote
 					theme,
 					onClose: closePanel,
 					requestRender: () => tui.requestRender(),
-					onKill: args.onKill ?? killSelected,
+					onKill: args.onKill,
+					canKill: Boolean(args.onKill),
 				});
 				panel.setStates(activeStates);
 				return panel;
@@ -118,13 +119,4 @@ export function mountFooter(ctx: ExtensionContext, args: FooterArgs = {}): Foote
 			ctx.ui.setStatus(STATUS_KEY, undefined);
 		},
 	};
-}
-
-function killSelected(state: SubagentState | undefined): void {
-	if (!state || !isActiveSubagentState(state) || !state.pid) return;
-	try {
-		process.kill(state.pid, "SIGTERM");
-	} catch {
-		// ignore
-	}
 }

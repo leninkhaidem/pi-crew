@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Component } from "@mariozechner/pi-tui";
 import { type TranscriptExcerpt, readRecentTranscriptExcerpt } from "../runtime/transcript.js";
@@ -27,12 +28,14 @@ interface SubagentsPanelArgs {
 	theme: Theme;
 	onClose: () => void;
 	requestRender: () => void;
-	onKill: (state: SubagentState) => void | Promise<void>;
+	onKill?: (state: SubagentState) => void | Promise<void>;
+	canKill?: boolean;
 	loadTranscript?: (state: SubagentState) => Promise<TranscriptExcerpt>;
 }
 
 interface TranscriptCacheEntry {
 	lastUpdate: number;
+	transcriptKey: string | null;
 	status: "loading" | "ready";
 	excerpt?: TranscriptExcerpt;
 }
@@ -57,7 +60,7 @@ export class SubagentsPanel implements Component {
 		}
 		this.selectedIdx = this.states.length === 0 ? 0 : Math.min(Math.max(0, this.selectedIdx), this.states.length - 1);
 		this.ensureSelectionVisible();
-		this.loadDetailedTranscript(true);
+		this.loadDetailedTranscript();
 		this.args.requestRender();
 	}
 
@@ -70,7 +73,7 @@ export class SubagentsPanel implements Component {
 		}
 		if (data === KEY_LEFT || data === KEY_ESC) return this.closeOrBackOut();
 		if (this.detailedAgentId) {
-			if (data === KEY_D || data === KEY_D_LOWER) this.requestKillSelected();
+			if (this.canKill() && (data === KEY_D || data === KEY_D_LOWER)) this.requestKillSelected();
 			return true;
 		}
 		if (data === KEY_UP || data === KEY_K) return this.moveSelection(-1);
@@ -79,7 +82,7 @@ export class SubagentsPanel implements Component {
 			this.drillIntoSelected();
 			return true;
 		}
-		if (data === KEY_D || data === KEY_D_LOWER) {
+		if (this.canKill() && (data === KEY_D || data === KEY_D_LOWER)) {
 			this.requestKillSelected();
 			return true;
 		}
@@ -95,6 +98,7 @@ export class SubagentsPanel implements Component {
 			scrollOffset: this.scrollOffset,
 			detailedAgentId: this.detailedAgentId,
 			pendingKillAgentId: this.pendingKillAgentId,
+			canKill: this.canKill(),
 			transcript: this.currentTranscript(),
 		});
 	}
@@ -117,7 +121,7 @@ export class SubagentsPanel implements Component {
 	private confirmKill(agentId: string): boolean {
 		const state = this.states.find((candidate) => candidate.agentId === agentId);
 		this.pendingKillAgentId = null;
-		if (state && isActiveSubagentState(state)) {
+		if (state && isActiveSubagentState(state) && this.args.onKill) {
 			if (this.detailedAgentId === state.agentId) this.detailedAgentId = null;
 			void Promise.resolve(this.args.onKill(state)).finally(() => this.args.requestRender());
 		}
@@ -134,7 +138,7 @@ export class SubagentsPanel implements Component {
 
 	private requestKillSelected(): void {
 		const state = this.states[this.selectedIdx];
-		if (!state || !isActiveSubagentState(state)) return;
+		if (!this.canKill() || !state || !isActiveSubagentState(state)) return;
 		this.pendingKillAgentId = state.agentId;
 		this.args.requestRender();
 	}
@@ -161,28 +165,45 @@ export class SubagentsPanel implements Component {
 
 	private ensureTranscriptLoaded(state: SubagentState, force = false): void {
 		const cached = this.transcripts.get(state.agentId);
-		if (!force && cached?.lastUpdate === state.lastUpdate) return;
+		const transcriptKey = getTranscriptKey(state);
+		if (!force && cached?.transcriptKey === transcriptKey && transcriptKey !== null) return;
+		if (!force && cached?.lastUpdate === state.lastUpdate && cached?.transcriptKey === transcriptKey) return;
 		if (cached?.status === "loading") return;
 		this.transcripts.set(state.agentId, {
 			lastUpdate: state.lastUpdate,
+			transcriptKey,
 			status: cached?.excerpt ? "ready" : "loading",
 			excerpt: cached?.excerpt,
 		});
 		void this.loadTranscript(state).then(
 			(excerpt) => {
-				this.transcripts.set(state.agentId, { lastUpdate: state.lastUpdate, status: "ready", excerpt });
+				this.transcripts.set(state.agentId, {
+					lastUpdate: state.lastUpdate,
+					transcriptKey,
+					status: "ready",
+					excerpt,
+				});
 				this.args.requestRender();
 			},
 			() => {
 				const excerpt: TranscriptExcerpt = { kind: "unreadable", message: "Transcript unavailable." };
-				this.transcripts.set(state.agentId, { lastUpdate: state.lastUpdate, status: "ready", excerpt });
+				this.transcripts.set(state.agentId, {
+					lastUpdate: state.lastUpdate,
+					transcriptKey,
+					status: "ready",
+					excerpt,
+				});
 				this.args.requestRender();
 			},
 		);
 	}
 
 	private loadTranscript(state: SubagentState): Promise<TranscriptExcerpt> {
-		return this.args.loadTranscript?.(state) ?? readRecentTranscriptExcerpt(state.paths.output);
+		if (this.args.loadTranscript) return this.args.loadTranscript(state);
+		if (!isExpectedTranscriptPath(state)) {
+			return Promise.resolve({ kind: "unreadable", message: "Transcript unavailable." });
+		}
+		return readRecentTranscriptExcerpt(state.paths.output);
 	}
 
 	private currentTranscript(): TranscriptExcerpt | "loading" | undefined {
@@ -192,12 +213,27 @@ export class SubagentsPanel implements Component {
 		return cached?.status === "ready" ? cached.excerpt : "loading";
 	}
 
+	private canKill(): boolean {
+		return this.args.canKill ?? Boolean(this.args.onKill);
+	}
+
 	private ensureSelectionVisible(): void {
 		if (this.selectedIdx < this.scrollOffset) this.scrollOffset = this.selectedIdx;
 		const bottom = this.scrollOffset + MAX_PANEL_ITEMS - 1;
 		if (this.selectedIdx > bottom) this.scrollOffset = this.selectedIdx - MAX_PANEL_ITEMS + 1;
 		this.scrollOffset = Math.max(0, this.scrollOffset);
 	}
+}
+
+function getTranscriptKey(state: SubagentState): string | null {
+	if (state.transcriptSize === undefined || state.transcriptMtimeMs === undefined) return null;
+	return `${state.transcriptSize}:${state.transcriptMtimeMs}`;
+}
+
+function isExpectedTranscriptPath(state: SubagentState): boolean {
+	const stateDir = path.dirname(path.resolve(state.paths.state));
+	const outputPath = path.resolve(state.paths.output);
+	return path.basename(outputPath) === "output.jsonl" && path.dirname(outputPath) === stateDir;
 }
 
 function sortStates(states: SubagentState[]): SubagentState[] {

@@ -6,14 +6,7 @@ const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
 const MAX_DISPLAY_EVENTS = 20;
 const MAX_EVENT_TEXT_LENGTH = 2000;
 
-const SENSITIVE_KEYS = new Set([
-	"thinking",
-	"thinkingSignature",
-	"encrypted_content",
-	"encryptedContent",
-	"reasoning_content",
-	"reasoningContent",
-]);
+const SENSITIVE_KEYS = ["thinking", "reasoning", "encrypted", "signature", "redacted"];
 
 export type TranscriptExcerpt =
 	| { kind: "events"; events: string[] }
@@ -26,8 +19,9 @@ export type TranscriptExcerpt =
  * should not be written at all.
  */
 export function sanitizeTranscriptEvent(event: unknown): unknown | null {
-	const ev = event as { type?: string; assistantMessageEvent?: unknown } | null;
-	if (ev?.type === "message_update" && !hasVisibleTextDelta(ev.assistantMessageEvent)) return null;
+	const ev = event as { type?: string } | null;
+	if (ev?.type === "message_update") return null;
+	if (ev?.type && isSensitiveToken(ev.type)) return null;
 
 	const sanitized = sanitizeValue(event);
 	return sanitized === undefined ? null : sanitized;
@@ -77,7 +71,6 @@ function formatTranscriptEvent(event: unknown | null): string | null {
 	const record = asRecord(event);
 	if (!record) return null;
 	const type = stringField(record, "type");
-	if (type === "message_update") return formatMessageUpdate(record);
 	if (type === "message_end") return formatMessageEnd(record);
 	if (type === "tool_call_start") return formatToolCallStart(record);
 	if (type === "tool_call_end") return formatToolCallEnd(record);
@@ -86,15 +79,7 @@ function formatTranscriptEvent(event: unknown | null): string | null {
 	if (type === "tool_execution_end") return formatToolExecutionEnd(record);
 	if (type === "agent_start") return "agent: started";
 	if (type === "agent_end") return formatAgentEnd(record);
-	return formatGenericEvent(record, type);
-}
-
-function formatMessageUpdate(event: Record<string, unknown>): string | null {
-	const update = asRecord(event.assistantMessageEvent);
-	if (!hasVisibleTextDelta(update)) return null;
-	const partial = asRecord(update?.partial);
-	const content = formatContent(partial?.content);
-	return content ? boundedLine(`assistant: ${content}`) : null;
+	return null;
 }
 
 function formatMessageEnd(event: Record<string, unknown>): string | null {
@@ -149,12 +134,6 @@ function formatAgentEnd(event: Record<string, unknown>): string | null {
 	return boundedLine(`agent: ${content || "completed"}`);
 }
 
-function formatGenericEvent(event: Record<string, unknown>, type: string | undefined): string | null {
-	const text = stringField(event, "text") ?? stringField(event, "content") ?? stringField(event, "message");
-	if (!text) return null;
-	return boundedLine(`${type ?? "event"}: ${text}`);
-}
-
 function formatContent(content: unknown): string {
 	if (typeof content === "string") return oneLine(content);
 	if (!Array.isArray(content)) return "";
@@ -172,7 +151,7 @@ function formatContentPart(part: unknown): string {
 		return `[tool use: ${stringField(record, "name") ?? "tool"}]`;
 	}
 	if (type === "tool_result" || type === "toolResult") return `tool result: ${formatContent(record.content)}`;
-	return stringField(record, "text") ?? "";
+	return "";
 }
 
 function formatToolResultContent(value: unknown): string {
@@ -206,7 +185,7 @@ function stringField(record: Record<string, unknown> | null, key: string): strin
 }
 
 function sanitizeValue(value: unknown, key?: string): unknown {
-	if (key && SENSITIVE_KEYS.has(key)) return undefined;
+	if (key && isSensitiveToken(key)) return undefined;
 
 	if (Array.isArray(value)) {
 		const out: unknown[] = [];
@@ -231,25 +210,14 @@ function sanitizeValue(value: unknown, key?: string): unknown {
 	return value;
 }
 
-function hasVisibleTextDelta(update: unknown): boolean {
-	const record = asRecord(update);
-	if (stringField(record, "type") !== "text_delta") return false;
-	const partial = asRecord(record?.partial);
-	return containsVisibleText(partial?.content);
-}
-
-function containsVisibleText(value: unknown): boolean {
-	if (typeof value === "string") return value.trim().length > 0;
-	if (!Array.isArray(value)) return false;
-	return value.some((part) => {
-		if (typeof part === "string") return part.trim().length > 0;
-		const record = asRecord(part);
-		return stringField(record, "type") === "text" && Boolean(stringField(record, "text")?.trim());
-	});
-}
-
 function isThinkingPart(value: unknown): boolean {
-	return Boolean(value && typeof value === "object" && (value as { type?: string }).type === "thinking");
+	const type = value && typeof value === "object" ? (value as { type?: string }).type : undefined;
+	return Boolean(type && isSensitiveToken(type));
+}
+
+function isSensitiveToken(value: string): boolean {
+	const normalized = value.toLowerCase().replace(/[_-]/g, "");
+	return SENSITIVE_KEYS.some((key) => normalized.includes(key));
 }
 
 function oneLine(value: string): string {

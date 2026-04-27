@@ -20,23 +20,11 @@ describe("sanitizeTranscriptEvent", () => {
 		expect(sanitizeTranscriptEvent(event)).toBeNull();
 	});
 
-	it("keeps visible streaming text deltas while dropping hidden thinking updates", () => {
+	it("drops streaming deltas from persisted transcripts", () => {
 		expect(
 			sanitizeTranscriptEvent({
 				type: "message_update",
 				assistantMessageEvent: { type: "text_delta", partial: { content: [{ type: "text", text: "partial" }] } },
-			}),
-		).toEqual({
-			type: "message_update",
-			assistantMessageEvent: { type: "text_delta", partial: { content: [{ type: "text", text: "partial" }] } },
-		});
-		expect(
-			sanitizeTranscriptEvent({
-				type: "message_update",
-				assistantMessageEvent: {
-					type: "thinking_delta",
-					partial: { content: [{ type: "thinking", thinking: "hidden" }] },
-				},
 			}),
 		).toBeNull();
 	});
@@ -57,6 +45,18 @@ describe("sanitizeTranscriptEvent", () => {
 		expect(JSON.stringify(sanitized)).not.toContain("thinkingSignature");
 		expect(JSON.stringify(sanitized)).not.toContain("hidden");
 		expect(JSON.stringify(sanitized)).toContain("visible");
+	});
+
+	it("drops reasoning-shaped events and fields by default", () => {
+		expect(sanitizeTranscriptEvent({ type: "reasoning_delta", text: "hidden" })).toBeNull();
+		expect(
+			JSON.stringify(
+				sanitizeTranscriptEvent({
+					type: "message_end",
+					message: { role: "assistant", content: [{ type: "reasoning", text: "hidden" }] },
+				}),
+			),
+		).not.toContain("hidden");
 	});
 });
 
@@ -122,10 +122,6 @@ describe("readRecentTranscriptExcerpt", () => {
 				}),
 				JSON.stringify({ type: "tool_execution_end", toolName: "read" }),
 				JSON.stringify({
-					type: "message_update",
-					assistantMessageEvent: { type: "text_delta", partial: { content: [{ type: "text", text: "working" }] } },
-				}),
-				JSON.stringify({
 					type: "message_end",
 					message: { role: "assistant", content: [{ type: "text", text: "done" }] },
 				}),
@@ -143,7 +139,6 @@ describe("readRecentTranscriptExcerpt", () => {
 			expect(excerpt.events.join("\n")).not.toContain('{"command":');
 			expect(excerpt.events).toContain("tool output (bash): line one");
 			expect(excerpt.events).toContain("tool: read completed");
-			expect(excerpt.events).toContain("assistant: working");
 			expect(excerpt.events).toContain("assistant: done");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });

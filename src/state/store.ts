@@ -17,7 +17,7 @@ export async function readState(p: string): Promise<SubagentState | null> {
 	for (let attempt = 0; attempt < READ_RETRIES; attempt++) {
 		try {
 			const raw = await fs.readFile(p, "utf-8");
-			return normalizeState(JSON.parse(raw));
+			return normalizeState(JSON.parse(raw), p);
 		} catch (err) {
 			const e = err as NodeJS.ErrnoException;
 			if (e.code === "ENOENT") {
@@ -34,12 +34,19 @@ export async function readState(p: string): Promise<SubagentState | null> {
 	return null;
 }
 
-function normalizeState(input: unknown): SubagentState {
+function normalizeState(input: unknown, statePath: string): SubagentState {
 	const state = input as SubagentState & { thinking?: SubagentState["thinking"]; alias?: string };
+	const dir = path.dirname(statePath);
 	return {
 		...state,
 		alias: state.alias ?? state.agent,
 		thinking: state.thinking ?? defaultThinkingForAgent(state.agent),
+		paths: {
+			state: statePath,
+			output: path.join(dir, "output.jsonl"),
+			stderr: path.join(dir, "stderr.log"),
+			prompt: path.join(dir, "prompt.md"),
+		},
 	};
 }
 
@@ -62,7 +69,16 @@ export async function listStates(sessionDir: string, opts: ListOptions = {}): Pr
 		const s = await readState(stateFile);
 		if (!s) continue;
 		if (s.status === "detached" && !opts.includeDetached) continue;
-		out.push(s);
+		out.push(await attachTranscriptFingerprint(s));
 	}
 	return out;
+}
+
+async function attachTranscriptFingerprint(state: SubagentState): Promise<SubagentState> {
+	try {
+		const stat = await fs.stat(state.paths.output);
+		return { ...state, transcriptSize: stat.size, transcriptMtimeMs: stat.mtimeMs };
+	} catch {
+		return state;
+	}
 }
