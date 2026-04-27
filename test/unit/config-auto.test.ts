@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { suggestDefaults } from "../../src/config/auto.js";
+import { AGENT_SLOT_NAMES, suggestDefaults } from "../../src/config/auto.js";
 
 const M = (provider: string, id: string, reasoning: boolean, costInput: number) =>
 	({
@@ -10,7 +10,11 @@ const M = (provider: string, id: string, reasoning: boolean, costInput: number) 
 		// biome-ignore lint/suspicious/noExplicitAny: pragmatic for unit testing
 	}) as any;
 
-describe("suggestDefaults", () => {
+describe("agent slot config", () => {
+	it("exports built-in slots for explore and general-purpose", () => {
+		expect(AGENT_SLOT_NAMES).toEqual(["explore", "general-purpose"]);
+	});
+
 	it("picks cheapest reasoning=false for explore", () => {
 		const models = [
 			M("anthropic", "claude-haiku-4-5", false, 0.25),
