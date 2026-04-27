@@ -9,9 +9,14 @@
       "id": "WP1",
       "title": "Config inherit mode",
       "description": "Add explicit inherit support to persisted sub-agent slots, config TUI selection, and dispatch slot resolution.",
-      "task_ids": ["P1-T001", "P1-T002"],
+      "task_ids": [
+        "P1-T001",
+        "P1-T002"
+      ],
       "depends_on": [],
-      "parallel_safe_with": ["WP2"],
+      "parallel_safe_with": [
+        "WP2"
+      ],
       "primary_paths": [
         "src/config/schema.ts",
         "src/config/tui.ts",
@@ -32,9 +37,14 @@
       "id": "WP2",
       "title": "Footer details navigation",
       "description": "Add keyboard navigation from the below-input running status into active sub-agent list and transcript-focused details.",
-      "task_ids": ["P2-T001", "P2-T002"],
+      "task_ids": [
+        "P2-T001",
+        "P2-T002"
+      ],
       "depends_on": [],
-      "parallel_safe_with": ["WP1"],
+      "parallel_safe_with": [
+        "WP1"
+      ],
       "primary_paths": [
         "src/ui/footer.ts",
         "src/ui/overlay.ts",
@@ -67,7 +77,7 @@
           "id": "P1-T001",
           "title": "Support inherited slot resolution",
           "description": "Extend the persisted slot contract and resolver so any configurable sub-agent slot can explicitly inherit parent provider, model, and thinking. Preserve concrete slots, general-purpose default inheritance, and per-dispatch override precedence.",
-          "status": "pending",
+          "status": "in-progress",
           "dependencies": [],
           "acceptance_criteria": [
             "Config parsing accepts and reloads explicit inherit slots while keeping existing concrete slot configs valid.",
@@ -82,8 +92,10 @@
           "id": "P1-T002",
           "title": "Expose inherit in subagent config",
           "description": "Update `/subagent-config` so every configurable slot offers an inherit option. Selecting inherit must save durable inherited state and skip thinking selection; selecting a concrete model must keep the existing thinking selection behavior.",
-          "status": "pending",
-          "dependencies": ["P1-T001"],
+          "status": "in-progress",
+          "dependencies": [
+            "P1-T001"
+          ],
           "acceptance_criteria": [
             "The model selection list includes an inherit option for every slot in the config flow.",
             "Selecting inherit saves a reloadable config state used by dispatch.",
@@ -105,7 +117,7 @@
         {
           "id": "P2-T001",
           "title": "Add footer status navigation",
-          "description": "Make the below-input `⟳ N running` status keyboard-navigable when the editor is empty and sub-agents are active. Down focuses the status, Down or Enter opens the active list, and Escape or Left closes/backtracks before abort handling. Keep the above-input tracker unchanged.",
+          "description": "Make the below-input `\u27f3 N running` status keyboard-navigable when the editor is empty and sub-agents are active. Down focuses the status, Down or Enter opens the active list, and Escape or Left closes/backtracks before abort handling. Keep the above-input tracker unchanged.",
           "status": "pending",
           "dependencies": [],
           "acceptance_criteria": [
@@ -123,7 +135,9 @@
           "title": "Show transcript-focused subagent details",
           "description": "Update the active sub-agent list and drill-down view so arrows select agents and Enter or Right opens a selected detail view. The detail view shows metadata, task text, and a bounded formatted recent transcript excerpt without separate activity/tool/output/file sections.",
           "status": "pending",
-          "dependencies": ["P2-T001"],
+          "dependencies": [
+            "P2-T001"
+          ],
           "acceptance_criteria": [
             "The active list supports arrow-key selection and Enter or Right Arrow drills into the selected sub-agent.",
             "The detail view shows status, alias, model, cwd, elapsed time, usage, and wrapped task text.",
