@@ -1,27 +1,12 @@
 import path from "node:path";
 import type { Theme } from "@mariozechner/pi-coding-agent";
-import type { Component } from "@mariozechner/pi-tui";
+import { type Component, Key, matchesKey } from "@mariozechner/pi-tui";
 import { type TranscriptExcerpt, readRecentTranscriptExcerpt } from "../runtime/transcript.js";
 import type { SubagentState } from "../types.js";
 import { isActiveSubagentState, renderSubagentsPanel } from "./subagents-panel-render.js";
 
 export { isActiveSubagentState, renderSubagentsPanel } from "./subagents-panel-render.js";
 
-const KEY_UP = "\x1b[A";
-const KEY_DOWN = "\x1b[B";
-const KEY_LEFT = "\x1b[D";
-const KEY_RIGHT = "\x1b[C";
-const KEY_ENTER = "\r";
-const KEY_ESC = "\x1b";
-const KEY_D = "D";
-const KEY_D_LOWER = "d";
-const KEY_J = "j";
-const KEY_K = "k";
-const KEY_Y = "y";
-const KEY_Y_UPPER = "Y";
-const KEY_N = "n";
-const KEY_N_UPPER = "N";
-const KEY_CTRL_C = "\x03";
 const MAX_PANEL_ITEMS = 5;
 
 interface SubagentsPanelArgs {
@@ -65,24 +50,24 @@ export class SubagentsPanel implements Component {
 	}
 
 	handleInput(data: string): boolean {
-		if (data === KEY_CTRL_C) return false;
+		if (matchesKey(data, Key.ctrl("c"))) return false;
 		if (this.pendingKillAgentId) return this.handleKillConfirmation(data);
 		if (this.states.length === 0) {
-			if (data === KEY_ESC || data === KEY_LEFT) this.args.onClose();
+			if (matchesKey(data, Key.escape) || matchesKey(data, Key.left)) this.args.onClose();
 			return true;
 		}
-		if (data === KEY_LEFT || data === KEY_ESC) return this.closeOrBackOut();
+		if (matchesKey(data, Key.left) || matchesKey(data, Key.escape)) return this.closeOrBackOut();
 		if (this.detailedAgentId) {
-			if (this.canKill() && (data === KEY_D || data === KEY_D_LOWER)) this.requestKillSelected();
+			if (this.canKill() && (matchesKey(data, Key.shift("d")) || matchesKey(data, "d"))) this.requestKillSelected();
 			return true;
 		}
-		if (data === KEY_UP || data === KEY_K) return this.moveSelection(-1);
-		if (data === KEY_DOWN || data === KEY_J) return this.moveSelection(1);
-		if (data === KEY_ENTER || data === KEY_RIGHT) {
+		if (matchesKey(data, Key.up) || matchesKey(data, "k")) return this.moveSelection(-1);
+		if (matchesKey(data, Key.down) || matchesKey(data, "j")) return this.moveSelection(1);
+		if (matchesKey(data, Key.enter) || matchesKey(data, Key.right)) {
 			this.drillIntoSelected();
 			return true;
 		}
-		if (this.canKill() && (data === KEY_D || data === KEY_D_LOWER)) {
+		if (this.canKill() && (matchesKey(data, Key.shift("d")) || matchesKey(data, "d"))) {
 			this.requestKillSelected();
 			return true;
 		}
@@ -110,8 +95,8 @@ export class SubagentsPanel implements Component {
 	private handleKillConfirmation(data: string): boolean {
 		const agentId = this.pendingKillAgentId;
 		if (!agentId) return true;
-		if (data === KEY_Y || data === KEY_Y_UPPER) return this.confirmKill(agentId);
-		if (data === KEY_N || data === KEY_N_UPPER || data === KEY_ESC) {
+		if (matchesKey(data, "y") || matchesKey(data, Key.shift("y"))) return this.confirmKill(agentId);
+		if (matchesKey(data, "n") || matchesKey(data, Key.shift("n")) || matchesKey(data, Key.escape)) {
 			this.pendingKillAgentId = null;
 			this.args.requestRender();
 		}

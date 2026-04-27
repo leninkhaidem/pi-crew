@@ -1,16 +1,11 @@
 // src/ui/footer.ts
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
-import type { TUI } from "@mariozechner/pi-tui";
+import { type TUI, Key, matchesKey } from "@mariozechner/pi-tui";
 import type { SubagentState } from "../types.js";
 import { SubagentsPanel, isActiveSubagentState } from "./subagents-panel.js";
 
 const STATUS_KEY = "pi-crew";
 const PANEL_WIDGET_KEY = "pi-crew-footer-details";
-const KEY_DOWN = "\x1b[B";
-const KEY_LEFT = "\x1b[D";
-const KEY_ENTER = "\r";
-const KEY_ESC = "\x1b";
-const KEY_CTRL_C = "\x03";
 
 export interface FooterController {
 	update(states: SubagentState[]): void;
@@ -83,19 +78,19 @@ export function mountFooter(ctx: ExtensionContext, args: FooterArgs = {}): Foote
 	const unsubscribeInput = ui.onTerminalInput?.((data) => {
 		if (panelOpen && panel) return panel.handleInput(data) ? { consume: true } : undefined;
 		if (panelOpen) {
-			if (data === KEY_CTRL_C) return undefined;
-			if (data === KEY_ESC || data === KEY_LEFT) closePanel();
+			if (matchesKey(data, Key.ctrl("c"))) return undefined;
+			if (matchesKey(data, Key.escape) || matchesKey(data, Key.left)) closePanel();
 			return { consume: true };
 		}
-		if ((data === KEY_DOWN || data === KEY_ENTER) && focused && canUseFooterNavigation()) {
+		if ((matchesKey(data, Key.down) || matchesKey(data, Key.enter)) && focused && canUseFooterNavigation()) {
 			return openPanel() ? { consume: true } : undefined;
 		}
-		if (data === KEY_DOWN && !focused && canUseFooterNavigation()) {
+		if (matchesKey(data, Key.down) && !focused && canUseFooterNavigation()) {
 			focused = true;
 			renderStatus();
 			return { consume: true };
 		}
-		if (focused && (data === KEY_LEFT || data === KEY_ESC)) {
+		if (focused && (matchesKey(data, Key.left) || matchesKey(data, Key.escape))) {
 			clearFocus();
 			return { consume: true };
 		}
