@@ -182,7 +182,7 @@ function resolveAgent(agents: AgentConfig[], name: string): AgentConfig | undefi
 
 function stateResult(state: SubagentState) {
 	return {
-		content: [{ type: "text" as const, text: formatParentSummary(state, { maxChars: 1200, maxLines: 16 }) }],
+		content: [{ type: "text" as const, text: formatParentSummary(state, { full: true }) }],
 		details: {
 			agentId: state.agentId,
 			alias: state.alias,
