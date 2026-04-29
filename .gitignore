@@ -8,3 +8,4 @@ dist/
 
 .worktrees/
 .claude/model-preferences.yml
+*.tgz
