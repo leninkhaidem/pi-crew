@@ -92,13 +92,18 @@ function formatStatusList(states: SubagentState[]): string {
 	const lines: string[] = [];
 	for (const s of states) {
 		const icon = iconFor(s.status);
-		lines.push(`${icon} ${s.alias} #${s.agentId} (${s.agent}, ${s.model}, ${s.thinking}) ${s.status} — ${s.task}`);
-		if (s.lastText) lines.push(`    last: ${s.lastText.slice(0, 120)}`);
+		lines.push(`${icon} ${s.alias} #${s.agentId} (${s.agent}, ${s.model}, ${s.thinking}) ${s.status} — ${truncateLine(s.task, 120)}`);
+		if (s.lastText) lines.push(`    last: ${truncateLine(s.lastText, 120)}`);
 		if (s.lastToolCall) lines.push(`    tool: ${s.lastToolCall.name}`);
 		lines.push(`    state: ${s.paths.state}`);
 		lines.push(`    output: ${s.paths.output}`);
 	}
 	return lines.join("\n");
+}
+
+function truncateLine(text: string, maxLen: number): string {
+	const line = text.trim().split("\n")[0] ?? "";
+	return line.length <= maxLen ? line : `${line.slice(0, maxLen - 1)}…`;
 }
 
 function iconFor(s: SubagentStatus): string {

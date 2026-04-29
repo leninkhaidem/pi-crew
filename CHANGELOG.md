@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.4 — 2026-04-29
+
+### Fixed
+
+- **Readable status output for multi-line tasks.** `subagent_status` now truncates the task and lastText fields to a single line in the display format, preventing unreadable output when task prompts contain paragraphs, markdown, or multi-line content. Full task text remains available in the structured `details` payload.
+
 ## v0.4.3 — 2026-04-29
 
 ### Changed
