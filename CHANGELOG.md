@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.1 — 2026-04-29
+
+### Fixed
+
+- **Frontmatter parser robustness.** `parseAgentMarkdown` now uses `Record<string, unknown>` instead of `Record<string, string>`, correctly handling YAML values that aren't plain strings.
+- Support YAML list syntax for the `tools` field (e.g., `tools:\n  - read\n  - grep`) in addition to comma-separated strings.
+- Explicitly coerce `name` and `description` frontmatter values to strings, preventing type mismatches from non-string YAML values.
+- Normalize empty `tools` arrays to `null` after filtering, avoiding downstream empty-array edge cases.
+- Wrap frontmatter parsing in a try/catch so malformed agent markdown files return `null` instead of crashing the discovery pipeline.
+
 ## v0.4.0 — 2026-04-27
 
 ### Added

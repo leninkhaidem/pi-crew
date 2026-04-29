@@ -8,20 +8,27 @@ export interface ParsedAgent {
 }
 
 export function parseAgentMarkdown(content: string, _filePath: string): ParsedAgent | null {
-	const { frontmatter, body } = parseFrontmatter<Record<string, string>>(content);
-	if (!frontmatter.name || !frontmatter.description) return null;
-	const toolsRaw = frontmatter.tools;
-	const tools =
-		toolsRaw && toolsRaw.trim().length > 0
-			? toolsRaw
-					.split(",")
-					.map((t) => t.trim())
-					.filter(Boolean)
-			: null;
-	return {
-		name: frontmatter.name,
-		description: frontmatter.description,
-		tools,
-		systemPrompt: body,
-	};
+	try {
+		const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(content);
+		if (!frontmatter.name || !frontmatter.description) return null;
+		const toolsRaw = frontmatter.tools;
+		let tools: string[] | null = null;
+		if (Array.isArray(toolsRaw)) {
+			tools = toolsRaw.map((t) => String(t).trim()).filter(Boolean);
+		} else if (typeof toolsRaw === "string" && toolsRaw.trim().length > 0) {
+			tools = toolsRaw
+				.split(",")
+				.map((t) => t.trim())
+				.filter(Boolean);
+		}
+		if (tools && tools.length === 0) tools = null;
+		return {
+			name: String(frontmatter.name),
+			description: String(frontmatter.description),
+			tools,
+			systemPrompt: body,
+		};
+	} catch {
+		return null;
+	}
 }
