@@ -56,10 +56,23 @@ describe("resolveAgentSlot", () => {
 		if (!result.ok) expect(result.error).toBe("no_parent_model");
 	});
 
-	it("explore still requires explicit config without overrides", () => {
+	it("explore inherits parent model when unconfigured and parent model available", () => {
+		const ctx = { model: { provider: "parent", id: "parent-model" } } as never;
+		const pi = { getThinkingLevel: () => "high" } as never;
+
+		const result = resolveAgentSlot("explore", emptyConfig(), ctx, pi);
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.inherited).toBe(true);
+			expect(result.slot).toEqual({ provider: "parent", modelId: "parent-model", thinking: "high" });
+		}
+	});
+
+	it("returns no_parent_model for unconfigured agent without a parent model", () => {
 		const result = resolveAgentSlot("explore", emptyConfig(), { model: undefined } as never, {} as never);
 		expect(result.ok).toBe(false);
-		if (!result.ok) expect(result.error).toBe("unconfigured");
+		if (!result.ok) expect(result.error).toBe("no_parent_model");
 	});
 
 	it("per-call overrides take precedence over inherited slots", () => {

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.2 — 2026-04-29
+
+### Changed
+
+- **All sub-agents inherit parent model/thinking by default.** Unconfigured agents (e.g., custom project agents, `explore`) now automatically inherit the parent session's model, provider, and thinking effort instead of blocking with a "Configuration required" error. Explicit per-agent config and per-call overrides still take precedence.
+- Removed the `"unconfigured"` error state from `SlotResolution`. The only failure mode for agents without explicit config is now `"no_parent_model"` (when no parent model is available to inherit from).
+- System prompt no longer shows an "✗ Unconfigured" section — all discovered agents are listed as available.
+
 ## v0.4.1 — 2026-04-29
 
 ### Fixed

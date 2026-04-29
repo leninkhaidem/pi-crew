@@ -12,15 +12,15 @@ export type SlotResolution =
 	| {
 			ok: false;
 			message: string;
-			error: "unconfigured" | "no_parent_model" | "provider_required" | "model_required" | "model_not_found";
+			error: "no_parent_model" | "provider_required" | "model_required" | "model_not_found";
 	  };
 
 /**
  * Resolve model/thinking for an agent invocation.
  *
- * general-purpose intentionally acts as a parent twin by default: it inherits
- * the current parent model and thinking effort instead of requiring its own
- * configured slot. Other agents use pi-crew's explicit per-agent config.
+ * All agents inherit the current parent model and thinking by default when
+ * no explicit per-agent slot is configured. Explicit slots and per-call
+ * overrides take precedence over inheritance.
  */
 export function resolveAgentSlot(
 	agentName: string,
@@ -82,20 +82,14 @@ function resolveConfiguredSlot(
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 ): SlotResolution {
-	const configured = config.agents[agentName];
 	const base = resolveBaseSlot(agentName, config, ctx, pi);
 	if (base) return { ok: true, ...base };
-	if (agentName === "general-purpose" || isInheritedAgentSlot(configured)) {
-		return {
-			ok: false,
-			error: "no_parent_model",
-			message: `${agentName} needs a current parent model to inherit. Select a model in the parent session first.`,
-		};
-	}
+	// All agents inherit from parent by default when unconfigured.
+	// If we reach here, inheritance failed because there's no parent model.
 	return {
 		ok: false,
-		error: "unconfigured",
-		message: `Configuration required for agent "${agentName}". Run /subagent-config to set models.`,
+		error: "no_parent_model",
+		message: `${agentName} needs a current parent model to inherit. Select a model in the parent session first.`,
 	};
 }
 
@@ -111,10 +105,9 @@ function resolveBaseSlot(
 		return inherited ? { slot: inherited, inherited: true } : null;
 	}
 	if (configured) return { slot: configured, inherited: false };
-	if (agentName === "general-purpose") {
-		const inherited = inheritedParentSlot(ctx, pi);
-		if (inherited) return { slot: inherited, inherited: true };
-	}
+	// No explicit config — all agents inherit from parent by default
+	const inherited = inheritedParentSlot(ctx, pi);
+	if (inherited) return { slot: inherited, inherited: true };
 	return null;
 }
 

@@ -311,8 +311,7 @@ export default function (pi: ExtensionAPI) {
 			userAgentsDir,
 			bundledDir: BUNDLED_AGENTS_DIR,
 		});
-		const configuredSlots = new Set(Object.keys(config.agents));
-		configuredSlots.add("general-purpose");
+		const configuredSlots = new Set(discovered.agents.map((a) => a.name));
 		const availableModels = safeAvailableModels(ctx);
 		const block = buildSystemPromptBlock({
 			agents: discovered.agents.map((a) => ({

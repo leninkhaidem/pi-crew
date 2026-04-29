@@ -17,18 +17,19 @@ vi.mock("@mariozechner/pi-coding-agent", async (importOriginal) => {
 });
 
 describe("buildSystemPromptBlock", () => {
-	it("includes default agents and ✗ for unconfigured", () => {
+	it("lists all agents as available when all are configured (inherit by default)", () => {
 		const block = buildSystemPromptBlock({
 			agents: [
 				{ name: "explore", description: "recon", source: "bundled" },
 				{ name: "general-purpose", description: "general", source: "bundled" },
 			],
-			configuredSlots: new Set(["general-purpose"]),
+			configuredSlots: new Set(["explore", "general-purpose"]),
 			stateDirRoot: "/home/u/.pi/agent/subagents",
 		});
 		expect(block).toContain("## pi-crew sub-agents");
+		expect(block).toContain("explore: recon");
 		expect(block).toContain("general-purpose: general");
-		expect(block).toContain("✗ Unconfigured: explore");
+		expect(block).not.toContain("Unconfigured");
 		expect(block).toContain("/home/u/.pi/agent/subagents/<sessionId>/<agentId>/");
 		expect(block).toContain("Every sub-agent launch requires `alias`");
 		expect(block).toContain(
