@@ -228,7 +228,7 @@ describe("dispatchSession", () => {
 		fakeSession.setActiveToolsByName(["read", "Agent", "steer_subagent", "extension_tool"]);
 
 		const createdTools = (createdSessionOptions as { tools?: string[] }).tools;
-		expect(createdTools).toEqual(["read", "bash"]);
+		expect(createdTools).toBeUndefined();
 		expect(activeToolNames).toEqual(["read", "extension_tool"]);
 		for (const call of setActiveToolsByNameMock.mock.calls) {
 			for (const toolName of PI_CREW_ORCHESTRATION_TOOL_NAMES) {

@@ -19,7 +19,6 @@ import { appendFinalResultContract } from "./result-contract.js";
 import {
 	suppressPiCrewOrchestrationTools,
 	withoutPiCrewOrchestrationExtensions,
-	withoutPiCrewOrchestrationTools,
 } from "./tool-suppression.js";
 import { sanitizeTranscriptEvent } from "./transcript.js";
 
@@ -180,7 +179,6 @@ export async function dispatchSession(
 			sessionManager: SessionManager.inMemory(cwd),
 			settingsManager: SettingsManager.create(cwd, env.agentDir),
 		};
-		if (plan.agent.tools) sessionOptions.tools = withoutPiCrewOrchestrationTools(plan.agent.tools);
 		const created = await createAgentSession(sessionOptions);
 		session = created.session;
 		suppressPiCrewOrchestrationTools(session);

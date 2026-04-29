@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.3 — 2026-04-29
+
+### Changed
+
+- **Sub-agents get all tools by default.** Frontmatter `tools` field in agent `.md` definitions no longer restricts the tools available to sub-agents at runtime. All sub-agents now have access to every tool (read, write, edit, bash, etc.) except the pi-crew orchestration tools (Agent, subagent_dispatch, subagent_run, subagent_status, get_subagent_result, steer_subagent, subagent_kill), which remain suppressed via three independent layers.
+
 ## v0.4.2 — 2026-04-29
 
 ### Changed

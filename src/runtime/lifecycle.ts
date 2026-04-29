@@ -130,7 +130,7 @@ export async function dispatch(
 			binary: env.binary,
 			model: `${plan.model.provider}/${plan.model.modelId}`,
 			thinking,
-			tools: plan.agent.tools,
+			tools: null,
 			systemPromptPath: paths.prompt,
 			task: plan.options.task,
 			cwd,
