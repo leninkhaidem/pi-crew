@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.5 — 2026-04-29
+
+### Changed
+
+- **Clean transcript output in sub-agent details panel.** Transcript events now show only the content text without role/type prefixes (`tool:`, `assistant:`, `tool result:`, etc.). Tool invocation start events and agent lifecycle events are omitted entirely — only assistant text, tool output, and tool results are displayed.
+- **Multi-line support in task and transcript sections.** The task and transcript sections in the sub-agent details panel now preserve newlines instead of collapsing everything to a single line. Long lines are wrapped to fit the panel width.
+
 ## v0.4.4 — 2026-04-29
 
 ### Fixed

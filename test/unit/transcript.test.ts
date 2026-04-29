@@ -133,13 +133,12 @@ describe("readRecentTranscriptExcerpt", () => {
 			expect(excerpt.kind).toBe("events");
 			if (excerpt.kind !== "events") return;
 			expect(excerpt.events.join("\n")).not.toContain("Task: find auth");
-			expect(excerpt.events).toContain("tool: read src/auth.ts");
-			expect(excerpt.events).toContain("tool: $ set -euo pipefail echo hello");
-			expect(excerpt.events.join("\n")).not.toContain('{"path":"src/auth.ts"}');
-			expect(excerpt.events.join("\n")).not.toContain('{"command":');
-			expect(excerpt.events).toContain("tool output (bash): line one");
-			expect(excerpt.events).toContain("tool: read completed");
-			expect(excerpt.events).toContain("assistant: done");
+			expect(excerpt.events).toContain("line one");
+			expect(excerpt.events).toContain("done");
+			expect(excerpt.events.join("\n")).not.toContain('"path":"src/auth.ts"');
+			expect(excerpt.events.join("\n")).not.toContain('"command":');
+			expect(excerpt.events.join("\n")).not.toContain("tool:");
+			expect(excerpt.events.join("\n")).not.toContain("assistant:");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

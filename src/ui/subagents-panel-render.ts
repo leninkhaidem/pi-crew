@@ -114,9 +114,15 @@ function appendMetadataRows(lines: string[], args: PanelRenderArgs, state: Subag
 }
 
 function appendWrappedDetail(lines: string[], args: PanelRenderArgs, label: string, value: string): void {
-	const chunks = wrapText(value, Math.max(10, args.width - 12));
-	for (const [idx, chunk] of chunks.entries()) {
-		lines.push(row(detailLine(args.theme, idx === 0 ? label : "", chunk), args.width, args.theme));
+	const innerWidth = Math.max(10, args.width - 12);
+	const textLines = value.replace(/\r\n/g, "\n").split("\n");
+	let first = true;
+	for (const textLine of textLines) {
+		const chunks = wrapText(textLine || " ", innerWidth);
+		for (const chunk of chunks) {
+			lines.push(row(detailLine(args.theme, first ? label : "", chunk), args.width, args.theme));
+			first = false;
+		}
 	}
 }
 
@@ -130,9 +136,12 @@ function transcriptChunks(excerpt: TranscriptExcerpt | "loading" | undefined, wi
 	if (excerpt.kind !== "events") return [excerpt.message];
 	const out: string[] = [];
 	for (const event of excerpt.events) {
-		for (const line of wrapText(`• ${event}`, width)) {
-			if (out.length >= MAX_TRANSCRIPT_LINES) return out;
-			out.push(line);
+		const eventLines = event.split("\n");
+		for (const eventLine of eventLines) {
+			for (const line of wrapText(eventLine || " ", width)) {
+				if (out.length >= MAX_TRANSCRIPT_LINES) return out;
+				out.push(line);
+			}
 		}
 	}
 	return out.length > 0 ? out : ["No recent transcript events."];
@@ -150,8 +159,9 @@ function summaryLine(state: SubagentState, selected: boolean, theme: Theme): str
 }
 
 function wrapText(value: string, width: number): string[] {
-	const words = oneLine(value).split(" ").filter(Boolean);
-	if (words.length === 0) return ["—"];
+	const cleaned = stripUnsafeControls(value).replace(/\s+/g, " ").trim();
+	if (!cleaned) return ["—"];
+	const words = cleaned.split(" ").filter(Boolean);
 	const lines: string[] = [];
 	let current = "";
 	for (const word of words) {

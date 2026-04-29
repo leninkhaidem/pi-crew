@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import { formatToolCall } from "../ui/format.js";
 import { parseCompleteJsonl } from "./jsonl.js";
 
 const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
@@ -72,13 +71,8 @@ function formatTranscriptEvent(event: unknown | null): string | null {
 	if (!record) return null;
 	const type = stringField(record, "type");
 	if (type === "message_end") return formatMessageEnd(record);
-	if (type === "tool_call_start") return formatToolCallStart(record);
-	if (type === "tool_call_end") return formatToolCallEnd(record);
-	if (type === "tool_execution_start") return formatToolExecutionStart(record);
 	if (type === "tool_execution_update") return formatToolExecutionUpdate(record);
 	if (type === "tool_execution_end") return formatToolExecutionEnd(record);
-	if (type === "agent_start") return "agent: started";
-	if (type === "agent_end") return formatAgentEnd(record);
 	return null;
 }
 
@@ -86,59 +80,28 @@ function formatMessageEnd(event: Record<string, unknown>): string | null {
 	const message = asRecord(event.message);
 	if (!message) return null;
 	const role = stringField(message, "role") ?? "assistant";
-	if (role === "user") return null;
+	if (role === "user" || role === "toolResult") return null;
 	const content = formatContent(message.content);
 	if (!content) return null;
-	return boundedLine(role === "toolResult" ? `tool result: ${content}` : `${role}: ${content}`);
-}
-
-function formatToolCallStart(event: Record<string, unknown>): string | null {
-	const message = asRecord(event.message);
-	const name = stringField(message, "name");
-	if (!name) return null;
-	return boundedLine(`tool: ${formatToolCall(name, asArgs(message?.arguments))}`);
-}
-
-function formatToolCallEnd(event: Record<string, unknown>): string | null {
-	const message = asRecord(event.message);
-	const name = stringField(message, "name") ?? stringField(event, "toolName") ?? "tool";
-	return boundedLine(`tool: ${name} completed`);
-}
-
-function formatToolExecutionStart(event: Record<string, unknown>): string | null {
-	const name = stringField(event, "toolName");
-	if (!name) return null;
-	return boundedLine(`tool: ${formatToolCall(name, asArgs(event.args))}`);
+	return boundedText(content);
 }
 
 function formatToolExecutionUpdate(event: Record<string, unknown>): string | null {
 	const content = formatToolResultContent(event.partialResult);
 	if (!content) return null;
-	const name = stringField(event, "toolName") ?? "tool";
-	return boundedLine(`tool output (${name}): ${content}`);
+	return boundedText(content);
 }
 
 function formatToolExecutionEnd(event: Record<string, unknown>): string | null {
-	const name = stringField(event, "toolName") ?? "tool";
 	const content = formatToolResultContent(event.result);
-	return boundedLine(content ? `tool result (${name}): ${content}` : `tool: ${name} completed`);
-}
-
-function formatAgentEnd(event: Record<string, unknown>): string | null {
-	const messages = Array.isArray(event.messages) ? event.messages : [];
-	const last = messages
-		.map(asRecord)
-		.filter((msg) => msg?.role === "assistant")
-		.at(-1);
-	const content = last ? formatContent(last.content) : "completed";
-	return boundedLine(`agent: ${content || "completed"}`);
+	return content ? boundedText(content) : null;
 }
 
 function formatContent(content: unknown): string {
-	if (typeof content === "string") return oneLine(content);
+	if (typeof content === "string") return cleanText(content);
 	if (!Array.isArray(content)) return "";
 	const parts = content.map(formatContentPart).filter((part) => part.length > 0);
-	return oneLine(parts.join(" "));
+	return cleanText(parts.join("\n"));
 }
 
 function formatContentPart(part: unknown): string {
@@ -166,13 +129,13 @@ function formatToolResultContent(value: unknown): string {
 	);
 }
 
-function asArgs(value: unknown): Record<string, unknown> {
-	return asRecord(value) ?? {};
+function boundedText(value: string): string {
+	const text = cleanText(value);
+	return text.length > MAX_EVENT_TEXT_LENGTH ? `${text.slice(0, MAX_EVENT_TEXT_LENGTH - 1)}…` : text;
 }
 
-function boundedLine(value: string): string {
-	const line = oneLine(value);
-	return line.length > MAX_EVENT_TEXT_LENGTH ? `${line.slice(0, MAX_EVENT_TEXT_LENGTH - 1)}…` : line;
+function cleanText(value: string): string {
+	return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\t/g, "  ").trim();
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

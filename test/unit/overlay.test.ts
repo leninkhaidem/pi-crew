@@ -122,14 +122,14 @@ describe("renderSubagentsPanel", () => {
 			states: [stateOf({ alias: "\u001b]52;c;bad\u0007auth-search", task: "safe\u001b[31m task" })],
 			selectedIdx: 0,
 			detailedAgentId: "abc12345",
-			transcript: { kind: "events", events: ["assistant: hi\u001b[31mred\u001b[0m"] },
+			transcript: { kind: "events", events: ["hi\u001b[31mred\u001b[0m"] },
 			width: 72,
 			theme: theme as never,
 		}).join("\n");
 
 		expect(rendered).toContain("auth-search");
 		expect(rendered).toContain("safe task");
-		expect(rendered).toContain("assistant: hired");
+		expect(rendered).toContain("hired");
 		expect(rendered).not.toContain("\u001b");
 		expect(rendered).not.toContain("52;c;bad");
 	});
