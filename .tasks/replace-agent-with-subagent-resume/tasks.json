@@ -1,0 +1,139 @@
+{
+  "feature": "replace-agent-with-subagent-resume",
+  "title": "Replace Agent tool with dedicated subagent_resume",
+  "description": "Remove the Agent tool and create a focused subagent_resume tool for session-mode resumption",
+  "created_at": "2026-04-30T06:15:00Z",
+  "status": "completed",
+  "work_packages": [
+    {
+      "id": "WP1",
+      "title": "Create subagent_resume tool and remove Agent",
+      "description": "Implement the new subagent_resume tool, delete the Agent tool, update registration, suppression list, and system prompt references. T003 and T004 are internally parallelizable after T002 completes.",
+      "task_ids": ["P1-T001", "P1-T002", "P1-T003", "P1-T004"],
+      "depends_on": [],
+      "parallel_safe_with": [],
+      "primary_paths": ["src/tools/", "src/index.ts", "src/runtime/tool-suppression.ts", "src/system-prompt.ts"],
+      "verification_commands": ["npm run build"],
+      "rationale": "All tasks touch the same tool registration surface and must be coordinated — the new tool replaces the old one in one atomic change."
+    },
+    {
+      "id": "WP2",
+      "title": "Migrate tests",
+      "description": "Update all test files that reference Agent or registerAgentTool to use the new subagent_resume tool and redirect behavioral tests to surviving tools.",
+      "task_ids": ["P2-T001", "P2-T002"],
+      "depends_on": ["WP1"],
+      "parallel_safe_with": [],
+      "primary_paths": ["test/unit/tool-schema.test.ts", "test/unit/explore-blocking.test.ts", "test/unit/detach.test.ts", "test/unit/session-lifecycle.test.ts"],
+      "verification_commands": ["npm test"],
+      "rationale": "Tests depend on the production code changes from WP1. Split into rename-style migrations (P2-T001) and behavioral test redirection (P2-T002) that share the same test infrastructure."
+    }
+  ],
+  "phases": [
+    {
+      "id": "P1",
+      "name": "Tool implementation and cleanup",
+      "description": "Create the new subagent_resume tool, remove the Agent tool, and update all production references",
+      "order": 1,
+      "tasks": [
+        {
+          "id": "P1-T001",
+          "title": "Create subagent_resume tool",
+          "description": "Implement `src/tools/resume.ts` with a `subagent_resume` tool that takes `{ agent_id, prompt }` parameters plus optional provider, model, and thinking overrides. Provide session-mode agent resumption: acquire concurrency, consume completion, resume the handle, return formatted state or error. Follow the registration pattern in `src/tools/steer.ts`.",
+          "status": "done",
+          "completed_at": "2026-04-30T06:47:00Z",
+          "dependencies": [],
+          "acceptance_criteria": [
+            "Tool registered with name 'subagent_resume' and parameters agent_id (string, required), prompt (string, required), plus optional provider, model, and thinking override parameters",
+            "Returns an active-limit-reached error when concurrency is exhausted",
+            "Completion notification for the resumed agent is consumed so it is not re-delivered to the parent",
+            "Returns formatted state on success including agentId, alias, status, finalOutput, and usage",
+            "Returns descriptive error when agent not found or not session-mode",
+            "registerResumeTool is imported and called in src/index.ts alongside other tool registrations",
+            "Includes renderResult handler delegating to renderDispatchResult for consistent UI rendering"
+          ],
+          "context": "REQ-1 — the resume capability is the only unique functionality of the Agent tool that needs preservation"
+        },
+        {
+          "id": "P1-T002",
+          "title": "Remove Agent tool and update registration",
+          "description": "Delete `src/tools/agent.ts`. Remove the `registerAgentTool` import and its call site from `src/index.ts`. Ensure no other production file imports from `./tools/agent.js`.",
+          "status": "done",
+          "completed_at": "2026-04-30T06:47:00Z",
+          "dependencies": ["P1-T001"],
+          "acceptance_criteria": [
+            "src/tools/agent.ts does not exist",
+            "src/index.ts has no import of registerAgentTool",
+            "No production source file references ./tools/agent or registerAgentTool",
+            "TypeScript compilation succeeds after removal"
+          ],
+          "context": "REQ-2 — Agent is fully redundant once subagent_resume exists"
+        },
+        {
+          "id": "P1-T003",
+          "title": "Update tool suppression list",
+          "description": "In `src/runtime/tool-suppression.ts`, replace `\"Agent\"` with `\"subagent_resume\"` in the `PI_CREW_ORCHESTRATION_TOOL_NAMES` array.",
+          "status": "done",
+          "completed_at": "2026-04-30T06:47:00Z",
+          "dependencies": ["P1-T002"],
+          "acceptance_criteria": [
+            "PI_CREW_ORCHESTRATION_TOOL_NAMES includes 'subagent_resume'",
+            "PI_CREW_ORCHESTRATION_TOOL_NAMES does not include 'Agent'",
+            "Tool suppression logic still functions for sub-agent sessions"
+          ],
+          "context": "REQ-4 — suppression prevents sub-agents from recursively launching orchestration tools"
+        },
+        {
+          "id": "P1-T004",
+          "title": "Update system prompt",
+          "description": "In `src/system-prompt.ts`, remove references to `Agent` in the dispatch model section. Add `subagent_resume` to the tracking section alongside `steer_subagent`. Remove the Claude-style line about `Agent` from the dispatch model bullets.",
+          "status": "done",
+          "completed_at": "2026-04-30T06:47:00Z",
+          "dependencies": ["P1-T002"],
+          "acceptance_criteria": [
+            "System prompt no longer mentions 'Agent' as a tool name",
+            "System prompt documents subagent_resume for session-mode resumption",
+            "Dispatch model section describes only subagent_dispatch and subagent_run for launching"
+          ],
+          "context": "REQ-3 — the LLM system prompt must accurately reflect the available tools"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Test migration",
+      "description": "Update all tests referencing Agent to validate the new tool surface",
+      "order": 2,
+      "tasks": [
+        {
+          "id": "P2-T001",
+          "title": "Migrate straightforward Agent test references",
+          "description": "Update `test/unit/tool-schema.test.ts` to test `subagent_resume` schema properties (agent_id, prompt, model, alias required). Update `test/unit/session-lifecycle.test.ts` to replace `'Agent'` with `'subagent_resume'` in tool name lists and suppression assertions.",
+          "status": "done",
+          "completed_at": "2026-04-30T06:47:00Z",
+          "dependencies": ["P1-T001", "P1-T002", "P1-T003"],
+          "acceptance_criteria": [
+            "tool-schema.test.ts validates subagent_resume has agent_id, prompt, model, and alias properties",
+            "session-lifecycle.test.ts tool name lists include subagent_resume instead of Agent",
+            "Resume behavior is tested in at least one test case"
+          ],
+          "context": "REQ-5 — straightforward renames where Agent was referenced by name only"
+        },
+        {
+          "id": "P2-T002",
+          "title": "Migrate explore-blocking and detach behavior tests",
+          "description": "Redirect `test/unit/explore-blocking.test.ts` to test explore-blocking coercion against `subagent_dispatch` (which owns this behavior post-removal). Redirect `test/unit/detach.test.ts` Agent-tool tests to exercise detach behavior via `subagent_run` (which handles the detach/background race). Remove tests that duplicate coverage already provided by dispatch/run test suites.",
+          "status": "done",
+          "completed_at": "2026-04-30T06:47:00Z",
+          "dependencies": ["P1-T001", "P1-T002"],
+          "acceptance_criteria": [
+            "Explore-blocking coercion is tested against subagent_dispatch and/or subagent_run",
+            "Detach-to-background behavior is tested against subagent_run",
+            "No test file imports from src/tools/agent.js or references registerAgentTool",
+            "npm test passes with zero failures"
+          ],
+          "context": "REQ-5 + AC-6 — these tests exercise dispatch/detach behavior that lived in Agent but now belongs to subagent_dispatch and subagent_run"
+        }
+      ]
+    }
+  ]
+}

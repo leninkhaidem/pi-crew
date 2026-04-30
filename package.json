@@ -1,6 +1,6 @@
 {
 	"name": "@leninkhaidem/pi-crew",
-	"version": "0.4.5",
+	"version": "0.5.0",
 	"description": "Sub-agent extension for the pi coding assistant",
 	"license": "MIT",
 	"repository": "github:leninkhaidem/pi-crew",

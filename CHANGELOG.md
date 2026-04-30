@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.5.0 — 2026-04-30
+
+### Breaking Changes
+
+- **Removed the `Agent` tool.** The monolithic `Agent` tool (which combined launching, background/foreground toggle, and session-mode resumption) has been removed entirely. Use `subagent_dispatch` (background), `subagent_run` (blocking/parallel/chain), and the new `subagent_resume` (session-mode resumption) instead.
+
+### Added
+
+- **New `subagent_resume` tool.** A focused tool for resuming session-mode sub-agents. Takes `{ agent_id, prompt }` parameters. Supports optional `provider`, `model`, and `thinking` override parameters (reserved for future use).
+
+### Changed
+
+- **Tool suppression list updated.** `"Agent"` replaced with `"subagent_resume"` in the orchestration tools suppressed from sub-agents.
+- **System prompt updated.** Dispatch model section now documents only `subagent_dispatch` and `subagent_run` for launching, with `subagent_resume` listed in the tracking section for session-mode resumption.
+
 ## v0.4.5 — 2026-04-29
 
 ### Changed
