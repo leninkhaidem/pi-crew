@@ -53,7 +53,7 @@ describe("dispatchSession", () => {
 
 	it("defines the pi-crew orchestration tools suppressed from sub-agents", async () => {
 		const requiredTools = [
-			"Agent",
+			"subagent_resume",
 			"subagent_dispatch",
 			"subagent_run",
 			"subagent_status",
@@ -75,7 +75,7 @@ describe("dispatchSession", () => {
 		subscriber = undefined;
 		createdResourceLoaderOptions = undefined;
 		createdSessionOptions = undefined;
-		activeToolNames = ["read", "Agent", "subagent_dispatch", "get_subagent_result", "steer_subagent", "bash"];
+		activeToolNames = ["read", "subagent_resume", "subagent_dispatch", "get_subagent_result", "steer_subagent", "bash"];
 		setActiveToolsByNameMock = vi.fn((toolNames: string[]) => {
 			activeToolNames = [...toolNames];
 		});
@@ -210,7 +210,7 @@ describe("dispatchSession", () => {
 
 		const handle = await dispatchSession(
 			{
-				agent: { ...fakeAgent, tools: ["read", "Agent", "get_subagent_result", "steer_subagent", "bash"] },
+				agent: { ...fakeAgent, tools: ["read", "subagent_resume", "get_subagent_result", "steer_subagent", "bash"] },
 				model: { provider: "mock", modelId: "model", thinking: "low" },
 				options: { agent: "general-purpose", alias: "general-test", task: "say ok" },
 			},
@@ -225,7 +225,7 @@ describe("dispatchSession", () => {
 			},
 		);
 		await handle.donePromise;
-		fakeSession.setActiveToolsByName(["read", "Agent", "steer_subagent", "extension_tool"]);
+		fakeSession.setActiveToolsByName(["read", "subagent_resume", "steer_subagent", "extension_tool"]);
 
 		const createdTools = (createdSessionOptions as { tools?: string[] }).tools;
 		expect(createdTools).toBeUndefined();

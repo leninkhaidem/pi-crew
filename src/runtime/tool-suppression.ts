@@ -2,7 +2,7 @@ export const PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV = "PI_CREW_SUPPRESS_SUBAGENT_TO
 export const PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE = "1";
 
 export const PI_CREW_ORCHESTRATION_TOOL_NAMES = [
-	"Agent",
+	"subagent_resume",
 	"subagent_dispatch",
 	"subagent_run",
 	"subagent_status",
