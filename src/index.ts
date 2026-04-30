@@ -24,12 +24,12 @@ import type { ExtensionRuntime } from "./runtime/types.js";
 import { listStates, readState, writeState } from "./state/store.js";
 import { sweep } from "./state/sweep.js";
 import { buildSystemPromptBlock } from "./system-prompt.js";
-import { registerAgentTool } from "./tools/agent.js";
 import { registerDispatchTool } from "./tools/dispatch.js";
 import { registerKillTool } from "./tools/kill.js";
 import { registerGetSubagentResultTool } from "./tools/result.js";
 import { registerRunTool } from "./tools/run.js";
 import { registerStatusTool } from "./tools/status.js";
+import { registerResumeTool } from "./tools/resume.js";
 import { registerSteerTool } from "./tools/steer.js";
 import type { PiCrewConfig } from "./types.js";
 import { type FooterController, mountFooter } from "./ui/footer.js";
@@ -201,9 +201,9 @@ export default function (pi: ExtensionAPI) {
 	registerNotificationRenderer(pi);
 
 	if (!suppressSubagentTools) {
-		registerAgentTool(pi, rt);
 		registerDispatchTool(pi, rt);
 		registerRunTool(pi, rt);
+		registerResumeTool(pi, rt);
 		registerStatusTool(pi, rt);
 		registerGetSubagentResultTool(pi, rt);
 		registerSteerTool(pi, rt);
