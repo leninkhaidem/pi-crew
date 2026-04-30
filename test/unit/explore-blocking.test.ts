@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDetachController } from "../../src/runtime/detach.js";
-import { registerAgentTool } from "../../src/tools/agent.js";
 import { registerDispatchTool } from "../../src/tools/dispatch.js";
 import {
 	DEFAULT_GLOBAL_SETTINGS,
@@ -137,31 +136,6 @@ describe("explore blocking coercion", () => {
 			?.execute("call", { agent: "explore", alias: "repo-map", task: "map repo" }, undefined, undefined, {
 				cwd: tmp,
 			})) as { content: Array<{ text: string }>; details: { status: string } };
-
-		expect(result.content[0]?.text).toContain("EXPLORE_DONE");
-		expect(result.content[0]?.text).not.toContain("Started repo-map");
-		expect(result.details.status).toBe("done");
-		expect(consumeCompletion).toHaveBeenCalledWith("abc12345");
-		expect(release).toHaveBeenCalledOnce();
-	});
-
-	it("ignores run_in_background for explore in Agent and blocks", async () => {
-		const final = stateOf();
-		mocks.dispatch.mockResolvedValue({ agentId: final.agentId, state: final, donePromise: Promise.resolve(final) });
-		const tools = new Map<string, { execute: ToolExecute }>();
-		const pi = { registerTool: vi.fn((tool) => tools.set(tool.name, tool)) };
-		const { rt, consumeCompletion, release } = runtime(userAgentsDir, bundledAgentsDir);
-
-		registerAgentTool(pi as never, rt as never);
-		const result = (await tools
-			.get("Agent")
-			?.execute(
-				"call",
-				{ subagent_type: "explore", alias: "repo-map", prompt: "map repo", run_in_background: true },
-				undefined,
-				undefined,
-				{ cwd: tmp },
-			)) as { content: Array<{ text: string }>; details: { status: string } };
 
 		expect(result.content[0]?.text).toContain("EXPLORE_DONE");
 		expect(result.content[0]?.text).not.toContain("Started repo-map");

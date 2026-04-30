@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCompletionDispatcher } from "../../src/notify/batcher.js";
 import { createActiveCounter } from "../../src/runtime/concurrency.js";
 import { createDetachController } from "../../src/runtime/detach.js";
-import { registerAgentTool } from "../../src/tools/agent.js";
+import { registerDispatchTool } from "../../src/tools/dispatch.js";
 import { registerRunTool } from "../../src/tools/run.js";
 import {
 	DEFAULT_GLOBAL_SETTINGS,
@@ -382,7 +382,7 @@ describe("Concurrency tracking with detach", () => {
 		rmSync(tmp, { recursive: true, force: true });
 	});
 
-	it("active slot is NOT released immediately after Agent tool detach", async () => {
+	it("active slot is NOT released immediately after subagent_dispatch tool detach", async () => {
 		const finalState = stateOf();
 		const doneDef = deferred<SubagentState>();
 
@@ -396,12 +396,12 @@ describe("Concurrency tracking with detach", () => {
 		const tools = new Map<string, { execute: ToolExecute }>();
 		const pi = { registerTool: vi.fn((tool: { name: string; execute: ToolExecute }) => tools.set(tool.name, tool)) };
 
-		registerAgentTool(pi as never, rt as never);
+		registerDispatchTool(pi as never, rt as never);
 
 		// Start tool but don't await yet — it will block at the detach race
-		const toolPromise = tools.get("Agent")?.execute(
+		const toolPromise = tools.get("subagent_dispatch")?.execute(
 			"call",
-			{ subagent_type: "general-purpose", alias: "worker", prompt: "do work" },
+			{ agent: "general-purpose", alias: "worker", task: "do work" },
 			undefined,
 			undefined,
 			{ cwd: tmp },
@@ -436,11 +436,11 @@ describe("Concurrency tracking with detach", () => {
 		const tools = new Map<string, { execute: ToolExecute }>();
 		const pi = { registerTool: vi.fn((tool: { name: string; execute: ToolExecute }) => tools.set(tool.name, tool)) };
 
-		registerAgentTool(pi as never, rt as never);
+		registerDispatchTool(pi as never, rt as never);
 
-		const toolPromise = tools.get("Agent")?.execute(
+		const toolPromise = tools.get("subagent_dispatch")?.execute(
 			"call",
-			{ subagent_type: "general-purpose", alias: "worker", prompt: "do work" },
+			{ agent: "general-purpose", alias: "worker", task: "do work" },
 			undefined,
 			undefined,
 			{ cwd: tmp },
@@ -524,7 +524,7 @@ describe("CompletionDispatcher with detach", () => {
 		rmSync(tmp, { recursive: true, force: true });
 	});
 
-	it("consumeCompletion() is NOT called when Agent tool is detached", async () => {
+	it("consumeCompletion() is NOT called when subagent_dispatch is detached", async () => {
 		vi.useRealTimers();
 
 		const finalState = stateOf();
@@ -540,11 +540,11 @@ describe("CompletionDispatcher with detach", () => {
 		const tools = new Map<string, { execute: ToolExecute }>();
 		const pi = { registerTool: vi.fn((tool: { name: string; execute: ToolExecute }) => tools.set(tool.name, tool)) };
 
-		registerAgentTool(pi as never, rt as never);
+		registerDispatchTool(pi as never, rt as never);
 
-		const toolPromise = tools.get("Agent")?.execute(
+		const toolPromise = tools.get("subagent_dispatch")?.execute(
 			"call",
-			{ subagent_type: "general-purpose", alias: "worker", prompt: "do work" },
+			{ agent: "general-purpose", alias: "worker", task: "do work" },
 			undefined,
 			undefined,
 			{ cwd: tmp },
@@ -593,10 +593,10 @@ describe("CompletionDispatcher with detach", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Group 5: Agent tool detach integration
+// Group 5: subagent_dispatch detach integration
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Agent tool — foreground detach", () => {
+describe("subagent_dispatch — foreground detach", () => {
 	let tmp: string;
 	let userAgentsDir: string;
 	let bundledAgentsDir: string;
@@ -629,11 +629,11 @@ describe("Agent tool — foreground detach", () => {
 		const tools = new Map<string, { execute: ToolExecute }>();
 		const pi = { registerTool: vi.fn((tool: { name: string; execute: ToolExecute }) => tools.set(tool.name, tool)) };
 
-		registerAgentTool(pi as never, rt as never);
+		registerDispatchTool(pi as never, rt as never);
 
-		const toolPromise = tools.get("Agent")?.execute(
+		const toolPromise = tools.get("subagent_dispatch")?.execute(
 			"call",
-			{ subagent_type: "general-purpose", alias: "bg-worker", prompt: "do work" },
+			{ agent: "general-purpose", alias: "bg-worker", task: "do work" },
 			undefined,
 			undefined,
 			{ cwd: tmp },
@@ -668,11 +668,11 @@ describe("Agent tool — foreground detach", () => {
 		const tools = new Map<string, { execute: ToolExecute }>();
 		const pi = { registerTool: vi.fn((tool: { name: string; execute: ToolExecute }) => tools.set(tool.name, tool)) };
 
-		registerAgentTool(pi as never, rt as never);
+		registerDispatchTool(pi as never, rt as never);
 
-		const result = (await tools.get("Agent")?.execute(
+		const result = (await tools.get("subagent_dispatch")?.execute(
 			"call",
-			{ subagent_type: "general-purpose", alias: "fg-worker", prompt: "do work" },
+			{ agent: "general-purpose", alias: "fg-worker", task: "do work" },
 			undefined,
 			undefined,
 			{ cwd: tmp },
