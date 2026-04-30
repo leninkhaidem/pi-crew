@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCompletionDispatcher } from "../../src/notify/batcher.js";
 import { createActiveCounter } from "../../src/runtime/concurrency.js";
 import { createDetachController } from "../../src/runtime/detach.js";
-import { registerDispatchTool } from "../../src/tools/dispatch.js";
 import { registerRunTool } from "../../src/tools/run.js";
 import {
 	DEFAULT_GLOBAL_SETTINGS,
@@ -382,84 +381,6 @@ describe("Concurrency tracking with detach", () => {
 		rmSync(tmp, { recursive: true, force: true });
 	});
 
-	it("active slot is NOT released immediately after subagent_dispatch tool detach", async () => {
-		const finalState = stateOf();
-		const doneDef = deferred<SubagentState>();
-
-		mocks.dispatch.mockResolvedValue({
-			agentId: finalState.agentId,
-			state: finalState,
-			donePromise: doneDef.promise,
-		});
-
-		const { rt, release, detach } = makeRuntime(userAgentsDir, bundledAgentsDir);
-		const tools = new Map<string, { execute: ToolExecute }>();
-		const pi = { registerTool: vi.fn((tool: { name: string; execute: ToolExecute }) => tools.set(tool.name, tool)) };
-
-		registerDispatchTool(pi as never, rt as never);
-
-		// Start tool but don't await yet — it will block at the detach race
-		const toolPromise = tools.get("subagent_dispatch")?.execute(
-			"call",
-			{ agent: "general-purpose", alias: "worker", task: "do work" },
-			undefined,
-			undefined,
-			{ cwd: tmp },
-		);
-
-		// Drain microtasks so the tool reaches its Promise.race
-		await drain();
-
-		// Trigger detach
-		detach.detachAll();
-
-		const result = (await toolPromise) as { details: { status: string } };
-
-		// Tool should return a backgrounded result
-		expect(result.details.status).toBe("backgrounded");
-
-		// Active slot must NOT have been released yet
-		expect(release).not.toHaveBeenCalled();
-	});
-
-	it("active slot IS released after the detached sub-agent's donePromise eventually settles", async () => {
-		const finalState = stateOf();
-		const doneDef = deferred<SubagentState>();
-
-		mocks.dispatch.mockResolvedValue({
-			agentId: finalState.agentId,
-			state: finalState,
-			donePromise: doneDef.promise,
-		});
-
-		const { rt, release, detach } = makeRuntime(userAgentsDir, bundledAgentsDir);
-		const tools = new Map<string, { execute: ToolExecute }>();
-		const pi = { registerTool: vi.fn((tool: { name: string; execute: ToolExecute }) => tools.set(tool.name, tool)) };
-
-		registerDispatchTool(pi as never, rt as never);
-
-		const toolPromise = tools.get("subagent_dispatch")?.execute(
-			"call",
-			{ agent: "general-purpose", alias: "worker", task: "do work" },
-			undefined,
-			undefined,
-			{ cwd: tmp },
-		);
-
-		await drain();
-		detach.detachAll();
-		await toolPromise;
-
-		expect(release).not.toHaveBeenCalled();
-
-		// Now the sub-agent finishes
-		doneDef.resolve(finalState);
-		await drain();
-
-		// Active slot must now be released
-		expect(release).toHaveBeenCalledOnce();
-	});
-
 	it("subagent_run single mode: active slot deferred until donePromise settles", async () => {
 		const finalState = stateOf();
 		const doneDef = deferred<SubagentState>();
@@ -524,40 +445,6 @@ describe("CompletionDispatcher with detach", () => {
 		rmSync(tmp, { recursive: true, force: true });
 	});
 
-	it("consumeCompletion() is NOT called when subagent_dispatch is detached", async () => {
-		vi.useRealTimers();
-
-		const finalState = stateOf();
-		const doneDef = deferred<SubagentState>();
-
-		mocks.dispatch.mockResolvedValue({
-			agentId: finalState.agentId,
-			state: finalState,
-			donePromise: doneDef.promise,
-		});
-
-		const { rt, consumeCompletion, detach } = makeRuntime(userAgentsDir, bundledAgentsDir);
-		const tools = new Map<string, { execute: ToolExecute }>();
-		const pi = { registerTool: vi.fn((tool: { name: string; execute: ToolExecute }) => tools.set(tool.name, tool)) };
-
-		registerDispatchTool(pi as never, rt as never);
-
-		const toolPromise = tools.get("subagent_dispatch")?.execute(
-			"call",
-			{ agent: "general-purpose", alias: "worker", task: "do work" },
-			undefined,
-			undefined,
-			{ cwd: tmp },
-		);
-
-		await drain();
-		detach.detachAll();
-		await toolPromise;
-
-		// consumeCompletion should NOT have been called — completion dispatcher will handle it
-		expect(consumeCompletion).not.toHaveBeenCalled();
-	});
-
 	it("push() delivers a notification when consume() was never called (detach path)", () => {
 		const sendMessage = vi.fn();
 		const dispatcher = createCompletionDispatcher({ sendMessage } as never);
@@ -593,99 +480,7 @@ describe("CompletionDispatcher with detach", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Group 5: subagent_dispatch detach integration
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("subagent_dispatch — foreground detach", () => {
-	let tmp: string;
-	let userAgentsDir: string;
-	let bundledAgentsDir: string;
-
-	beforeEach(() => {
-		tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-agent-detach-"));
-		userAgentsDir = path.join(tmp, "user-agents");
-		bundledAgentsDir = path.join(tmp, "bundled-agents");
-		mkdirSync(userAgentsDir, { recursive: true });
-		mkdirSync(bundledAgentsDir, { recursive: true });
-		writeAgent(bundledAgentsDir, "general-purpose");
-		mocks.dispatch.mockReset();
-	});
-
-	afterEach(() => {
-		rmSync(tmp, { recursive: true, force: true });
-	});
-
-	it("returns a backgrounded result when detach fires before donePromise", async () => {
-		const finalState = stateOf({ agentId: "bg-agent-001", alias: "bg-worker" });
-		const doneDef = deferred<SubagentState>();
-
-		mocks.dispatch.mockResolvedValue({
-			agentId: finalState.agentId,
-			state: finalState,
-			donePromise: doneDef.promise,
-		});
-
-		const { rt, detach } = makeRuntime(userAgentsDir, bundledAgentsDir);
-		const tools = new Map<string, { execute: ToolExecute }>();
-		const pi = { registerTool: vi.fn((tool: { name: string; execute: ToolExecute }) => tools.set(tool.name, tool)) };
-
-		registerDispatchTool(pi as never, rt as never);
-
-		const toolPromise = tools.get("subagent_dispatch")?.execute(
-			"call",
-			{ agent: "general-purpose", alias: "bg-worker", task: "do work" },
-			undefined,
-			undefined,
-			{ cwd: tmp },
-		);
-
-		await drain();
-		detach.detachAll();
-
-		const result = (await toolPromise) as {
-			content: Array<{ text: string }>;
-			details: { status: string; agentId: string };
-		};
-
-		expect(result.details.status).toBe("backgrounded");
-		expect(result.details.agentId).toBe("bg-agent-001");
-		expect(result.content[0]?.text).toContain("moved to background");
-
-		// Cleanup
-		doneDef.resolve(finalState);
-	});
-
-	it("returns a normal result when donePromise resolves before detach", async () => {
-		const finalState = stateOf({ agentId: "fg-agent-001", alias: "fg-worker" });
-
-		mocks.dispatch.mockResolvedValue({
-			agentId: finalState.agentId,
-			state: finalState,
-			donePromise: Promise.resolve(finalState),
-		});
-
-		const { rt, consumeCompletion, release } = makeRuntime(userAgentsDir, bundledAgentsDir);
-		const tools = new Map<string, { execute: ToolExecute }>();
-		const pi = { registerTool: vi.fn((tool: { name: string; execute: ToolExecute }) => tools.set(tool.name, tool)) };
-
-		registerDispatchTool(pi as never, rt as never);
-
-		const result = (await tools.get("subagent_dispatch")?.execute(
-			"call",
-			{ agent: "general-purpose", alias: "fg-worker", task: "do work" },
-			undefined,
-			undefined,
-			{ cwd: tmp },
-		)) as { details: { status: string } };
-
-		expect(result.details.status).toBe("done");
-		expect(consumeCompletion).toHaveBeenCalledWith("fg-agent-001");
-		expect(release).toHaveBeenCalledOnce();
-	});
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Group 6: subagent_run tool detach across modes
+// Group 5: subagent_run tool detach across modes
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("subagent_run — detach across modes", () => {

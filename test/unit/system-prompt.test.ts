@@ -33,7 +33,7 @@ describe("buildSystemPromptBlock", () => {
 		expect(block).toContain("/home/u/.pi/agent/subagents/<sessionId>/<agentId>/");
 		expect(block).toContain("Every sub-agent launch requires `alias`");
 		expect(block).toContain(
-			"Prefer background completion notifications and blocking `subagent_run`/foreground `Agent` results",
+			"Prefer background completion notifications and blocking `subagent_run` results",
 		);
 		expect(block).toContain(
 			"Do not use it for routine polling or after a normal completion notification/blocking result",
@@ -58,7 +58,8 @@ describe("buildSystemPromptBlock", () => {
 		});
 		expect(block).toContain('"what is this project about?"');
 		expect(block).toContain("Treat `explore` as the reconnaissance owner");
-		expect(block).toContain("use blocking `subagent_run` or foreground `Agent`");
+		expect(block).toContain("use blocking `subagent_run`");
+		expect(block).not.toContain("`Agent`");
 		expect(block).toContain("Background `explore` requests are coerced to blocking");
 	});
 
