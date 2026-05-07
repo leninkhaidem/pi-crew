@@ -17,7 +17,7 @@ Sub-agent extension for the [pi coding assistant](https://github.com/badlogic/pi
 
 ## Install
 
-`pi install git:github.com/leninkhaidem/pi-crew@v0.1.0`
+`pi install git:github.com/leninkhaidem/pi-crew`
 
 After install:
 
