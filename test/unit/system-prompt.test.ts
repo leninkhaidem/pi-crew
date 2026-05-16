@@ -3,6 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	COPILOT_INITIATOR_HEADER,
+	GITHUB_COPILOT_PROVIDER,
+	PI_SUBAGENT_INITIATOR_AGENT,
+	PI_SUBAGENT_INITIATOR_ENV,
+} from "../../src/runtime/copilot-initiator.js";
+import {
 	PI_CREW_ORCHESTRATION_TOOL_NAMES,
 	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV,
 	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE,
@@ -32,9 +38,7 @@ describe("buildSystemPromptBlock", () => {
 		expect(block).not.toContain("Unconfigured");
 		expect(block).toContain("/home/u/.pi/agent/subagents/<sessionId>/<agentId>/");
 		expect(block).toContain("Every sub-agent launch requires `alias`");
-		expect(block).toContain(
-			"Prefer background completion notifications and blocking `subagent_run` results",
-		);
+		expect(block).toContain("Prefer background completion notifications and blocking `subagent_run` results");
 		expect(block).toContain(
 			"Do not use it for routine polling or after a normal completion notification/blocking result",
 		);
@@ -85,7 +89,12 @@ describe("buildSystemPromptBlock", () => {
 });
 
 describe("pi-crew extension startup", () => {
-	const envKeys = [PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV, "PI_SUBAGENT_PARENT_ID", "PI_SUBAGENT_SESSION_ID"];
+	const envKeys = [
+		PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV,
+		PI_SUBAGENT_INITIATOR_ENV,
+		"PI_SUBAGENT_PARENT_ID",
+		"PI_SUBAGENT_SESSION_ID",
+	];
 	let tmp: string;
 	let previousEnv: Record<string, string | undefined>;
 
@@ -109,6 +118,7 @@ describe("pi-crew extension startup", () => {
 		await loadPiCrewExtension(pi);
 
 		expect([...pi.tools.keys()]).toEqual(expect.arrayContaining([...PI_CREW_ORCHESTRATION_TOOL_NAMES]));
+		expect(pi.registerProvider).not.toHaveBeenCalled();
 	});
 
 	it("skips orchestration tool registration when the pi-crew suppress marker is present", async () => {
@@ -122,6 +132,17 @@ describe("pi-crew extension startup", () => {
 		for (const toolName of PI_CREW_ORCHESTRATION_TOOL_NAMES) {
 			expect(pi.tools.has(toolName)).toBe(false);
 		}
+	});
+
+	it("registers the GitHub Copilot agent initiator header for sub-agent processes", async () => {
+		process.env[PI_SUBAGENT_INITIATOR_ENV] = PI_SUBAGENT_INITIATOR_AGENT;
+		const pi = createFakePi();
+
+		await loadPiCrewExtension(pi);
+
+		expect(pi.registerProvider).toHaveBeenCalledWith(GITHUB_COPILOT_PROVIDER, {
+			headers: { [COPILOT_INITIATOR_HEADER]: PI_SUBAGENT_INITIATOR_AGENT },
+		});
 	});
 
 	it("injects sub-agent prompt guidance for unmarked parent sessions", async () => {
@@ -152,6 +173,7 @@ interface FakePi {
 	registerTool: ReturnType<typeof vi.fn>;
 	registerCommand: ReturnType<typeof vi.fn>;
 	registerMessageRenderer: ReturnType<typeof vi.fn>;
+	registerProvider: ReturnType<typeof vi.fn>;
 	on: ReturnType<typeof vi.fn>;
 }
 
@@ -185,6 +207,7 @@ function createFakePi(): FakePi {
 		}),
 		registerCommand: vi.fn(),
 		registerMessageRenderer: vi.fn(),
+		registerProvider: vi.fn(),
 		on: vi.fn((event: string, handler: PiHandler) => {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 		}),

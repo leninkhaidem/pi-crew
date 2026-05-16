@@ -140,6 +140,45 @@ describe("dispatchSession", () => {
 		expect(fakeSession.abort).not.toHaveBeenCalled();
 	});
 
+	it("forces GitHub Copilot session-mode sub-agents to use the agent initiator header", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const modelRegistry = {
+			find: vi.fn(() => ({ provider: "github-copilot", id: "model" })),
+			getApiKeyAndHeaders: vi.fn(async () => ({
+				ok: true,
+				apiKey: "token",
+				headers: { Existing: "yes", "x-initiator": "user" },
+			})),
+		};
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "github-copilot", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "say ok" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess",
+				parentAgentId: null,
+				ctx: { modelRegistry } as never,
+			},
+		);
+		await handle.donePromise;
+
+		const sessionModelRegistry = (
+			createdSessionOptions as {
+				modelRegistry: {
+					getApiKeyAndHeaders(model: { provider: string }): Promise<{ ok: true; headers?: Record<string, string> }>;
+				};
+			}
+		).modelRegistry;
+		const auth = await sessionModelRegistry.getApiKeyAndHeaders({ provider: "github-copilot" });
+
+		expect(auth.headers).toEqual({ Existing: "yes", "X-Initiator": "agent" });
+	});
+
 	it("binds extensions so extension-provided skills/resources are inherited by session-mode sub-agents", async () => {
 		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
 

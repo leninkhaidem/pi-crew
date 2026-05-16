@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PI_SUBAGENT_INITIATOR_AGENT, PI_SUBAGENT_INITIATOR_ENV } from "../../src/runtime/copilot-initiator.js";
 import { dispatch } from "../../src/runtime/lifecycle.js";
 import { closeSpawnFds, spawnSubagent } from "../../src/runtime/spawn.js";
 import {
@@ -78,6 +79,7 @@ describe("spawnSubagent", () => {
 
 		expect(code).toBe(0);
 		expect(recordedEnv[PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV]).toBe(PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE);
+		expect(recordedEnv[PI_SUBAGENT_INITIATOR_ENV]).toBe(PI_SUBAGENT_INITIATOR_AGENT);
 		expect(recordedEnv.PI_SUBAGENT_PARENT_ID).toBe("parent");
 		expect(recordedEnv.PI_SUBAGENT_SESSION_ID).toBe("session");
 	});
@@ -124,7 +126,7 @@ describe("spawnSubagent", () => {
 function writeEnvRecorder(binary: string, outputPath: string): void {
 	const scriptPath = `${binary}.mjs`;
 	const script = `import { writeFileSync } from "node:fs";
-const keys = ["${PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV}", "PI_SUBAGENT_PARENT_ID", "PI_SUBAGENT_SESSION_ID"];
+const keys = ["${PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV}", "${PI_SUBAGENT_INITIATOR_ENV}", "PI_SUBAGENT_PARENT_ID", "PI_SUBAGENT_SESSION_ID"];
 const entries = keys.map((key) => [key, process.env[key] ?? null]);
 writeFileSync(process.env.PI_CREW_ENV_OUTPUT, JSON.stringify(Object.fromEntries(entries)));
 `;

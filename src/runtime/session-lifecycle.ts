@@ -13,13 +13,11 @@ import { computePaths } from "../state/paths.js";
 import { readState, writeState } from "../state/store.js";
 import { type SubagentState, type SubagentUsage, defaultThinkingForAgent } from "../types.js";
 import { describeActivity } from "./activity.js";
+import { withCopilotAgentInitiatorModelRegistry } from "./copilot-initiator.js";
 import { abortSubagentByStatePath } from "./kill.js";
 import type { DispatchHandle, DispatchPlan, LifecycleEnv, LifecycleHooks } from "./lifecycle.js";
 import { appendFinalResultContract } from "./result-contract.js";
-import {
-	suppressPiCrewOrchestrationTools,
-	withoutPiCrewOrchestrationExtensions,
-} from "./tool-suppression.js";
+import { suppressPiCrewOrchestrationTools, withoutPiCrewOrchestrationExtensions } from "./tool-suppression.js";
 import { sanitizeTranscriptEvent } from "./transcript.js";
 
 const STATE_DEBOUNCE_MS = 80;
@@ -104,7 +102,8 @@ export async function dispatchSession(
 		}
 	};
 
-	const model = env.ctx.modelRegistry.find(plan.model.provider, plan.model.modelId);
+	const modelRegistry = withCopilotAgentInitiatorModelRegistry(env.ctx.modelRegistry);
+	const model = modelRegistry.find(plan.model.provider, plan.model.modelId);
 	if (!model) {
 		const failed: SubagentState = {
 			...initialState,
@@ -172,7 +171,7 @@ export async function dispatchSession(
 		const sessionOptions: Parameters<typeof createAgentSession>[0] = {
 			cwd,
 			agentDir: env.agentDir,
-			modelRegistry: env.ctx.modelRegistry,
+			modelRegistry,
 			model,
 			thinkingLevel: thinking,
 			resourceLoader: loader,
