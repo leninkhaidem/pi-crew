@@ -198,9 +198,9 @@ export async function dispatch(
 
 	let maxTurnAbortRequested = false;
 	const abort = async (reason = "killed by user") => {
-		recoveryTracker.markExternallyTerminal();
 		await writeState({ ...state, lastUpdate: Date.now() }).catch(() => undefined);
 		await abortSubagentByStatePath(paths.state, reason).catch(() => undefined);
+		recoveryTracker.markExternallyTerminal();
 	};
 	const abortForMaxTurns = () => {
 		if (!plan.options.maxTurns || maxTurnAbortRequested) return;

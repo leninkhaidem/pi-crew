@@ -177,6 +177,133 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 		}
 	}, 20_000);
 
+	it("handles subprocess overflow compaction and retry streams as recovered success", async () => {
+		const mock = prepareMockPi({
+			events: [
+				{ type: "agent_start" },
+				{ type: "compaction_start", reason: "overflow" },
+				{
+					type: "compaction_end",
+					reason: "overflow",
+					aborted: false,
+					willRetry: true,
+					result: { summary: "private compacted context", details: { secret: "omit" } },
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "Recovered subprocess output." }],
+						usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, totalTokens: 14, cost: { total: 0 } },
+						stopReason: "stop",
+					},
+				},
+				{
+					type: "agent_end",
+					messages: [{ role: "assistant", content: [{ type: "text", text: "Recovered subprocess output." }] }],
+				},
+			],
+			exitCode: 0,
+			delayMs: 5,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
+					options: { agent: "explore", alias: "explore-test", task: "recover" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-overflow-success",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+			const final = await handle.donePromise;
+
+			expect(final.status).toBe("done");
+			expect(final.finalOutput).toBe("Recovered subprocess output.");
+			expect(final.errorMessage).toBeNull();
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
+	it("fails subprocess overflow recovery when the child exits while recovery is pending", async () => {
+		const mock = prepareMockPi({
+			events: [{ type: "agent_start" }, { type: "compaction_start", reason: "overflow" }],
+			exitCode: 0,
+			delayMs: 5,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
+					options: { agent: "explore", alias: "explore-test", task: "recover" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-overflow-interrupted",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+			const final = await handle.donePromise;
+
+			expect(final.status).toBe("failed");
+			expect(final.exitCode).toBe(-1);
+			expect(final.stopReason).toBe("context_overflow_recovery_failed");
+			expect(final.errorMessage).toContain("Context overflow recovery failed");
+			expect(final.finalOutput).toBeNull();
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
+	it("preserves subprocess user abort while overflow recovery is pending", async () => {
+		const mock = prepareMockPi({
+			events: [
+				{ type: "agent_start" },
+				{ type: "compaction_start", reason: "overflow" },
+				...Array.from({ length: 50 }, () => ({ type: "tool_execution_update", partialResult: "waiting" })),
+			],
+			exitCode: 0,
+			delayMs: 50,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
+					options: { agent: "explore", alias: "explore-test", task: "recover" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-overflow-user-abort",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+			await new Promise((resolve) => setTimeout(resolve, 120));
+			await handle.abort?.("user canceled");
+			const final = await handle.donePromise;
+
+			expect(final.status).toBe("aborted");
+			expect(final.errorMessage).toBe("user canceled");
+			expect(final.stopReason).not.toBe("context_overflow_recovery_failed");
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
 	it("captures spawn errors instead of leaving the subprocess promise hanging", async () => {
 		const handle = await dispatch(
 			{
