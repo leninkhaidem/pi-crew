@@ -20,6 +20,7 @@ import { abortSubagentByStatePath } from "./kill.js";
 import {
 	OVERFLOW_RECOVERY_FAILED_STOP_REASON,
 	OverflowRecoveryTracker,
+	normalizeRecoveredOverflowStopReason,
 	overflowRecoveryActivity,
 } from "./overflow-recovery.js";
 import { appendFinalResultContract } from "./result-contract.js";
@@ -359,6 +360,11 @@ export async function dispatch(
 			}
 			const recoveryFailureMessage = recoveryTracker.getFailureMessage();
 
+			const stopReason = recoveryFailureMessage
+				? OVERFLOW_RECOVERY_FAILED_STOP_REASON
+				: recoveryTracker.isRecovered()
+					? normalizeRecoveredOverflowStopReason(state.stopReason)
+					: state.stopReason;
 			const finalState: SubagentState = isExternallyTerminal(currentDisk)
 				? {
 						...currentDisk,
@@ -372,7 +378,7 @@ export async function dispatch(
 						finishedAt: Date.now(),
 						lastUpdate: Date.now(),
 						status: recoveryFailureMessage || code !== 0 ? "failed" : "done",
-						stopReason: recoveryFailureMessage ? OVERFLOW_RECOVERY_FAILED_STOP_REASON : state.stopReason,
+						stopReason,
 						errorMessage: recoveryFailureMessage ?? (code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`),
 						activeTools: [],
 						activity: recoveryFailureMessage || code !== 0 ? "failed" : "done",

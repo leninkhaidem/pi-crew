@@ -69,6 +69,10 @@ export class OverflowRecoveryTracker {
 		return this.state === "unrecovered" ? this.failureMessage : null;
 	}
 
+	isRecovered(): boolean {
+		return this.state === "recovered";
+	}
+
 	async waitForRecoveryCompletion(timeoutMs = OVERFLOW_RECOVERY_TIMEOUT_MS): Promise<void> {
 		if (!this.isPending()) return;
 		await new Promise<void>((resolve) => {
@@ -182,6 +186,11 @@ export function formatOverflowRecoveryFailure(message: string): string {
 	return message.startsWith(CONTEXT_OVERFLOW_RECOVERY_FAILED)
 		? message
 		: `${CONTEXT_OVERFLOW_RECOVERY_FAILED}: ${message}`;
+}
+
+export function normalizeRecoveredOverflowStopReason(stopReason: string | null | undefined): string | null {
+	if (stopReason === "error" || stopReason === OVERFLOW_RECOVERY_FAILED_STOP_REASON) return null;
+	return stopReason ?? null;
 }
 
 function isContextOverflowAssistantMessage(message: Record<string, unknown>): boolean {

@@ -243,7 +243,62 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 			const final = await handle.donePromise;
 
 			expect(final.status).toBe("done");
+			expect(final.stopReason).toBe("stop");
+			expect(final.stopReason).not.toBe("error");
+			expect(final.stopReason).not.toBe("context_overflow_recovery_failed");
 			expect(final.finalOutput).toBe("Recovered subprocess output.");
+			expect(final.errorMessage).toBeNull();
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
+	it("handles subprocess overflow recovery when only retry agent_end carries success output", async () => {
+		const mock = prepareMockPi({
+			events: [
+				{ type: "agent_start" },
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						stopReason: "error",
+						errorMessage: "Your input exceeds the context window of this model",
+					},
+				},
+				{ type: "agent_end", messages: [] },
+				{ type: "compaction_start", reason: "overflow" },
+				{ type: "compaction_end", reason: "overflow", aborted: false, willRetry: true },
+				{
+					type: "agent_end",
+					messages: [{ role: "assistant", content: [{ type: "text", text: "Recovered via agent_end only." }] }],
+				},
+			],
+			exitCode: 0,
+			delayMs: 5,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
+					options: { agent: "explore", alias: "explore-test", task: "recover" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-overflow-agent-end-success",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+			const final = await handle.donePromise;
+
+			expect(final.status).toBe("done");
+			expect(final.stopReason).toBeNull();
+			expect(final.stopReason).not.toBe("error");
+			expect(final.stopReason).not.toBe("context_overflow_recovery_failed");
+			expect(final.finalOutput).toBe("Recovered via agent_end only.");
 			expect(final.errorMessage).toBeNull();
 		} finally {
 			mock.cleanup();

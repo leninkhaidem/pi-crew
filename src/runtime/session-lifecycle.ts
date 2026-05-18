@@ -18,6 +18,7 @@ import type { DispatchHandle, DispatchPlan, LifecycleEnv, LifecycleHooks } from 
 import {
 	OVERFLOW_RECOVERY_FAILED_STOP_REASON,
 	OverflowRecoveryTracker,
+	normalizeRecoveredOverflowStopReason,
 	overflowRecoveryActivity,
 } from "./overflow-recovery.js";
 import { appendFinalResultContract } from "./result-contract.js";
@@ -333,6 +334,11 @@ export async function dispatchSession(
 		const externalTerminal =
 			currentDisk &&
 			(currentDisk.status === "aborted" || currentDisk.status === "orphaned" || currentDisk.status === "detached");
+		const stopReason = recoveryFailureMessage
+			? OVERFLOW_RECOVERY_FAILED_STOP_REASON
+			: recoveryTracker.isRecovered()
+				? normalizeRecoveredOverflowStopReason(state.stopReason)
+				: state.stopReason;
 		const finalState: SubagentState = externalTerminal
 			? {
 					...currentDisk,
@@ -345,7 +351,7 @@ export async function dispatchSession(
 					...state,
 					status: failureMessage || hardAborted ? "failed" : "done",
 					exitCode: failureMessage || hardAborted ? -1 : null,
-					stopReason: recoveryFailureMessage ? OVERFLOW_RECOVERY_FAILED_STOP_REASON : state.stopReason,
+					stopReason,
 					errorMessage: failureMessage,
 					finishedAt: Date.now(),
 					lastUpdate: Date.now(),

@@ -171,6 +171,9 @@ describe("dispatchSession", () => {
 		const final = await handle.donePromise;
 
 		expect(final.status).toBe("done");
+		expect(final.stopReason).toBe("stop");
+		expect(final.stopReason).not.toBe("error");
+		expect(final.stopReason).not.toBe("context_overflow_recovery_failed");
 		expect(final.finalOutput).toBe("retry recovered output");
 		expect(final.errorMessage).toBeNull();
 	});
@@ -218,6 +221,9 @@ describe("dispatchSession", () => {
 		const final = await handle.donePromise;
 
 		expect(final.status).toBe("done");
+		expect(final.stopReason).toBeNull();
+		expect(final.stopReason).not.toBe("error");
+		expect(final.stopReason).not.toBe("context_overflow_recovery_failed");
 		expect(final.finalOutput).toBe("agent_end retry output");
 		expect(final.errorMessage).toBeNull();
 	});
