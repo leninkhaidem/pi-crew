@@ -21,6 +21,7 @@ export function sanitizeTranscriptEvent(event: unknown): unknown | null {
 	const ev = event as { type?: string } | null;
 	if (ev?.type === "message_update") return null;
 	if (ev?.type && isSensitiveToken(ev.type)) return null;
+	if (ev?.type === "compaction_start" || ev?.type === "compaction_end") return sanitizeCompactionEvent(event);
 
 	const sanitized = sanitizeValue(event);
 	return sanitized === undefined ? null : sanitized;
@@ -145,6 +146,16 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function stringField(record: Record<string, unknown> | null, key: string): string | undefined {
 	const value = record?.[key];
 	return typeof value === "string" ? value : undefined;
+}
+
+function sanitizeCompactionEvent(event: unknown): unknown | null {
+	const record = asRecord(event);
+	if (!record) return null;
+	const out: Record<string, unknown> = {};
+	for (const key of ["type", "reason", "aborted", "willRetry", "errorMessage"]) {
+		if (record[key] !== undefined) out[key] = sanitizeValue(record[key], key);
+	}
+	return out;
 }
 
 function sanitizeValue(value: unknown, key?: string): unknown {
