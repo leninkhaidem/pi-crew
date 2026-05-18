@@ -239,9 +239,9 @@ export async function dispatchSession(
 					if (!session || hardAborted) return;
 					hardAborted = true;
 					abortReason = `maxTurns exceeded (${plan.options.maxTurns})`;
-					recoveryTracker.markExternallyTerminal();
 					await writeState({ ...state, lastUpdate: Date.now() }).catch(() => undefined);
 					await abortSubagentByStatePath(paths.state, abortReason).catch(() => undefined);
+					recoveryTracker.markExternallyTerminal();
 					await session.abort().catch(() => undefined);
 				},
 				onSoftLimit: async () => {
@@ -258,9 +258,9 @@ export async function dispatchSession(
 
 	const abort = async (reason = "killed by user") => {
 		abortReason = reason;
-		recoveryTracker.markExternallyTerminal();
 		await writeState({ ...state, lastUpdate: Date.now() }).catch(() => undefined);
 		await abortSubagentByStatePath(paths.state, reason).catch(() => undefined);
+		recoveryTracker.markExternallyTerminal();
 		await session?.abort().catch(() => undefined);
 	};
 
@@ -374,7 +374,6 @@ export async function dispatchSession(
 		nonUserDisposeRequested = true;
 		recoveryTracker.markDisposed();
 		unsubscribe();
-		await closeOutputStream().catch(() => undefined);
 		session?.abort().catch(() => undefined);
 		session?.dispose();
 	};
