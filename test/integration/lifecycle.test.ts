@@ -181,6 +181,24 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 		const mock = prepareMockPi({
 			events: [
 				{ type: "agent_start" },
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						stopReason: "error",
+						errorMessage: "Your input exceeds the context window of this model",
+					},
+				},
+				{
+					type: "agent_end",
+					messages: [
+						{
+							role: "assistant",
+							stopReason: "error",
+							errorMessage: "Your input exceeds the context window of this model",
+						},
+					],
+				},
 				{ type: "compaction_start", reason: "overflow" },
 				{
 					type: "compaction_end",

@@ -115,6 +115,16 @@ describe("dispatchSession", () => {
 					errorMessage: "Your input exceeds the context window of this model",
 				},
 			});
+			subscriber?.({
+				type: "agent_end",
+				messages: [
+					{
+						role: "assistant",
+						stopReason: "error",
+						errorMessage: "Your input exceeds the context window of this model",
+					},
+				],
+			});
 			subscriber?.({ type: "compaction_start", reason: "overflow" });
 			setTimeout(() => {
 				subscriber?.({
@@ -165,6 +175,53 @@ describe("dispatchSession", () => {
 		expect(final.errorMessage).toBeNull();
 	});
 
+	it("recovers session-mode overflow when only the retry agent_end carries success output", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		fakeSession.messages = [];
+		fakeSession.prompt = vi.fn(async () => {
+			subscriber?.({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					provider: "mock",
+					model: "model",
+					stopReason: "error",
+					errorMessage: "Your input exceeds the context window of this model",
+				},
+			});
+			subscriber?.({ type: "agent_end", messages: [] });
+			subscriber?.({ type: "compaction_start", reason: "overflow" });
+			subscriber?.({ type: "compaction_end", reason: "overflow", aborted: false, willRetry: true });
+			fakeSession.messages = [{ role: "assistant", content: [{ type: "text", text: "agent_end retry output" }] }];
+			subscriber?.({
+				type: "agent_end",
+				messages: [{ role: "assistant", content: [{ type: "text", text: "agent_end retry output" }] }],
+			});
+		});
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "recover" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		const final = await handle.donePromise;
+
+		expect(final.status).toBe("done");
+		expect(final.finalOutput).toBe("agent_end retry output");
+		expect(final.errorMessage).toBeNull();
+	});
+
 	it.each([
 		[
 			"compaction failure",
@@ -178,6 +235,51 @@ describe("dispatchSession", () => {
 		fakeSession.prompt = vi.fn(async () => {
 			subscriber?.({ type: "compaction_start", reason: "overflow" });
 			subscriber?.(endEvent);
+		});
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "recover" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		const final = await handle.donePromise;
+
+		expect(final.status).toBe("failed");
+		expect(final.stopReason).toBe("context_overflow_recovery_failed");
+		expect(final.errorMessage).toContain("Context overflow recovery failed");
+		expect(final.finalOutput).toBeNull();
+	});
+
+	it.each([
+		["retry abort", { stopReason: "aborted" }],
+		["retry error", { stopReason: "error", errorMessage: "retry provider failure" }],
+	])("fails session-mode overflow recovery on %s", async (_name, retryMessage) => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		fakeSession.messages = [];
+		fakeSession.prompt = vi.fn(async () => {
+			subscriber?.({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					stopReason: "error",
+					errorMessage: "Your input exceeds the context window of this model",
+				},
+			});
+			subscriber?.({ type: "agent_end", messages: [] });
+			subscriber?.({ type: "compaction_start", reason: "overflow" });
+			subscriber?.({ type: "compaction_end", reason: "overflow", aborted: false, willRetry: true });
+			subscriber?.({ type: "message_end", message: { role: "assistant", ...retryMessage } });
 		});
 
 		const handle = await dispatchSession(

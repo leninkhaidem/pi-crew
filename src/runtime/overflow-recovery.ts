@@ -6,9 +6,11 @@ export const OVERFLOW_RECOVERY_TIMEOUT_MS = 30 * 60 * 1000;
 const CONTEXT_OVERFLOW_RECOVERY_FAILED = "Context overflow recovery failed";
 
 type RecoveryState = "idle" | "pending" | "recovered" | "unrecovered" | "externally_terminal";
+type RecoveryPhase = "none" | "overflow_detected" | "compacting" | "retrying";
 
 export class OverflowRecoveryTracker {
 	private state: RecoveryState = "idle";
+	private phase: RecoveryPhase = "none";
 	private failureMessage: string | null = null;
 	private waiters = new Set<() => void>();
 
@@ -18,7 +20,7 @@ export class OverflowRecoveryTracker {
 		const type = stringField(ev, "type");
 
 		if (type === "compaction_start" && stringField(ev, "reason") === "overflow") {
-			this.markPending();
+			this.markPending("compacting");
 			return;
 		}
 
@@ -35,13 +37,12 @@ export class OverflowRecoveryTracker {
 		if (type === "agent_end" && this.isPending()) {
 			const text = extractLastAssistantText(arrayField(ev, "messages"));
 			if (text) this.markRecovered();
-			else this.markUnrecovered("Context overflow recovery ended without retry output.");
 		}
 	}
 
 	observePromptError(errorMessage: string | null): void {
 		if (!errorMessage) return;
-		if (isContextOverflowMessage(errorMessage)) {
+		if (isContextOverflowMessage(errorMessage) && !this.isPending()) {
 			this.markUnrecovered("Context overflow recovery did not start before the session ended.");
 		}
 	}
@@ -55,6 +56,7 @@ export class OverflowRecoveryTracker {
 	markExternallyTerminal(): void {
 		if (this.isPending()) {
 			this.state = "externally_terminal";
+			this.phase = "none";
 			this.resolveWaiters();
 		}
 	}
@@ -72,7 +74,7 @@ export class OverflowRecoveryTracker {
 		await new Promise<void>((resolve) => {
 			let timer: NodeJS.Timeout | null = setTimeout(() => {
 				timer = null;
-				this.markUnrecovered("Context overflow recovery retry did not produce output before the idle timeout.");
+				this.markUnrecovered(this.timeoutMessage());
 				resolve();
 			}, timeoutMs);
 			const waiter = () => {
@@ -97,7 +99,7 @@ export class OverflowRecoveryTracker {
 			return;
 		}
 
-		this.markPending();
+		this.markPending("retrying");
 	}
 
 	private observeAssistantMessage(message: unknown): void {
@@ -105,7 +107,7 @@ export class OverflowRecoveryTracker {
 		if (!msg || stringField(msg, "role") !== "assistant") return;
 
 		if (isContextOverflowAssistantMessage(msg)) {
-			this.markPending();
+			this.markPending("overflow_detected");
 			return;
 		}
 
@@ -122,15 +124,17 @@ export class OverflowRecoveryTracker {
 		}
 	}
 
-	private markPending(): void {
+	private markPending(phase: Exclude<RecoveryPhase, "none">): void {
 		if (this.state === "unrecovered" || this.state === "externally_terminal") return;
 		this.state = "pending";
+		this.phase = phase;
 		this.failureMessage = null;
 	}
 
 	private markRecovered(): void {
 		if (!this.isPending()) return;
 		this.state = "recovered";
+		this.phase = "none";
 		this.failureMessage = null;
 		this.resolveWaiters();
 	}
@@ -138,8 +142,19 @@ export class OverflowRecoveryTracker {
 	private markUnrecovered(message: string): void {
 		if (this.state === "externally_terminal") return;
 		this.state = "unrecovered";
+		this.phase = "none";
 		this.failureMessage = formatOverflowRecoveryFailure(message);
 		this.resolveWaiters();
+	}
+
+	private timeoutMessage(): string {
+		if (this.phase === "retrying") {
+			return "Context overflow recovery retry did not produce output before the idle timeout.";
+		}
+		if (this.phase === "compacting") {
+			return "Context overflow recovery compaction did not complete before the idle timeout.";
+		}
+		return "Context overflow recovery did not complete before the idle timeout.";
 	}
 
 	private resolveWaiters(): void {
