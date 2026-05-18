@@ -379,7 +379,8 @@ export async function dispatch(
 						lastUpdate: Date.now(),
 						status: recoveryFailureMessage || code !== 0 ? "failed" : "done",
 						stopReason,
-						errorMessage: recoveryFailureMessage ?? (code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`),
+						errorMessage:
+							recoveryFailureMessage ?? (code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`),
 						activeTools: [],
 						activity: recoveryFailureMessage || code !== 0 ? "failed" : "done",
 						finalOutput: recoveryFailureMessage ? null : (state.finalOutput ?? null),

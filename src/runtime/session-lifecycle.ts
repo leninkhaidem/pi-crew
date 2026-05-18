@@ -22,10 +22,7 @@ import {
 	overflowRecoveryActivity,
 } from "./overflow-recovery.js";
 import { appendFinalResultContract } from "./result-contract.js";
-import {
-	suppressPiCrewOrchestrationTools,
-	withoutPiCrewOrchestrationExtensions,
-} from "./tool-suppression.js";
+import { suppressPiCrewOrchestrationTools, withoutPiCrewOrchestrationExtensions } from "./tool-suppression.js";
 import { sanitizeTranscriptEvent } from "./transcript.js";
 
 const STATE_DEBOUNCE_MS = 80;

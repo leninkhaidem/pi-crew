@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.5.1 — 2026-05-18
+
+### Fixed
+
+- **Sub-agent context overflow recovery.** Session-mode sub-agents now wait for Pi overflow compaction/retry outcomes instead of finalizing early with empty successful output.
+- **Accurate overflow failure reporting.** Unrecovered overflow recovery now fails explicitly with context-overflow recovery details, while recovered runs clear stale error stop reasons.
+- **Subprocess overflow lifecycle handling.** Subprocess-mode sub-agents now distinguish complete recovery streams from child exits while recovery is still pending.
+
+### Changed
+
+- **Compaction transcript minimization.** Stored compaction events now keep only minimal recovery diagnostics and omit compaction summaries/details and hidden reasoning content.
+- **Recovery regression coverage.** Added deterministic session/subprocess coverage for successful recovery, failed recovery, retry-never-starts, abort/dispose, and non-overflow paths.
+
 ## v0.5.0 — 2026-04-30
 
 ### Breaking Changes

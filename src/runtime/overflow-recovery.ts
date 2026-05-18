@@ -198,7 +198,10 @@ function isContextOverflowAssistantMessage(message: Record<string, unknown>): bo
 	return isContextOverflowMessage(errorMessage, message);
 }
 
-function isContextOverflowMessage(errorMessage: string | undefined | null, base: Record<string, unknown> = {}): boolean {
+function isContextOverflowMessage(
+	errorMessage: string | undefined | null,
+	base: Record<string, unknown> = {},
+): boolean {
 	if (!errorMessage) return false;
 	return isContextOverflow({ ...base, role: "assistant", stopReason: "error", errorMessage } as never);
 }
