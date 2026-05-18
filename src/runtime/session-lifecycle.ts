@@ -15,6 +15,12 @@ import { type SubagentState, type SubagentUsage, defaultThinkingForAgent } from 
 import { describeActivity } from "./activity.js";
 import { abortSubagentByStatePath } from "./kill.js";
 import type { DispatchHandle, DispatchPlan, LifecycleEnv, LifecycleHooks } from "./lifecycle.js";
+import {
+	OVERFLOW_RECOVERY_FAILED_STOP_REASON,
+	OverflowRecoveryTracker,
+	normalizeRecoveredOverflowStopReason,
+	overflowRecoveryActivity,
+} from "./overflow-recovery.js";
 import { appendFinalResultContract } from "./result-contract.js";
 import {
 	suppressPiCrewOrchestrationTools,
@@ -129,6 +135,8 @@ export async function dispatchSession(
 	let abortReason: string | undefined;
 	let hardAborted = false;
 	let softLimitReached = false;
+	let nonUserDisposeRequested = false;
+	let recoveryTracker = new OverflowRecoveryTracker();
 	const activeTools = new Map<string, string>();
 	let toolUses = 0;
 
@@ -218,6 +226,7 @@ export async function dispatchSession(
 
 	const subscribeForRun = () => {
 		unsubscribe = session!.subscribe((event: unknown) => {
+			recoveryTracker.observeEvent(event);
 			appendEvent(event);
 			handleSessionEvent(event, {
 				getState: () => state,
@@ -233,6 +242,7 @@ export async function dispatchSession(
 					abortReason = `maxTurns exceeded (${plan.options.maxTurns})`;
 					await writeState({ ...state, lastUpdate: Date.now() }).catch(() => undefined);
 					await abortSubagentByStatePath(paths.state, abortReason).catch(() => undefined);
+					recoveryTracker.markExternallyTerminal();
 					await session.abort().catch(() => undefined);
 				},
 				onSoftLimit: async () => {
@@ -251,6 +261,7 @@ export async function dispatchSession(
 		abortReason = reason;
 		await writeState({ ...state, lastUpdate: Date.now() }).catch(() => undefined);
 		await abortSubagentByStatePath(paths.state, reason).catch(() => undefined);
+		recoveryTracker.markExternallyTerminal();
 		await session?.abort().catch(() => undefined);
 	};
 
@@ -265,6 +276,8 @@ export async function dispatchSession(
 		hardAborted = false;
 		softLimitReached = false;
 		closing = false;
+		nonUserDisposeRequested = false;
+		recoveryTracker = new OverflowRecoveryTracker();
 		pendingUpdate = null;
 		if (writeTimer) {
 			clearTimeout(writeTimer);
@@ -296,25 +309,36 @@ export async function dispatchSession(
 			await session.prompt(`Task: ${task}`, { source: "extension" });
 		} catch (err) {
 			promptError = err;
-		} finally {
-			closing = true;
-			pendingUpdate = null;
-			if (writeTimer) {
-				clearTimeout(writeTimer);
-				writeTimer = null;
-			}
-			unsubscribe();
-			unsubscribe = () => undefined;
 		}
+
+		const promptErrorMessage =
+			promptError instanceof Error ? promptError.message : promptError ? String(promptError) : null;
+		recoveryTracker.observePromptError(promptErrorMessage);
+		if (nonUserDisposeRequested) recoveryTracker.markDisposed();
+		await recoveryTracker.waitForRecoveryCompletion();
+
+		closing = true;
+		pendingUpdate = null;
+		if (writeTimer) {
+			clearTimeout(writeTimer);
+			writeTimer = null;
+		}
+		unsubscribe();
+		unsubscribe = () => undefined;
 
 		const currentDisk = await readState(paths.state);
 		const finalText =
 			state.finalOutput ?? extractLastAssistantText((session?.messages ?? []) as unknown[]) ?? state.lastText;
-		const promptErrorMessage =
-			promptError instanceof Error ? promptError.message : promptError ? String(promptError) : null;
+		const recoveryFailureMessage = recoveryTracker.getFailureMessage();
+		const failureMessage = recoveryFailureMessage ?? promptErrorMessage ?? abortReason ?? null;
 		const externalTerminal =
 			currentDisk &&
 			(currentDisk.status === "aborted" || currentDisk.status === "orphaned" || currentDisk.status === "detached");
+		const stopReason = recoveryFailureMessage
+			? OVERFLOW_RECOVERY_FAILED_STOP_REASON
+			: recoveryTracker.isRecovered()
+				? normalizeRecoveredOverflowStopReason(state.stopReason)
+				: state.stopReason;
 		const finalState: SubagentState = externalTerminal
 			? {
 					...currentDisk,
@@ -325,14 +349,15 @@ export async function dispatchSession(
 				}
 			: {
 					...state,
-					status: promptErrorMessage || hardAborted || abortReason ? "failed" : "done",
-					exitCode: promptErrorMessage || hardAborted || abortReason ? -1 : null,
-					errorMessage: promptErrorMessage ?? abortReason ?? null,
+					status: failureMessage || hardAborted ? "failed" : "done",
+					exitCode: failureMessage || hardAborted ? -1 : null,
+					stopReason,
+					errorMessage: failureMessage,
 					finishedAt: Date.now(),
 					lastUpdate: Date.now(),
 					activeTools: [],
-					activity: promptErrorMessage || hardAborted || abortReason ? "failed" : "done",
-					finalOutput: finalText ?? null,
+					activity: failureMessage || hardAborted ? "failed" : "done",
+					finalOutput: recoveryFailureMessage ? null : (finalText ?? null),
 				};
 
 		await flushStream(outputStream);
@@ -352,8 +377,10 @@ export async function dispatchSession(
 	};
 
 	const dispose = async () => {
+		nonUserDisposeRequested = true;
+		recoveryTracker.markDisposed();
 		unsubscribe();
-		await closeOutputStream().catch(() => undefined);
+		session?.abort().catch(() => undefined);
 		session?.dispose();
 	};
 
@@ -385,6 +412,11 @@ function handleSessionEvent(event: unknown, ctx: EventHandlerContext): void {
 		turnIndex?: number;
 	};
 	const state = ctx.getState();
+	const recoveryActivity = overflowRecoveryActivity(event);
+	if (recoveryActivity) {
+		ctx.scheduleWrite({ ...state, activity: recoveryActivity, lastUpdate: Date.now() });
+		return;
+	}
 	if (ev.type === "message_update") {
 		const update = ev.assistantMessageEvent as { type?: string; partial?: { content?: unknown[] } } | undefined;
 		if (update?.type === "text_delta") {

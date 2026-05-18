@@ -17,6 +17,12 @@ import {
 import { describeActivity } from "./activity.js";
 import { createJsonlParser } from "./jsonl.js";
 import { abortSubagentByStatePath } from "./kill.js";
+import {
+	OVERFLOW_RECOVERY_FAILED_STOP_REASON,
+	OverflowRecoveryTracker,
+	normalizeRecoveredOverflowStopReason,
+	overflowRecoveryActivity,
+} from "./overflow-recovery.js";
 import { appendFinalResultContract } from "./result-contract.js";
 import { dispatchSession } from "./session-lifecycle.js";
 import { type SpawnedSubagent, closeSpawnFds, spawnSubagent } from "./spawn.js";
@@ -165,6 +171,7 @@ export async function dispatch(
 	let closing = false;
 	const activeTools = new Map<string, string>();
 	let toolUses = 0;
+	const recoveryTracker = new OverflowRecoveryTracker();
 	const scheduleWrite = (next: SubagentState) => {
 		pendingUpdate = next;
 		state = next;
@@ -194,6 +201,7 @@ export async function dispatch(
 	const abort = async (reason = "killed by user") => {
 		await writeState({ ...state, lastUpdate: Date.now() }).catch(() => undefined);
 		await abortSubagentByStatePath(paths.state, reason).catch(() => undefined);
+		recoveryTracker.markExternallyTerminal();
 	};
 	const abortForMaxTurns = () => {
 		if (!plan.options.maxTurns || maxTurnAbortRequested) return;
@@ -202,7 +210,13 @@ export async function dispatch(
 	};
 
 	const handleTranscriptEvent = (e: unknown) => {
+		recoveryTracker.observeEvent(e);
 		const ev = e as { type?: string; message?: unknown; messages?: unknown[]; assistantMessageEvent?: unknown };
+		const recoveryActivity = overflowRecoveryActivity(e);
+		if (recoveryActivity) {
+			scheduleWrite({ ...state, activity: recoveryActivity, lastUpdate: Date.now() });
+			return;
+		}
 		if (ev.type === "message_update") {
 			const update = ev.assistantMessageEvent as { type?: string; partial?: { content?: unknown[] } } | undefined;
 			if (update?.type === "text_delta") {
@@ -341,7 +355,16 @@ export async function dispatch(
 			// Re-read state to detect external finalization (e.g., subagent_kill set status to "aborted").
 			const currentDisk = await readState(paths.state);
 			const stderrText = await tryReadTail(paths.stderr);
+			if (recoveryTracker.isPending()) {
+				recoveryTracker.markDisposed();
+			}
+			const recoveryFailureMessage = recoveryTracker.getFailureMessage();
 
+			const stopReason = recoveryFailureMessage
+				? OVERFLOW_RECOVERY_FAILED_STOP_REASON
+				: recoveryTracker.isRecovered()
+					? normalizeRecoveredOverflowStopReason(state.stopReason)
+					: state.stopReason;
 			const finalState: SubagentState = isExternallyTerminal(currentDisk)
 				? {
 						...currentDisk,
@@ -351,14 +374,15 @@ export async function dispatch(
 					}
 				: {
 						...state,
-						exitCode: code,
+						exitCode: recoveryFailureMessage ? -1 : code,
 						finishedAt: Date.now(),
 						lastUpdate: Date.now(),
-						status: code === 0 ? "done" : "failed",
-						errorMessage: code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`,
+						status: recoveryFailureMessage || code !== 0 ? "failed" : "done",
+						stopReason,
+						errorMessage: recoveryFailureMessage ?? (code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`),
 						activeTools: [],
-						activity: code === 0 ? "done" : "failed",
-						finalOutput: state.finalOutput ?? null,
+						activity: recoveryFailureMessage || code !== 0 ? "failed" : "done",
+						finalOutput: recoveryFailureMessage ? null : (state.finalOutput ?? null),
 					};
 			await finalize(finalState);
 		});

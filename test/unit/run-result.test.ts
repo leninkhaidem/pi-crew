@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sanitizeTranscriptEvent } from "../../src/runtime/transcript.js";
 import { formatRunStateResult } from "../../src/tools/run.js";
 import type { SubagentState } from "../../src/types.js";
 
@@ -40,6 +41,34 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 	...overrides,
 });
 
+describe("overflow recovery reporting", () => {
+	it("keeps only minimal overflow compaction diagnostics in sanitized transcripts", () => {
+		const sanitized = sanitizeTranscriptEvent({
+			type: "compaction_end",
+			reason: "overflow",
+			aborted: false,
+			willRetry: true,
+			errorMessage: "retrying",
+			result: {
+				summary: "private summary that should not be persisted",
+				details: { readFiles: ["secret.ts"], reasoning: "hidden" },
+			},
+			thinkingSignature: "secret",
+		});
+
+		expect(sanitized).toEqual({
+			type: "compaction_end",
+			reason: "overflow",
+			aborted: false,
+			willRetry: true,
+			errorMessage: "retrying",
+		});
+		expect(JSON.stringify(sanitized)).not.toContain("summary");
+		expect(JSON.stringify(sanitized)).not.toContain("details");
+		expect(JSON.stringify(sanitized)).not.toContain("thinkingSignature");
+	});
+});
+
 describe("formatRunStateResult", () => {
 	it("returns the full final output with trace pointers for single-agent success output", () => {
 		const longOutput = `start-${"x".repeat(2000)}-end`;
@@ -59,6 +88,25 @@ describe("formatRunStateResult", () => {
 
 		expect(result).toContain("[work-agent (general-purpose) #abc12345] aborted — parent ask interrupted");
 		expect(result).toContain("Trace: /p/output.jsonl");
+	});
+
+	it("shows unrecovered overflow as explicit failure instead of successful empty output", () => {
+		const result = formatRunStateResult(
+			stateOf({
+				status: "failed",
+				exitCode: -1,
+				stopReason: "context_overflow_recovery_failed",
+				errorMessage: "Context overflow recovery failed: compaction completed without scheduling a retry.",
+				finalOutput: null,
+				lastText: null,
+			}),
+			{ single: true },
+		);
+
+		expect(result).toContain("[work-agent (general-purpose) #abc12345] failed");
+		expect(result).toContain("Context overflow recovery failed");
+		expect(result).not.toContain("done");
+		expect(result).not.toContain("Summary: (no output)");
 	});
 
 	it("shows failed batch runs with status and reason", () => {
