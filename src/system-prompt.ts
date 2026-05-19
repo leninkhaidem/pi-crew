@@ -49,7 +49,7 @@ export function buildSystemPromptBlock(args: SystemPromptArgs): string {
 		"    Do not use it for routine polling or after a normal completion notification/blocking result; that duplicates context.",
 		"  - `subagent_resume` — continue a session-mode sub-agent with a new prompt (resumes its conversation).",
 		"  - `steer_subagent` — redirect a running session-mode sub-agent.",
-		"  - `subagent_status` — peek at running/completed sub-agents.",
+		"  - `subagent_status` — default shows all current starting/running sub-agents; use scope:'stopped' for a small failed/orphaned/aborted/detached triage list; use agentId for exact lookup.",
 		"  - `subagent_kill` — abort if you change your mind.",
 		"",
 		"State directory:",
