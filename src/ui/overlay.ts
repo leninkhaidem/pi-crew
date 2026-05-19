@@ -1,6 +1,7 @@
 // src/ui/overlay.ts
 import path from "node:path";
 import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import { abortSubagentByStatePath } from "../runtime/kill.js";
 import { getRoot } from "../state/paths.js";
 import type { SubagentState } from "../types.js";
 import { mountStateWatcher } from "./state-watcher.js";
@@ -58,8 +59,10 @@ export async function openTreeOverlay(
 	});
 }
 
-function killSelected(state: SubagentState | undefined): void {
-	if (!state || !isActiveSubagentState(state) || !state.pid) return;
+export async function killSelected(state: SubagentState | undefined): Promise<void> {
+	if (!state || !isActiveSubagentState(state)) return;
+	const result = await abortSubagentByStatePath(state.paths.state, "killed from /tasks panel");
+	if (result.ok || !state.pid) return;
 	try {
 		process.kill(state.pid, "SIGTERM");
 	} catch {

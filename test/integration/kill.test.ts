@@ -72,6 +72,47 @@ describe("kill flow", () => {
 		}
 	}, 20_000);
 
+	it("max-turn hard abort finalizes as aborted even if subprocess exits cleanly", async () => {
+		const nonStopTurn = {
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "continuing" }],
+				usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { total: 0 } },
+				stopReason: "toolUse",
+				model: "mock",
+			},
+		};
+		const mock = prepareMockPi({
+			events: [{ type: "agent_start" }, nonStopTurn, nonStopTurn, nonStopTurn],
+			exitCode: 0,
+			delayMs: 5,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock", thinking: "low" },
+					options: { agent: "explore", alias: "explore-test", task: "loop", maxTurns: 1 },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-max-turns",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+
+			const final = await handle.donePromise;
+			expect(final.status).toBe("aborted");
+			expect(final.errorMessage).toBe("maxTurns exceeded (1)");
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
 	it("preserves aborted status when external writer finalizes state before subprocess close", async () => {
 		// Mock pi: emits a few events spaced 100ms apart, then exits 0.
 		// Plenty of time for our test to write "aborted" status mid-flight.

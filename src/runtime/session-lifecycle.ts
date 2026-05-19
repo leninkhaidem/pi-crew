@@ -327,7 +327,8 @@ export async function dispatchSession(
 		const finalText =
 			state.finalOutput ?? extractLastAssistantText((session?.messages ?? []) as unknown[]) ?? state.lastText;
 		const recoveryFailureMessage = recoveryTracker.getFailureMessage();
-		const failureMessage = recoveryFailureMessage ?? promptErrorMessage ?? abortReason ?? null;
+		const nonAbortFailureMessage = recoveryFailureMessage ?? promptErrorMessage ?? null;
+		const explicitAbortReason = abortReason ?? (hardAborted ? `maxTurns exceeded (${plan.options.maxTurns})` : null);
 		const externalTerminal =
 			currentDisk &&
 			(currentDisk.status === "aborted" || currentDisk.status === "orphaned" || currentDisk.status === "detached");
@@ -344,18 +345,31 @@ export async function dispatchSession(
 					activeTools: [],
 					activity: currentDisk.status,
 				}
-			: {
-					...state,
-					status: failureMessage || hardAborted ? "failed" : "done",
-					exitCode: failureMessage || hardAborted ? -1 : null,
-					stopReason,
-					errorMessage: failureMessage,
-					finishedAt: Date.now(),
-					lastUpdate: Date.now(),
-					activeTools: [],
-					activity: failureMessage || hardAborted ? "failed" : "done",
-					finalOutput: recoveryFailureMessage ? null : (finalText ?? null),
-				};
+			: explicitAbortReason
+				? {
+						...state,
+						status: "aborted",
+						exitCode: -1,
+						stopReason,
+						errorMessage: explicitAbortReason,
+						finishedAt: Date.now(),
+						lastUpdate: Date.now(),
+						activeTools: [],
+						activity: "aborted",
+						finalOutput: finalText ?? null,
+					}
+				: {
+						...state,
+						status: nonAbortFailureMessage ? "failed" : "done",
+						exitCode: nonAbortFailureMessage ? -1 : null,
+						stopReason,
+						errorMessage: nonAbortFailureMessage,
+						finishedAt: Date.now(),
+						lastUpdate: Date.now(),
+						activeTools: [],
+						activity: nonAbortFailureMessage ? "failed" : "done",
+						finalOutput: recoveryFailureMessage ? null : (finalText ?? null),
+					};
 
 		await flushStream(outputStream);
 		await closeOutputStream();

@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { visibleWidth } from "@mariozechner/pi-tui";
 import { describe, expect, it } from "vitest";
+import { readState, writeState } from "../../src/state/store.js";
 import type { SubagentState } from "../../src/types.js";
-import { filterCurrentBatchActiveStates, renderSubagentsPanel } from "../../src/ui/overlay.js";
+import { filterCurrentBatchActiveStates, killSelected, renderSubagentsPanel } from "../../src/ui/overlay.js";
 import { SubagentsPanel } from "../../src/ui/subagents-panel.js";
 
 const theme = {
@@ -60,6 +64,35 @@ describe("renderSubagentsPanel", () => {
 			starting,
 		]);
 		expect(filterCurrentBatchActiveStates([historical, running], null)).toEqual([]);
+	});
+
+	it("UI kill writes an aborted state with an observable reason through the shared abort path", async () => {
+		const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-overlay-kill-"));
+		try {
+			const statePath = path.join(tmp, "subagents", "sess", "abc12345", "state.json");
+			const running = stateOf({
+				pid: null,
+				paths: {
+					state: statePath,
+					output: path.join(path.dirname(statePath), "output.jsonl"),
+					stderr: path.join(path.dirname(statePath), "stderr.log"),
+					prompt: path.join(path.dirname(statePath), "prompt.md"),
+				},
+			});
+			await writeState(running);
+
+			await killSelected(running);
+
+			const aborted = await readState(statePath);
+			expect(aborted).toMatchObject({
+				status: "aborted",
+				exitCode: -1,
+				errorMessage: "killed from /tasks panel",
+			});
+			expect(aborted?.finishedAt).toEqual(expect.any(Number));
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
 	});
 
 	it("renders a bordered transcript-focused detail view", () => {
