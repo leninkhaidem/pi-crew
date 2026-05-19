@@ -30,7 +30,7 @@ After install:
 |---|---|
 | `Agent` | Claude-style foreground/background launch wrapper. Requires `alias`, a short instance/job name shown in UI. |
 | Example | `await Agent({ subagent_type: 'general-purpose', alias: 'pr-summary', prompt: 'Summarize this PR', provider: 'openai-codex', model: 'gpt-5.4-mini', thinking: 'low', run_in_background: true })` |
-| `get_subagent_result` | Check or wait for a background result; optionally include transcript JSONL. |
+| `get_subagent_result` | Check or wait for a background result; optionally request bounded sanitized `recentEvents` or explicit verbose transcript JSONL. |
 | `steer_subagent` | Send a steering message to a running session-mode sub-agent. |
 | `subagent_dispatch` | Background dispatch. Returns agentId. |
 | `subagent_run` | Blocking single / parallel / chain modes. |

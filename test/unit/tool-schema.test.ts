@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { registerDispatchTool } from "../../src/tools/dispatch.js";
 import { registerResumeTool } from "../../src/tools/resume.js";
 import { registerRunTool } from "../../src/tools/run.js";
+import { registerGetSubagentResultTool } from "../../src/tools/result.js";
 import { registerStatusTool } from "../../src/tools/status.js";
 
 describe("sub-agent tool schemas", () => {
@@ -29,6 +30,25 @@ describe("sub-agent tool schemas", () => {
 		expect(requiredOf(tools.get("subagent_resume"))).toContain("agent_id");
 		expect(requiredOf(tools.get("subagent_resume"))).toContain("prompt");
 		expect(requiredOf(tools.get("subagent_dispatch"))).toContain("alias");
+	});
+
+	it("exposes bounded recent output retrieval on the result tool", () => {
+		const tools = new Map<string, ToolLike>();
+		const pi = {
+			registerTool: vi.fn((tool: ToolLike & { name: string }) => {
+				tools.set(tool.name, tool);
+			}),
+		};
+		const rt = {} as never;
+
+		registerGetSubagentResultTool(pi as never, rt);
+
+		const resultTool = tools.get("get_subagent_result");
+		const properties = propertiesOf(resultTool);
+		expect(Object.keys(properties).sort()).toEqual(["agent_id", "recentEvents", "timeoutMs", "verbose", "wait"]);
+		expect(properties.recentEvents).toMatchObject({ type: "integer", minimum: 1 });
+		expect(resultTool?.description).toContain("recentEvents");
+		expect(resultTool?.description).toContain("bounded sanitized recent output");
 	});
 
 	it("exposes only active/stopped status listing and exact-id lookup", () => {

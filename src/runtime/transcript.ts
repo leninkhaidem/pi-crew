@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import { parseCompleteJsonl } from "./jsonl.js";
 
 const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
-const MAX_DISPLAY_EVENTS = 20;
-const MAX_EVENT_TEXT_LENGTH = 2000;
+export const MAX_RECENT_TRANSCRIPT_EVENTS = 20;
+export const MAX_RECENT_TRANSCRIPT_EVENT_TEXT_LENGTH = 2000;
 
 const SENSITIVE_KEYS = ["thinking", "reasoning", "encrypted", "signature", "redacted"];
 
@@ -27,8 +27,12 @@ export function sanitizeTranscriptEvent(event: unknown): unknown | null {
 	return sanitized === undefined ? null : sanitized;
 }
 
-export async function readRecentTranscriptExcerpt(outputPath: string): Promise<TranscriptExcerpt> {
+export async function readRecentTranscriptExcerpt(
+	outputPath: string,
+	options: { maxEvents?: number } = {},
+): Promise<TranscriptExcerpt> {
 	try {
+		const maxEvents = boundedDisplayEventCount(options.maxEvents);
 		const tail = await readTail(outputPath, TRANSCRIPT_TAIL_BYTES);
 		const parsed = parseCompleteJsonl(tail.text, {
 			skipFirstPartial: tail.startedAfterBeginning,
@@ -36,7 +40,7 @@ export async function readRecentTranscriptExcerpt(outputPath: string): Promise<T
 		});
 		const events = displayableEvents(parsed);
 		if (events.length === 0) return { kind: "empty", message: "No recent transcript events." };
-		return { kind: "events", events: events.slice(-MAX_DISPLAY_EVENTS) };
+		return { kind: "events", events: events.slice(-maxEvents) };
 	} catch {
 		return { kind: "unreadable", message: "Transcript unavailable." };
 	}
@@ -55,6 +59,11 @@ async function readTail(filePath: string, maxBytes: number): Promise<{ text: str
 	} finally {
 		await handle.close();
 	}
+}
+
+function boundedDisplayEventCount(requested: number | undefined): number {
+	if (requested === undefined || !Number.isInteger(requested) || requested <= 0) return MAX_RECENT_TRANSCRIPT_EVENTS;
+	return Math.min(requested, MAX_RECENT_TRANSCRIPT_EVENTS);
 }
 
 function displayableEvents(events: unknown[]): string[] {
@@ -132,7 +141,9 @@ function formatToolResultContent(value: unknown): string {
 
 function boundedText(value: string): string {
 	const text = cleanText(value);
-	return text.length > MAX_EVENT_TEXT_LENGTH ? `${text.slice(0, MAX_EVENT_TEXT_LENGTH - 1)}…` : text;
+	return text.length > MAX_RECENT_TRANSCRIPT_EVENT_TEXT_LENGTH
+		? `${text.slice(0, MAX_RECENT_TRANSCRIPT_EVENT_TEXT_LENGTH - 1)}…`
+		: text;
 }
 
 function cleanText(value: string): string {

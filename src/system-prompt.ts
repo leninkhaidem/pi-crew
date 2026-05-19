@@ -45,7 +45,7 @@ export function buildSystemPromptBlock(args: SystemPromptArgs): string {
 		"",
 		"Tracking:",
 		"  - Prefer background completion notifications and blocking `subagent_run` results; do not fetch the same result again.",
-		"  - `get_subagent_result` is last-resort recovery/debug: explicit user request, missed notification, failed/aborted/orphaned/detached run, or verbose transcript inspection.",
+		"  - `get_subagent_result` is last-resort recovery/debug: explicit user request, missed notification, failed/aborted/orphaned/detached run, bounded sanitized recentEvents inspection, or verbose transcript inspection.",
 		"    Do not use it for routine polling or after a normal completion notification/blocking result; that duplicates context.",
 		"  - `subagent_resume` — continue a session-mode sub-agent with a new prompt (resumes its conversation).",
 		"  - `steer_subagent` — redirect a running session-mode sub-agent.",
