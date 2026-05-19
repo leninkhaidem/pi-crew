@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.6.0 — 2026-05-19
+
+### Breaking Changes
+
+- **Reworked `subagent_status` history views.** The tool now exposes only `active` and `stopped` listing scopes. Broad `session` and `all` list scopes, plus `includeDetached` list mode, are no longer part of the public status listing contract.
+
+### Added
+
+- **Stopped-agent triage view.** `subagent_status({ scope: "stopped" })` now returns a small, bounded list of problematic terminal agents (`failed`, `orphaned`, `aborted`, `detached`) with compact triage fields and omission/status-count metadata.
+- **Recent sanitized result output.** `get_subagent_result({ agent_id, recentEvents })` now returns bounded sanitized recent transcript events in both readable output and structured details without requiring callers to parse JSONL.
+
+### Changed
+
+- **Active status remains uncapped and current-session only.** The default status view lists only `starting` and `running` agents, while successful `done` agents stay retrievable by exact ID rather than appearing in broad history listings.
+- **Transcript excerpt bounds.** Recent transcript output is capped by event count and per-event text length, while raw JSONL remains available only through explicit verbose result retrieval.
+
+### Fixed
+
+- **Abort and failure terminal status semantics.** Explicit kills, parent interruptions, max-turn hard aborts, and UI-triggered kills now preserve `aborted` status instead of being misreported as successful completion, while unexpected process failures remain `failed`.
+
 ## v0.5.1 — 2026-05-18
 
 ### Fixed
