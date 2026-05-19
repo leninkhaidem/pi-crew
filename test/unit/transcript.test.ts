@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readRecentTranscriptExcerpt, sanitizeTranscriptEvent } from "../../src/runtime/transcript.js";
+import {
+	MAX_RECENT_TRANSCRIPT_EVENT_TEXT_LENGTH,
+	readRecentTranscriptExcerpt,
+	sanitizeTranscriptEvent,
+} from "../../src/runtime/transcript.js";
 
 describe("sanitizeTranscriptEvent", () => {
 	it("drops thinking update events entirely", () => {
@@ -87,10 +91,26 @@ describe("readRecentTranscriptExcerpt", () => {
 			);
 
 			const excerpt = await readRecentTranscriptExcerpt(outputPath);
+			const requestedBelowMax = await readRecentTranscriptExcerpt(outputPath, { maxEvents: 3 });
+			const requestedAtMax = await readRecentTranscriptExcerpt(outputPath, { maxEvents: 20 });
+			const requestedAboveMax = await readRecentTranscriptExcerpt(outputPath, { maxEvents: 200 });
 
 			expect(excerpt.kind).toBe("events");
-			if (excerpt.kind !== "events") return;
+			expect(requestedBelowMax.kind).toBe("events");
+			expect(requestedAtMax.kind).toBe("events");
+			expect(requestedAboveMax.kind).toBe("events");
+			if (
+				excerpt.kind !== "events" ||
+				requestedBelowMax.kind !== "events" ||
+				requestedAtMax.kind !== "events" ||
+				requestedAboveMax.kind !== "events"
+			) {
+				return;
+			}
 			expect(excerpt.events).toHaveLength(20);
+			expect(requestedBelowMax.events).toEqual(["event 22", "event 23", "event 24"]);
+			expect(requestedAtMax.events).toHaveLength(20);
+			expect(requestedAboveMax.events).toHaveLength(20);
 			expect(excerpt.events[0]).toContain("event 5");
 			expect(excerpt.events.at(-1)).toContain("event 24");
 			expect(JSON.stringify(excerpt)).not.toContain("hidden");
@@ -139,6 +159,40 @@ describe("readRecentTranscriptExcerpt", () => {
 			expect(excerpt.events.join("\n")).not.toContain('"command":');
 			expect(excerpt.events.join("\n")).not.toContain("tool:");
 			expect(excerpt.events.join("\n")).not.toContain("assistant:");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("truncates oversized displayable assistant and tool events", async () => {
+		const dir = mkdtempSync(path.join(tmpdir(), "pi-crew-transcript-"));
+		try {
+			const outputPath = path.join(dir, "output.jsonl");
+			const assistantText = `assistant-${"a".repeat(MAX_RECENT_TRANSCRIPT_EVENT_TEXT_LENGTH + 100)}`;
+			const toolText = `tool-${"t".repeat(MAX_RECENT_TRANSCRIPT_EVENT_TEXT_LENGTH + 100)}`;
+			writeFileSync(
+				outputPath,
+				`${[
+					JSON.stringify({
+						type: "message_end",
+						message: { role: "assistant", content: [{ type: "text", text: assistantText }] },
+					}),
+					JSON.stringify({
+						type: "tool_execution_end",
+						result: { content: [{ type: "text", text: toolText }] },
+					}),
+				].join("\n")}\n`,
+			);
+
+			const excerpt = await readRecentTranscriptExcerpt(outputPath, { maxEvents: 2 });
+
+			expect(excerpt.kind).toBe("events");
+			if (excerpt.kind !== "events") return;
+			expect(excerpt.events).toHaveLength(2);
+			expect(excerpt.events.every((event) => event.length <= MAX_RECENT_TRANSCRIPT_EVENT_TEXT_LENGTH)).toBe(true);
+			expect(excerpt.events.every((event) => event.endsWith("…"))).toBe(true);
+			expect(excerpt.events.join("\n")).not.toContain("\"type\":\"message_end\"");
+			expect(excerpt.events.join("\n")).not.toContain("\"type\":\"tool_execution_end\"");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

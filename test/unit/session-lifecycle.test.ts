@@ -480,6 +480,36 @@ describe("dispatchSession", () => {
 		expect(fakeSession.abort).not.toHaveBeenCalled();
 	});
 
+	it("finalizes session-mode max-turn hard aborts as aborted rather than failed", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		fakeSession.prompt = vi.fn(async () => {
+			subscriber?.({ type: "turn_end", message: { role: "assistant", stopReason: "toolUse" } });
+			subscriber?.({ type: "turn_end", message: { role: "assistant", stopReason: "toolUse" } });
+			subscriber?.({ type: "turn_end", message: { role: "assistant", stopReason: "toolUse" } });
+		});
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "loop", maxTurns: 1 },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		const final = await handle.donePromise;
+
+		expect(final.status).toBe("aborted");
+		expect(final.errorMessage).toBe("maxTurns exceeded (1)");
+	});
+
 	it("binds extensions so extension-provided skills/resources are inherited by session-mode sub-agents", async () => {
 		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
 

@@ -198,7 +198,9 @@ export async function dispatch(
 	};
 
 	let maxTurnAbortRequested = false;
+	let explicitAbortReason: string | null = null;
 	const abort = async (reason = "killed by user") => {
+		explicitAbortReason = reason;
 		await writeState({ ...state, lastUpdate: Date.now() }).catch(() => undefined);
 		await abortSubagentByStatePath(paths.state, reason).catch(() => undefined);
 		recoveryTracker.markExternallyTerminal();
@@ -336,17 +338,19 @@ export async function dispatch(
 						finishedAt: currentDisk.finishedAt ?? Date.now(),
 						lastUpdate: Date.now(),
 					}
-				: {
-						...state,
-						exitCode: -1,
-						finishedAt: Date.now(),
-						lastUpdate: Date.now(),
-						status: "failed",
-						errorMessage: err.message,
-						activeTools: [],
-						activity: "failed",
-						finalOutput: state.finalOutput ?? null,
-					};
+				: explicitAbortReason
+					? abortFinalState(state, explicitAbortReason, -1)
+					: {
+							...state,
+							exitCode: -1,
+							finishedAt: Date.now(),
+							lastUpdate: Date.now(),
+							status: "failed",
+							errorMessage: err.message,
+							activeTools: [],
+							activity: "failed",
+							finalOutput: state.finalOutput ?? null,
+						};
 			await finalize(finalState);
 		});
 
@@ -372,19 +376,21 @@ export async function dispatch(
 						finishedAt: currentDisk.finishedAt ?? Date.now(),
 						lastUpdate: Date.now(),
 					}
-				: {
-						...state,
-						exitCode: recoveryFailureMessage ? -1 : code,
-						finishedAt: Date.now(),
-						lastUpdate: Date.now(),
-						status: recoveryFailureMessage || code !== 0 ? "failed" : "done",
-						stopReason,
-						errorMessage:
-							recoveryFailureMessage ?? (code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`),
-						activeTools: [],
-						activity: recoveryFailureMessage || code !== 0 ? "failed" : "done",
-						finalOutput: recoveryFailureMessage ? null : (state.finalOutput ?? null),
-					};
+				: explicitAbortReason
+					? abortFinalState(state, explicitAbortReason, code ?? -1)
+					: {
+							...state,
+							exitCode: recoveryFailureMessage ? -1 : code,
+							finishedAt: Date.now(),
+							lastUpdate: Date.now(),
+							status: recoveryFailureMessage || code !== 0 ? "failed" : "done",
+							stopReason,
+							errorMessage:
+								recoveryFailureMessage ?? (code === 0 ? null : stderrText.slice(-1024) || `exit code ${code}`),
+							activeTools: [],
+							activity: recoveryFailureMessage || code !== 0 ? "failed" : "done",
+							finalOutput: recoveryFailureMessage ? null : (state.finalOutput ?? null),
+						};
 			await finalize(finalState);
 		});
 	});
@@ -394,6 +400,20 @@ export async function dispatch(
 
 function isExternallyTerminal(state: SubagentState | null): state is SubagentState {
 	return Boolean(state && (state.status === "aborted" || state.status === "orphaned" || state.status === "detached"));
+}
+
+function abortFinalState(state: SubagentState, reason: string, exitCode: number): SubagentState {
+	return {
+		...state,
+		status: "aborted",
+		exitCode,
+		errorMessage: reason,
+		finishedAt: Date.now(),
+		lastUpdate: Date.now(),
+		activeTools: [],
+		activity: "aborted",
+		finalOutput: state.finalOutput ?? null,
+	};
 }
 
 async function closeStream(stream: fsSync.WriteStream): Promise<void> {
