@@ -35,6 +35,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 			"Each sub-agent item requires alias: a short instance name shown in sub-agent UI.",
 			"Supports per-call provider/model/thinking overrides; model without provider infers provider when possible.",
 			"Returns final assistant text. Prefer subagent_dispatch unless sequential.",
+			"If a blocking run is backgrounded with Ctrl+B, do not poll or sleep for completion; the result is injected automatically.",
 		].join(" "),
 		parameters: Type.Object({
 			agent: Type.Optional(Type.String()),
@@ -239,7 +240,11 @@ function toolResult(state: SubagentState) {
 }
 
 function backgroundedToolResult(outcome: BackgroundedOutcome) {
-	const text = `Sub-agent ${outcome.alias} #${outcome.agentId} moved to background. Result will arrive via completion notification.`;
+	const text = [
+		`Sub-agent ${outcome.alias} #${outcome.agentId} moved to background.`,
+		"Completion will be injected automatically.",
+		"Do not poll or sleep for this result unless the user asks for progress or recovery.",
+	].join("\n");
 	return {
 		content: [{ type: "text" as const, text }],
 		details: { agentId: outcome.agentId, alias: outcome.alias, agent: outcome.agent, status: "backgrounded" },
@@ -253,7 +258,10 @@ async function raceScope(donePromise: Promise<SubagentState>, scope: DetachScope
 function toolResultBatch(states: SubagentState[], opts: BatchResultOpts = {}) {
 	const { partial = false, errors = [], backgrounded = [], abandoned = [] } = opts;
 	const stateLines = states.map((s) => formatRunStateResult(s));
-	const bgLines = backgrounded.map((b) => `[backgrounded] ${b.alias} #${b.agentId} — result will arrive via notification`);
+	const bgLines = backgrounded.map(
+		(b) =>
+			`[backgrounded] ${b.alias} #${b.agentId} — completion will be injected automatically; do not poll/sleep unless asked`,
+	);
 	const abLines = abandoned.map((a) => `[abandoned] ${a} — step was not started`);
 	const errLines = errors.map((e) => `[error] ${e}`);
 	const text = [...stateLines, ...bgLines, ...abLines, ...errLines].join("\n\n");

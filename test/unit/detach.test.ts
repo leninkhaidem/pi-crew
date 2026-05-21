@@ -458,7 +458,7 @@ describe("CompletionDispatcher with detach", () => {
 
 		expect(sendMessage).toHaveBeenCalledWith(
 			expect.objectContaining({ customType: "pi-crew", display: true }),
-			{ deliverAs: "followUp", triggerTurn: true },
+			{ deliverAs: "steer", triggerTurn: true },
 		);
 		expect(dispatcher.wasHandled("detached-agent-xyz")).toBe(true);
 	});

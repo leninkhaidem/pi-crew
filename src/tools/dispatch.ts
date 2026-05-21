@@ -22,7 +22,8 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 			"Requires alias: a short instance name shown in sub-agent UI.",
 			"Supports per-call provider/model/thinking overrides; model without provider infers provider when possible.",
 			"Available agents: see 'pi-crew' section in system prompt.",
-			"Completion is auto-pushed into this conversation when the sub-agent finishes, except coerced blocking explore runs.",
+			"Completion is auto-injected into this conversation when the sub-agent finishes, except coerced blocking explore runs.",
+			"Do not poll, sleep, or call status/result tools just to wait for normal background completion.",
 		].join(" "),
 		parameters: Type.Object({
 			agent: Type.String({
@@ -127,7 +128,8 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 						type: "text" as const,
 						text: [
 							`Started ${handle.state.alias} #${handle.agentId} (${agent.name}, ${handle.state.provider}/${handle.state.model}).`,
-							"Completion will be posted automatically.",
+							"Completion will be injected automatically.",
+							"Do not poll or sleep for this result unless the user asks for progress or recovery.",
 						].join("\n"),
 					},
 				],

@@ -149,7 +149,7 @@ describe("get_subagent_result", () => {
 		};
 
 		expect(result.content[0]?.text).toContain("already completed");
-		expect(result.content[0]?.text).toContain("already delivered");
+		expect(result.content[0]?.text).toContain("already handled");
 		expect(result.content[0]?.text).not.toContain(longOutput);
 		expect(consumeCompletion).toHaveBeenCalledWith("abc12345");
 	});

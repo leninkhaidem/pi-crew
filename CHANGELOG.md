@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.6.1 — 2026-05-21
+
+### Fixed
+
+- **Timely background completion delivery.** Background and Ctrl+B-detached sub-agent completions now steer their notifications into active orchestrator turns instead of waiting for the parent to finish, so orchestrators receive results without delayed follow-up turns.
+
+### Changed
+
+- **Clearer background orchestration guidance.** Tool descriptions and the pi-crew prompt now tell agents not to poll, sleep, or repeatedly check status after backgrounding because completion notifications are injected automatically.
+- **Less misleading result recovery wording.** Result recovery now describes already completed sub-agent results as already handled rather than already delivered when a completion notification was queued or consumed.
+
 ## v0.6.0 — 2026-05-19
 
 ### Breaking Changes

@@ -205,7 +205,7 @@ function appendRecentOutput(lines: string[], recentOutput?: TranscriptExcerpt): 
 
 function formatAlreadyHandledText(state: SubagentState): string {
 	return [
-		`${state.alias} #${state.agentId} (${state.agent}) already completed and its result was already delivered to this conversation.`,
+		`${state.alias} #${state.agentId} (${state.agent}) already completed and its result was already handled for this conversation.`,
 		"Use the existing completion notification or blocking result in context; call with verbose=true only for transcript debugging.",
 	].join("\n");
 }

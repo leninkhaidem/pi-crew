@@ -30,7 +30,7 @@ export function createCompletionDispatcher(pi: ExtensionAPI): CompletionDispatch
 			batch.length === 1 ? formatCompletionMessage(batch[0] as SubagentState) : formatBatchedMessage(batch);
 		pi.sendMessage(
 			{ customType: "pi-crew", display: true, content, details: { states: batch } },
-			{ deliverAs: "followUp", triggerTurn: true },
+			{ deliverAs: "steer", triggerTurn: true },
 		);
 		for (const state of batch) delivered.add(state.agentId);
 	};

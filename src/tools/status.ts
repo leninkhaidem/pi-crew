@@ -41,6 +41,8 @@ export function registerStatusTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 		label: "Subagent status",
 		description: [
 			"Peek at current sub-agents without completed-agent noise.",
+			"Do not use for routine polling or wait loops after background dispatch/detach; completion notifications are injected automatically.",
+			"Use for explicit progress checks, stale-job triage, kill/resume/steer decisions, or debugging.",
 			"Default args {} return all current active agents (starting/running), uncapped.",
 			"Args: { agentId } for exact lookup, or { scope?: 'active'|'stopped', limit? }.",
 			"scope:'stopped' returns recent problematic stopped agents only (failed/orphaned/aborted/detached), capped to 5 by default and 10 at most.",

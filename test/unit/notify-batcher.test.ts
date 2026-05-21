@@ -44,7 +44,7 @@ describe("createCompletionDispatcher", () => {
 	beforeEach(() => vi.useFakeTimers());
 	afterEach(() => vi.useRealTimers());
 
-	it("sends successful completion summaries as follow-up messages", () => {
+	it("sends successful completion summaries as steering messages", () => {
 		const sendMessage = vi.fn();
 		const dispatcher = createCompletionDispatcher({ sendMessage } as never);
 
@@ -53,7 +53,7 @@ describe("createCompletionDispatcher", () => {
 		vi.runAllTimers();
 
 		expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ customType: "pi-crew", display: true }), {
-			deliverAs: "followUp",
+			deliverAs: "steer",
 			triggerTurn: true,
 		});
 		expect(dispatcher.wasHandled("abc12345")).toBe(true);
@@ -93,7 +93,7 @@ describe("createCompletionDispatcher", () => {
 		vi.runAllTimers();
 
 		expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ customType: "pi-crew", display: true }), {
-			deliverAs: "followUp",
+			deliverAs: "steer",
 			triggerTurn: true,
 		});
 	});
