@@ -1,0 +1,28 @@
+{
+  "feature": "pi-crew-tui-improvements",
+  "title": "pi-crew TUI Improvements",
+  "status": "reviewed",
+  "spec_path": ".tasks/pi-crew-tui-improvements/SPEC.md",
+  "authoritative_slices": [
+    ".planning/pi-crew-tui-improvements/slices/current-state-and-constraints.md",
+    ".planning/pi-crew-tui-improvements/slices/live-details-access.md"
+  ],
+  "work_packages": [
+    {
+      "id": "WP1",
+      "path": ".tasks/pi-crew-tui-improvements/packages/WP1.md",
+      "proof_path": ".tasks/pi-crew-tui-improvements/proofs/WP1.proof.md",
+      "report_path": ".tasks/pi-crew-tui-improvements/reports/WP1.package-verification.md",
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "id": "WP2",
+      "path": ".tasks/pi-crew-tui-improvements/packages/WP2.md",
+      "proof_path": ".tasks/pi-crew-tui-improvements/proofs/WP2.proof.md",
+      "report_path": ".tasks/pi-crew-tui-improvements/reports/WP2.package-verification.md",
+      "status": "pending",
+      "depends_on": ["WP1"]
+    }
+  ]
+}
