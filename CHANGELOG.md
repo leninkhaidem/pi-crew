@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.6.2 — 2026-06-28
+
+### Added
+
+- **Live sub-agent overlay.** `/subagents` now opens a floating, session-wide view of active sub-agents, while `/tasks` remains a compatible alias for the same interface.
+- **Responsive detail views.** Wide terminals now show a split list/details layout, and narrow terminals use a readable drill-in details flow with sanitized recent transcript content.
+
+### Changed
+
+- **Explicit sub-agent access.** The footer now advertises `/subagents` instead of relying on an ambient Down-arrow shortcut, keeping details access discoverable without stealing editor navigation.
+- **Safer selected-agent controls.** The in-overlay `d kill` action confirms and targets only the selected active sub-agent.
+
+### Fixed
+
+- **Escape and interrupt safety.** Single Escape now warns before aborting active sub-agents, overlay Escape no longer arms ambient aborts, stale state is revalidated before destructive aborts, and Ctrl+C preserves current-batch or session-wide abort scope correctly.
+
 ## v0.6.1 — 2026-05-21
 
 ### Fixed
