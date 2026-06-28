@@ -351,6 +351,73 @@ describe("mountInterruptHandler", () => {
 		expect(abortStates).not.toHaveBeenCalled();
 	});
 
+	it("does not abort stale fallback agents after a warning when a fresh load succeeds with no active targets", async () => {
+		const cases: Array<{
+			name: string;
+			batchId: string;
+			staleState: SubagentState;
+			freshStates: SubagentState[];
+			expectedWarning: string;
+		}> = [
+			{
+				name: "current-batch empty fresh state",
+				batchId: "batch-new",
+				staleState: stateOf({ agentId: "stale-current-empty", batchId: "batch-new" }),
+				freshStates: [],
+				expectedWarning: "Press Escape again within 3s to abort 1 active sub-agent in current batch.",
+			},
+			{
+				name: "all-session empty fresh state",
+				batchId: "batch-new",
+				staleState: stateOf({ agentId: "stale-old-empty", batchId: "batch-old" }),
+				freshStates: [],
+				expectedWarning: "Press Escape again within 3s to abort 1 active sub-agent in this session.",
+			},
+			{
+				name: "current-batch terminal-only fresh state",
+				batchId: "batch-new",
+				staleState: stateOf({ agentId: "stale-current-terminal", batchId: "batch-new" }),
+				freshStates: [stateOf({ agentId: "fresh-done", status: "done", finishedAt: 2, exitCode: 0 })],
+				expectedWarning: "Press Escape again within 3s to abort 1 active sub-agent in current batch.",
+			},
+		];
+
+		for (const testCase of cases) {
+			let handler: TerminalHandler | undefined;
+			let now = 1000;
+			const notify = vi.fn();
+			const abortStates = vi.fn();
+			const loadStates = vi.fn(async () => testCase.freshStates);
+			const controller = mountInterruptHandler({
+				ctx: {
+					ui: {
+						notify,
+						onTerminalInput: (registered: TerminalHandler) => {
+							handler = registered;
+							return vi.fn();
+						},
+					},
+				} as never,
+				getBatchId: () => testCase.batchId,
+				now: () => now,
+				loadStates,
+				abortStates,
+			});
+			controller.update([testCase.staleState]);
+
+			expect(handler?.("\x1b")).toEqual({ consume: true });
+			expect(notify).toHaveBeenCalledWith(testCase.expectedWarning, "warning");
+			now += 200;
+			expect(handler?.("\x1b")).toEqual({ consume: true });
+			await Promise.resolve();
+			await Promise.resolve();
+
+			expect(loadStates).toHaveBeenCalledOnce();
+			expect(abortStates, testCase.name).not.toHaveBeenCalled();
+			controller.stop();
+		}
+	});
+
 	it("consumes the first empty-watcher Escape while confirming no active agents, then lets later Escapes pass through", async () => {
 		for (const setupTerminalState of [false, true]) {
 			const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-interrupt-empty-"));

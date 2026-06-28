@@ -130,8 +130,7 @@ async function abortFresh(
 ): Promise<void> {
 	let states: SubagentState[];
 	try {
-		const loaded = args.loadStates ? await args.loadStates() : fallbackStates;
-		states = loaded.length > 0 ? loaded : fallbackStates;
+		states = args.loadStates ? await args.loadStates() : fallbackStates;
 	} catch {
 		states = fallbackStates;
 	}
