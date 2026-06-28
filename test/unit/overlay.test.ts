@@ -239,6 +239,20 @@ describe("sub-agent overlay access", () => {
 		}
 	});
 
+	it("hides kill affordance and ignores d when no kill callback is available", () => {
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => undefined,
+			requestRender: () => undefined,
+		});
+		panel.setStates([stateOf({ agentId: "first", alias: "first", startedAt: 1 })]);
+
+		const rendered = panel.render(110).join("\n");
+		expect(rendered).not.toContain("d kill");
+		expect(panel.handleInput("d")).toBe(true);
+		expect(panel.render(110).join("\n")).not.toContain("Kill first");
+	});
+
 	it("keeps d kill confirmation and selected-agent-only abort behavior in the panel", () => {
 		const killed: string[] = [];
 		const panel = new SubagentsPanel({
@@ -260,10 +274,145 @@ describe("sub-agent overlay access", () => {
 		expect(panel.handleInput("y")).toBe(true);
 		expect(killed).toEqual(["second"]);
 	});
+
+	it("clears pending kill safely if the selected agent exits before confirmation", () => {
+		const killed: string[] = [];
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => undefined,
+			requestRender: () => undefined,
+			onKill: (state) => {
+				killed.push(state.agentId);
+			},
+		});
+		const first = stateOf({ agentId: "first", alias: "first", startedAt: 1 });
+		const second = stateOf({ agentId: "second", alias: "second", startedAt: 2 });
+		panel.setStates([first, second]);
+
+		expect(panel.handleInput("\x1b[B")).toBe(true);
+		expect(panel.handleInput("d")).toBe(true);
+		expect(panel.render(110).join("\n")).toContain("Kill second");
+		panel.setStates([first, { ...second, status: "done", finishedAt: 3, exitCode: 0 }]);
+		expect(panel.render(110).join("\n")).not.toContain("Kill second");
+		expect(panel.render(110).join("\n")).toContain("▸ ⏳ first");
+		expect(panel.handleInput("y")).toBe(true);
+		expect(killed).toEqual([]);
+	});
 });
 
 describe("renderSubagentsPanel", () => {
-	it("renders a bordered transcript-focused detail view", () => {
+	it("renders a width-safe wide split layout with an agent list and selected details pane", () => {
+		const lines = renderSubagentsPanel({
+			states: [
+				stateOf({ agentId: "abc12345", alias: "auth-search", task: "inspect auth flows" }),
+				stateOf({ agentId: "def67890", alias: "api-search", task: "inspect API flows", startedAt: 2 }),
+			],
+			selectedIdx: 0,
+			transcript: { kind: "events", events: ["assistant: auth transcript"] },
+			width: 110,
+			currentBatchId: "batch-new",
+			theme: theme as never,
+		});
+		const rendered = lines.join("\n");
+
+		expect(rendered).toContain("├ agents");
+		expect(rendered).toContain("┬ details");
+		expect(rendered).toContain("▸ ⏳ auth-search");
+		expect(rendered).toContain("api-search");
+		expect(rendered).toContain("status  running");
+		expect(rendered).toContain("alias   auth-search");
+		expect(rendered).toContain("─ task");
+		expect(rendered).toContain("inspect auth flows");
+		expect(rendered).toContain("─ recent transcript");
+		expect(rendered).toContain("assistant: auth transcript");
+		expect(rendered).toContain("enter/→ expand");
+		expect(rendered).toContain("d kill");
+		expect(rendered).not.toContain("r refresh");
+		expect(rendered).not.toContain("shortcut");
+		expect(lines.every((line) => visibleWidth(line) <= 110)).toBe(true);
+	});
+
+	it("renders a readable narrow single-column list instead of forcing split layout", () => {
+		const lines = renderSubagentsPanel({
+			states: [stateOf({ agentId: "abc12345", alias: "auth-search" })],
+			selectedIdx: 0,
+			width: 70,
+			theme: theme as never,
+		});
+		const rendered = lines.join("\n");
+
+		expect(rendered).toContain("├ agents");
+		expect(rendered).toContain("enter/→ details");
+		expect(rendered).toContain("▸ ⏳ auth-search");
+		expect(rendered).not.toContain("┬ details");
+		expect(rendered).not.toContain("status running");
+		expect(lines.every((line) => visibleWidth(line) <= 70)).toBe(true);
+	});
+
+	it("auto-updates the wide detail pane when selection changes without requiring Enter", async () => {
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => undefined,
+			requestRender: () => undefined,
+			onKill: () => undefined,
+			loadTranscript: async (state) => ({ kind: "events", events: [`assistant: ${state.alias} transcript`] }),
+		});
+		panel.setStates([
+			stateOf({ agentId: "abc12345", alias: "auth-search", task: "auth task", startedAt: 1 }),
+			stateOf({ agentId: "def67890", alias: "api-search", task: "api task", startedAt: 2 }),
+		]);
+		await Promise.resolve();
+
+		const initial = panel.render(110).join("\n");
+		expect(initial).toContain("├ agents");
+		expect(initial).toContain("┬ details");
+		expect(initial).toContain("alias   auth-search");
+		expect(initial).toContain("assistant: auth-search transcript");
+
+		expect(panel.handleInput("\x1b[B")).toBe(true);
+		await Promise.resolve();
+		const selected = panel.render(110).join("\n");
+		expect(selected).toContain("▸ ⏳ api-search");
+		expect(selected).toContain("alias   api-search");
+		expect(selected).toContain("api task");
+		expect(selected).toContain("assistant: api-search transcript");
+		expect(selected).toContain("enter/→ expand");
+	});
+
+	it("expands to full-width details, backs out with Left/Escape, and does not use Ctrl+C as close", async () => {
+		let closed = false;
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => {
+				closed = true;
+			},
+			requestRender: () => undefined,
+			onKill: () => undefined,
+			loadTranscript: async (state) => ({ kind: "events", events: [`assistant: ${state.alias} transcript`] }),
+		});
+		panel.setStates([stateOf({ agentId: "abc12345", alias: "auth-search", task: "auth task" })]);
+		await Promise.resolve();
+
+		expect(panel.handleInput("\r")).toBe(true);
+		await Promise.resolve();
+		const detail = panel.render(110).join("\n");
+		expect(detail).toContain("├ details");
+		expect(detail).not.toContain("┬ details");
+		expect(detail).toContain("←/esc back");
+		expect(detail).toContain("assistant: auth-search transcript");
+
+		expect(panel.handleInput("\x03")).toBe(false);
+		expect(closed).toBe(false);
+		expect(panel.render(110).join("\n")).toContain("←/esc back");
+
+		expect(panel.handleInput("\x1b[D")).toBe(true);
+		expect(panel.render(110).join("\n")).toContain("┬ details");
+		expect(closed).toBe(false);
+		expect(panel.handleInput("\x1b")).toBe(true);
+		expect(closed).toBe(true);
+	});
+
+	it("renders a bordered full-width detail view preserving detail substance", () => {
 		const lines = renderSubagentsPanel({
 			states: [
 				stateOf({
@@ -284,7 +433,7 @@ describe("renderSubagentsPanel", () => {
 		expect(lines[0]).toContain("╭");
 		expect(lines.at(-1)).toContain("╰");
 		expect(rendered).toContain("pi-crew sub-agents");
-		expect(rendered).toContain("←/esc list");
+		expect(rendered).toContain("←/esc back");
 		expect(rendered).toContain("d kill");
 		expect(rendered).not.toContain("esc esc kills batch");
 		expect(rendered).toContain("auth-search #abc12345");
