@@ -42,17 +42,15 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 		lastEscapeWarning = { at: now(), scope: targets.scope };
 		args.ctx.ui.notify?.(escapeWarningMessage(targets), "warning");
 	};
-	const refreshAndWarnForStaleEscape = () => {
+	const refreshLatestStates = () => {
 		if (!args.loadStates || pendingEscapeRefresh) return;
 		pendingEscapeRefresh = (async () => {
 			try {
 				const states = await args.loadStates?.();
 				if (!states || stopped) return;
 				latestStates = states;
-				const targets = escapeTargets(states, args.getBatchId());
-				if (targets) warnForTargets(targets);
 			} catch {
-				// The key was already consumed to keep Escape non-destructive while state is stale.
+				// Best-effort refresh only; when no active targets are known, Escape must pass through.
 			}
 		})().finally(() => {
 			pendingEscapeRefresh = null;
@@ -73,7 +71,10 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 			return { consume: true };
 		}
 		if (matchesKey(data, Key.escape)) {
-			if (isSubagentsOverlayActive()) return undefined;
+			if (isSubagentsOverlayActive()) {
+				lastEscapeWarning = null;
+				return undefined;
+			}
 			const at = now();
 			const previousWarning = lastEscapeWarning;
 			const isDoubleEscape = previousWarning !== null && at - previousWarning.at <= doubleEscapeMs;
@@ -87,9 +88,8 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 				warnForTargets(targets);
 				return { consume: true };
 			}
-			if (!args.loadStates) return undefined;
-			refreshAndWarnForStaleEscape();
-			return { consume: true };
+			refreshLatestStates();
+			return undefined;
 		}
 		return undefined;
 	});

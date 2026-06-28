@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { writeState } from "../../src/state/store.js";
+import { listStates, writeState } from "../../src/state/store.js";
 import type { SubagentState } from "../../src/types.js";
 import { openSubagentsOverlay } from "../../src/ui/overlay.js";
 import { mountInterruptHandler } from "../../src/ui/interrupt.js";
@@ -92,7 +92,7 @@ describe("mountInterruptHandler", () => {
 		expect(abortStates).toHaveBeenCalledWith([current], "killed by double Escape");
 	});
 
-	it("loads fresh states for first Escape when watcher state is empty and warns before aborting", async () => {
+	it("refreshes an empty watcher snapshot without consuming Escape; the next Escape warns if active states appear", async () => {
 		let handler: TerminalHandler | undefined;
 		let now = 1000;
 		const notify = vi.fn();
@@ -116,17 +116,21 @@ describe("mountInterruptHandler", () => {
 			abortStates,
 		});
 
-		expect(handler?.("\x1b")).toEqual({ consume: true });
+		expect(handler?.("\x1b")).toBeUndefined();
 		expect(loadStates).toHaveBeenCalledOnce();
 		expect(abortStates).not.toHaveBeenCalled();
 		await Promise.resolve();
 		await Promise.resolve();
+		expect(notify).not.toHaveBeenCalled();
 
+		now += 200;
+		expect(handler?.("\x1b")).toEqual({ consume: true });
 		expect(notify).toHaveBeenCalledWith(
 			"Press Escape again within 3s to abort 1 active sub-agent in current batch.",
 			"warning",
 		);
 		expect(abortStates).not.toHaveBeenCalled();
+
 		now += 200;
 		expect(handler?.("\x1b")).toEqual({ consume: true });
 		await Promise.resolve();
@@ -136,7 +140,7 @@ describe("mountInterruptHandler", () => {
 		expect(abortStates).toHaveBeenCalledWith([current], "killed by double Escape");
 	});
 
-	it("uses all-session fresh fallback for first Escape when empty watcher has no current-batch targets", async () => {
+	it("uses all-session warning scope after a non-consuming empty-watcher refresh finds only older active agents", async () => {
 		let handler: TerminalHandler | undefined;
 		let now = 1000;
 		const notify = vi.fn();
@@ -159,12 +163,15 @@ describe("mountInterruptHandler", () => {
 			abortStates,
 		});
 
-		expect(handler?.("\x1b")).toEqual({ consume: true });
+		expect(handler?.("\x1b")).toBeUndefined();
 		expect(loadStates).toHaveBeenCalledOnce();
 		expect(abortStates).not.toHaveBeenCalled();
 		await Promise.resolve();
 		await Promise.resolve();
+		expect(notify).not.toHaveBeenCalled();
 
+		now += 200;
+		expect(handler?.("\x1b")).toEqual({ consume: true });
 		expect(notify).toHaveBeenCalledWith(
 			"Press Escape again within 3s to abort 1 active sub-agent in this session.",
 			"warning",
@@ -351,6 +358,49 @@ describe("mountInterruptHandler", () => {
 		expect(abortStates).not.toHaveBeenCalled();
 	});
 
+	it("lets ambient Escape pass through when production state reload finds only empty or terminal states", async () => {
+		for (const setupTerminalState of [false, true]) {
+			const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-interrupt-empty-"));
+			try {
+				if (setupTerminalState) {
+					await writeSessionState(
+						tmp,
+						stateOf({ agentId: "done", status: "done", finishedAt: 2, exitCode: 0 }),
+					);
+				}
+				let handler: TerminalHandler | undefined;
+				const notify = vi.fn();
+				const abortStates = vi.fn();
+				const sessionDir = path.join(tmp, "subagents", "sess");
+				const loadStates = vi.fn(() => listStates(sessionDir, { includeDetached: true }));
+				mountInterruptHandler({
+					ctx: {
+						ui: {
+							notify,
+							onTerminalInput: (registered: TerminalHandler) => {
+								handler = registered;
+								return vi.fn();
+							},
+						},
+					} as never,
+					getBatchId: () => "batch-new",
+					loadStates,
+					abortStates,
+				});
+
+				expect(handler?.("\x1b")).toBeUndefined();
+				expect(loadStates).toHaveBeenCalledOnce();
+				await Promise.resolve();
+				await Promise.resolve();
+
+				expect(notify).not.toHaveBeenCalled();
+				expect(abortStates).not.toHaveBeenCalled();
+			} finally {
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		}
+	});
+
 	it("ignores interrupt keys when no sub-agents are active", () => {
 		let handler: TerminalHandler | undefined;
 		const abortStates = vi.fn();
@@ -420,6 +470,60 @@ describe("mountInterruptHandler", () => {
 			"Sub-agents backgrounded — results will arrive via notification.",
 			"info",
 		);
+	});
+
+	it("clears an ambient Escape warning when Escape closes the subagents overlay", async () => {
+		const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-interrupt-overlay-warning-"));
+		try {
+			const running = stateOf({ agentId: "current", alias: "current", batchId: "batch-new" });
+			await writeSessionState(tmp, running);
+			let handler: TerminalHandler | undefined;
+			let now = 1000;
+			const notify = vi.fn();
+			const abortStates = vi.fn();
+			const controller = mountInterruptHandler({
+				ctx: {
+					ui: {
+						notify,
+						onTerminalInput: (registered: TerminalHandler) => {
+							handler = registered;
+							return vi.fn();
+						},
+					},
+				} as never,
+				getBatchId: () => "batch-new",
+				now: () => now,
+				abortStates,
+			});
+			controller.update([running]);
+
+			expect(handler?.("\x1b")).toEqual({ consume: true });
+			expect(notify).toHaveBeenCalledWith(
+				"Press Escape again within 3s to abort 1 active sub-agent in current batch.",
+				"warning",
+			);
+
+			const mounted = createCustomHarness();
+			const opening = openSubagentsOverlay(mounted.ctx, tmp, "sess", "batch-new", vi.fn());
+			await mounted.ready;
+
+			now += 100;
+			expect(handler?.("\x1b")).toBeUndefined();
+			expect(mounted.component?.handleInput("\x1b")).toBe(true);
+			await opening;
+
+			now += 100;
+			expect(handler?.("\x1b")).toEqual({ consume: true });
+			expect(notify).toHaveBeenCalledTimes(2);
+			expect(abortStates).not.toHaveBeenCalled();
+
+			now += 100;
+			expect(handler?.("\x1b")).toEqual({ consume: true });
+			await Promise.resolve();
+			expect(abortStates).toHaveBeenCalledWith([running], "killed by double Escape");
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
 	});
 
 	it("lets overlay Escape close before ambient interrupt handling and does not arm double-Escape state", async () => {
