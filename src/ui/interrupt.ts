@@ -38,19 +38,29 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 	const doubleEscapeMs = args.doubleEscapeMs ?? 3000;
 	const now = args.now ?? (() => Date.now());
 	let pendingEscapeRefresh: Promise<void> | null = null;
+	let noActiveRefreshConfirmed = false;
 	const warnForTargets = (targets: EscapeTargets) => {
 		lastEscapeWarning = { at: now(), scope: targets.scope };
 		args.ctx.ui.notify?.(escapeWarningMessage(targets), "warning");
 	};
-	const refreshLatestStates = () => {
+	const refreshEmptySnapshot = () => {
 		if (!args.loadStates || pendingEscapeRefresh) return;
+		noActiveRefreshConfirmed = false;
 		pendingEscapeRefresh = (async () => {
 			try {
 				const states = await args.loadStates?.();
 				if (!states || stopped) return;
 				latestStates = states;
+				const targets = escapeTargets(states, args.getBatchId());
+				if (targets) {
+					warnForTargets(targets);
+					return;
+				}
+				lastEscapeWarning = null;
+				noActiveRefreshConfirmed = true;
 			} catch {
-				// Best-effort refresh only; when no active targets are known, Escape must pass through.
+				// Failed refresh is not a confirmed no-active snapshot; keep retrying/consuming later Escapes.
+				noActiveRefreshConfirmed = false;
 			}
 		})().finally(() => {
 			pendingEscapeRefresh = null;
@@ -85,10 +95,16 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 			}
 			const targets = escapeTargets(latestStates, args.getBatchId());
 			if (targets) {
+				noActiveRefreshConfirmed = false;
 				warnForTargets(targets);
 				return { consume: true };
 			}
-			refreshLatestStates();
+			if (args.loadStates) {
+				if (pendingEscapeRefresh) return { consume: true };
+				if (noActiveRefreshConfirmed) return undefined;
+				refreshEmptySnapshot();
+				return { consume: true };
+			}
 			return undefined;
 		}
 		return undefined;
@@ -97,6 +113,7 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 	return {
 		update(states) {
 			latestStates = states;
+			if (activeStates(states).length > 0) noActiveRefreshConfirmed = false;
 		},
 		stop() {
 			stopped = true;

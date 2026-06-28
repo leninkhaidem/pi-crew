@@ -92,7 +92,7 @@ describe("mountInterruptHandler", () => {
 		expect(abortStates).toHaveBeenCalledWith([current], "killed by double Escape");
 	});
 
-	it("refreshes an empty watcher snapshot without consuming Escape; the next Escape warns if active states appear", async () => {
+	it("consumes an empty-watcher Escape, warns asynchronously when refresh finds current-batch active agents, then aborts on the next Escape", async () => {
 		let handler: TerminalHandler | undefined;
 		let now = 1000;
 		const notify = vi.fn();
@@ -116,20 +116,15 @@ describe("mountInterruptHandler", () => {
 			abortStates,
 		});
 
-		expect(handler?.("\x1b")).toBeUndefined();
+		expect(handler?.("\x1b")).toEqual({ consume: true });
 		expect(loadStates).toHaveBeenCalledOnce();
 		expect(abortStates).not.toHaveBeenCalled();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(notify).not.toHaveBeenCalled();
-
-		now += 200;
-		expect(handler?.("\x1b")).toEqual({ consume: true });
 		expect(notify).toHaveBeenCalledWith(
 			"Press Escape again within 3s to abort 1 active sub-agent in current batch.",
 			"warning",
 		);
-		expect(abortStates).not.toHaveBeenCalled();
 
 		now += 200;
 		expect(handler?.("\x1b")).toEqual({ consume: true });
@@ -140,7 +135,7 @@ describe("mountInterruptHandler", () => {
 		expect(abortStates).toHaveBeenCalledWith([current], "killed by double Escape");
 	});
 
-	it("uses all-session warning scope after a non-consuming empty-watcher refresh finds only older active agents", async () => {
+	it("consumes an empty-watcher Escape, warns asynchronously with all-session scope when refresh finds only older active agents, then aborts on the next Escape", async () => {
 		let handler: TerminalHandler | undefined;
 		let now = 1000;
 		const notify = vi.fn();
@@ -163,24 +158,22 @@ describe("mountInterruptHandler", () => {
 			abortStates,
 		});
 
-		expect(handler?.("\x1b")).toBeUndefined();
+		expect(handler?.("\x1b")).toEqual({ consume: true });
 		expect(loadStates).toHaveBeenCalledOnce();
 		expect(abortStates).not.toHaveBeenCalled();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(notify).not.toHaveBeenCalled();
-
-		now += 200;
-		expect(handler?.("\x1b")).toEqual({ consume: true });
 		expect(notify).toHaveBeenCalledWith(
 			"Press Escape again within 3s to abort 1 active sub-agent in this session.",
 			"warning",
 		);
+
 		now += 200;
 		expect(handler?.("\x1b")).toEqual({ consume: true });
 		await Promise.resolve();
 		await Promise.resolve();
 
+		expect(loadStates).toHaveBeenCalledTimes(2);
 		expect(abortStates).toHaveBeenCalledWith([old], "killed by double Escape");
 	});
 
@@ -358,7 +351,7 @@ describe("mountInterruptHandler", () => {
 		expect(abortStates).not.toHaveBeenCalled();
 	});
 
-	it("lets ambient Escape pass through when production state reload finds only empty or terminal states", async () => {
+	it("consumes the first empty-watcher Escape while confirming no active agents, then lets later Escapes pass through", async () => {
 		for (const setupTerminalState of [false, true]) {
 			const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-interrupt-empty-"));
 			try {
@@ -388,17 +381,63 @@ describe("mountInterruptHandler", () => {
 					abortStates,
 				});
 
-				expect(handler?.("\x1b")).toBeUndefined();
+				expect(handler?.("\x1b")).toEqual({ consume: true });
 				expect(loadStates).toHaveBeenCalledOnce();
+				await loadStates.mock.results[0]?.value;
 				await Promise.resolve();
 				await Promise.resolve();
 
+				expect(notify).not.toHaveBeenCalled();
+				expect(abortStates).not.toHaveBeenCalled();
+				expect(handler?.("\x1b")).toBeUndefined();
+				expect(loadStates).toHaveBeenCalledOnce();
 				expect(notify).not.toHaveBeenCalled();
 				expect(abortStates).not.toHaveBeenCalled();
 			} finally {
 				rmSync(tmp, { recursive: true, force: true });
 			}
 		}
+	});
+
+	it("does not confirm no-active when the empty-watcher refresh fails and retries on later Escapes", async () => {
+		let handler: TerminalHandler | undefined;
+		let calls = 0;
+		const notify = vi.fn();
+		const abortStates = vi.fn();
+		const loadStates = vi.fn(async () => {
+			calls += 1;
+			if (calls === 1) throw new Error("state load failed");
+			return [];
+		});
+		mountInterruptHandler({
+			ctx: {
+				ui: {
+					notify,
+					onTerminalInput: (registered: TerminalHandler) => {
+						handler = registered;
+						return vi.fn();
+					},
+				},
+			} as never,
+			getBatchId: () => "batch-new",
+			loadStates,
+			abortStates,
+		});
+
+		expect(handler?.("\x1b")).toEqual({ consume: true });
+		expect(loadStates).toHaveBeenCalledOnce();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(handler?.("\x1b")).toEqual({ consume: true });
+		expect(loadStates).toHaveBeenCalledTimes(2);
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(handler?.("\x1b")).toBeUndefined();
+		expect(loadStates).toHaveBeenCalledTimes(2);
+		expect(notify).not.toHaveBeenCalled();
+		expect(abortStates).not.toHaveBeenCalled();
 	});
 
 	it("ignores interrupt keys when no sub-agents are active", () => {
