@@ -13,7 +13,7 @@ Sub-agent extension for the [pi coding assistant](https://github.com/badlogic/pi
 - **Per-slot thinking budget.** Reasoning effort (`off|minimal|low|medium|high|xhigh`) is configurable for `explore`; `general-purpose` inherits the parent model and thinking effort by default.
 - **Two bundled defaults.** `general-purpose` and `explore`. Override by creating same-named `.md` in `~/.pi/agent/agents/`.
 - **Tmux integration.** Optional live view of sub-agents in tmux windows or a separate session.
-- **Deliberate cancellation.** `Ctrl+C` aborts active current-batch sub-agents immediately; double `Esc` within 3 seconds aborts them after a warning.
+- **Deliberate cancellation.** `Ctrl+C` keeps its current-batch interrupt behavior; double `Esc` within 3 seconds aborts warned active sub-agents after a non-destructive first press.
 
 ## Install
 
@@ -44,7 +44,8 @@ After install:
 | `/subagent-config` | TUI to set provider, model, and thinking level for `explore`. |
 | `/subagent-install-defaults` | Copy bundled `.md` agents to `~/.pi/agent/agents/`. |
 | `/subagent-agents` | Create, view, edit, eject, or delete simple `.md` agent definitions. |
-| `/tasks` | Open an interactive below-input panel for the current batch. Press `Enter` to show selected run details in the same panel; press `d` to kill with confirmation. |
+| `/subagents` | Open the floating live sub-agent overlay for all active sub-agents in the current session. Current-batch agents are shown first; older or unbatched active agents remain visible. Wide terminals show an agent list with selected details; press `Enter` to expand long task/transcript details. Narrow terminals use list-to-detail drill-in. Press `Esc` to close/back out; press `d` to kill the selected agent with confirmation. |
+| `/tasks` | Compatibility alias for `/subagents` with the same overlay, session-wide active scope, and kill behavior. |
 
 ## Hook events on `pi.events`
 

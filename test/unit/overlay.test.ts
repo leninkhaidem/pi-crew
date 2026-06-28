@@ -2,11 +2,32 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { visibleWidth } from "@mariozechner/pi-tui";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { registerTreeCommand } from "../../src/commands/tree.js";
 import { readState, writeState } from "../../src/state/store.js";
 import type { SubagentState } from "../../src/types.js";
-import { filterCurrentBatchActiveStates, killSelected, renderSubagentsPanel } from "../../src/ui/overlay.js";
+import {
+	NO_ACTIVE_SUBAGENTS_MESSAGE,
+	filterCurrentBatchActiveStates,
+	filterSessionActiveStates,
+	isSubagentsOverlayActive,
+	killSelected,
+	openSubagentsOverlay,
+	renderSubagentsPanel,
+} from "../../src/ui/overlay.js";
 import { SubagentsPanel } from "../../src/ui/subagents-panel.js";
+
+const watcherChanges = vi.hoisted(() => [] as Array<(states: SubagentState[]) => void>);
+const watcherStops = vi.hoisted(() => [] as Array<ReturnType<typeof vi.fn>>);
+
+vi.mock("../../src/ui/state-watcher.js", () => ({
+	mountStateWatcher: vi.fn((args: { onChange: (states: SubagentState[]) => void }) => {
+		watcherChanges.push(args.onChange);
+		const stop = vi.fn();
+		watcherStops.push(stop);
+		return { stop };
+	}),
+}));
 
 const theme = {
 	bold: (s: string) => s,
@@ -18,6 +39,7 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 	agentId: "abc12345",
 	parentAgentId: null,
 	sessionId: "sess",
+	batchId: "batch-new",
 	agent: "explore",
 	alias: "auth-search",
 	agentSource: "bundled",
@@ -51,19 +73,141 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 	...overrides,
 });
 
-describe("renderSubagentsPanel", () => {
-	it("filters states to active agents in the current batch", () => {
-		const running = stateOf({ agentId: "current1", batchId: "batch-new", status: "running" });
-		const starting = stateOf({ agentId: "current2", batchId: "batch-new", status: "starting" });
-		const done = stateOf({ agentId: "done1", batchId: "batch-new", status: "done", finishedAt: 2 });
-		const historical = stateOf({ agentId: "old1", batchId: "batch-old" });
-		const unbatched = stateOf({ agentId: "legacy", batchId: null });
+describe("sub-agent overlay access", () => {
+	beforeEach(() => {
+		watcherChanges.length = 0;
+		watcherStops.length = 0;
+	});
 
-		expect(filterCurrentBatchActiveStates([historical, running, done, starting, unbatched], "batch-new")).toEqual([
-			running,
-			starting,
+	it("registers /subagents and /tasks as the same command handler", () => {
+		const commands = new Map<string, { description: string; handler: unknown }>();
+		registerTreeCommand(
+			{ registerCommand: (name: string, command: { description: string; handler: unknown }) => commands.set(name, command) } as never,
+			{} as never,
+		);
+
+		expect(commands.get("subagents")?.description).toContain("overlay");
+		expect(commands.get("tasks")?.description).toBe("Alias for /subagents.");
+		expect(commands.get("tasks")?.handler).toBe(commands.get("subagents")?.handler);
+	});
+
+	it("shows the exact info notification and does not mount an overlay when no active agents exist", async () => {
+		const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-overlay-empty-"));
+		try {
+			const custom = vi.fn();
+			const notify = vi.fn();
+			await openSubagentsOverlay(
+				{ ui: { custom, notify } } as never,
+				tmp,
+				"sess",
+				"batch-new",
+				vi.fn(),
+			);
+
+			expect(notify).toHaveBeenCalledWith(NO_ACTIVE_SUBAGENTS_MESSAGE, "info");
+			expect(custom).not.toHaveBeenCalled();
+			expect(watcherChanges).toHaveLength(0);
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("mounts ctx.ui.custom as a focused overlay instead of a below-editor widget", async () => {
+		const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-overlay-open-"));
+		try {
+			await writeSessionState(tmp, stateOf({ agentId: "current", alias: "current", batchId: "batch-new" }));
+			const mounted = createCustomHarness();
+			const opening = openSubagentsOverlay(mounted.ctx, tmp, "sess", "batch-new", vi.fn());
+			await mounted.ready;
+
+			expect(mounted.custom).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ overlay: true }));
+			expect(mounted.custom.mock.calls[0]?.[1]).not.toMatchObject({ placement: "belowEditor" });
+			expect(isSubagentsOverlayActive()).toBe(true);
+			expect(mounted.component?.render(80).join("\n")).toContain("current");
+
+			expect(mounted.component?.handleInput("\x1b")).toBe(true);
+			await opening;
+			expect(isSubagentsOverlayActive()).toBe(false);
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("uses all active current-session agents with current-batch-first ordering and scope labels", () => {
+		const currentRunning = stateOf({ agentId: "current-running", alias: "current", batchId: "batch-new", startedAt: 30 });
+		const currentStarting = stateOf({ agentId: "current-starting", alias: "starting", batchId: "batch-new", status: "starting", startedAt: 10 });
+		const older = stateOf({ agentId: "older", alias: "older", batchId: "batch-old", startedAt: 5 });
+		const unbatched = stateOf({ agentId: "unbatched", alias: "legacy", batchId: null, startedAt: 1 });
+		const done = stateOf({ agentId: "done", alias: "done", status: "done", finishedAt: 50 });
+
+		expect(filterSessionActiveStates([older, done, currentRunning, unbatched, currentStarting], "batch-new")).toEqual([
+			currentStarting,
+			currentRunning,
+			unbatched,
+			older,
 		]);
-		expect(filterCurrentBatchActiveStates([historical, running], null)).toEqual([]);
+		expect(filterCurrentBatchActiveStates([older, currentRunning, unbatched], "batch-new")).toEqual([
+			currentRunning,
+		]);
+
+		const rendered = renderSubagentsPanel({
+			states: [older, done, currentRunning, unbatched, currentStarting],
+			selectedIdx: 0,
+			width: 100,
+			currentBatchId: "batch-new",
+			theme: theme as never,
+		}).join("\n");
+		expect(rendered).toContain("current");
+		expect(rendered).toContain("starting");
+		expect(rendered).toContain("older batch");
+		expect(rendered).toContain("unbatched");
+		expect(rendered).not.toContain("done ·");
+	});
+
+	it("keeps an open overlay mounted with an in-overlay empty state after active agents finish", async () => {
+		const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-overlay-empty-after-open-"));
+		try {
+			const running = stateOf({ agentId: "current", alias: "current", batchId: "batch-new" });
+			await writeSessionState(tmp, running);
+			const mounted = createCustomHarness();
+			const opening = openSubagentsOverlay(mounted.ctx, tmp, "sess", "batch-new", vi.fn());
+			await mounted.ready;
+
+			watcherChanges[0]?.([stateOf({ ...running, status: "done", finishedAt: 2, exitCode: 0 })]);
+			const rendered = mounted.component?.render(80).join("\n") ?? "";
+			expect(rendered).toContain("0 active");
+			expect(rendered).toContain(NO_ACTIVE_SUBAGENTS_MESSAGE);
+			expect(watcherStops[0]).not.toHaveBeenCalled();
+
+			expect(mounted.component?.handleInput("\x1b")).toBe(true);
+			await opening;
+			expect(watcherStops[0]).toHaveBeenCalledOnce();
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("cleans up watcher resources on close and does not register raw input handlers on repeated opens", async () => {
+		const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-overlay-reopen-"));
+		try {
+			await writeSessionState(tmp, stateOf({ agentId: "current", alias: "current", batchId: "batch-new" }));
+			const onTerminalInput = vi.fn();
+
+			for (let i = 0; i < 2; i++) {
+				const mounted = createCustomHarness({ onTerminalInput });
+				const opening = openSubagentsOverlay(mounted.ctx, tmp, "sess", "batch-new", vi.fn());
+				await mounted.ready;
+				expect(mounted.component?.handleInput("\x1b")).toBe(true);
+				await opening;
+			}
+
+			expect(onTerminalInput).not.toHaveBeenCalled();
+			expect(watcherStops).toHaveLength(2);
+			expect(watcherStops.every((stop) => stop.mock.calls.length === 1)).toBe(true);
+			expect(isSubagentsOverlayActive()).toBe(false);
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
 	});
 
 	it("UI kill writes an aborted state with an observable reason through the shared abort path", async () => {
@@ -87,7 +231,7 @@ describe("renderSubagentsPanel", () => {
 			expect(aborted).toMatchObject({
 				status: "aborted",
 				exitCode: -1,
-				errorMessage: "killed from /tasks panel",
+				errorMessage: "killed from /subagents panel",
 			});
 			expect(aborted?.finishedAt).toEqual(expect.any(Number));
 		} finally {
@@ -95,7 +239,180 @@ describe("renderSubagentsPanel", () => {
 		}
 	});
 
-	it("renders a bordered transcript-focused detail view", () => {
+	it("hides kill affordance and ignores d when no kill callback is available", () => {
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => undefined,
+			requestRender: () => undefined,
+		});
+		panel.setStates([stateOf({ agentId: "first", alias: "first", startedAt: 1 })]);
+
+		const rendered = panel.render(110).join("\n");
+		expect(rendered).not.toContain("d kill");
+		expect(panel.handleInput("d")).toBe(true);
+		expect(panel.render(110).join("\n")).not.toContain("Kill first");
+	});
+
+	it("keeps d kill confirmation and selected-agent-only abort behavior in the panel", () => {
+		const killed: string[] = [];
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => undefined,
+			requestRender: () => undefined,
+			onKill: (state) => {
+				killed.push(state.agentId);
+			},
+		});
+		panel.setStates([
+			stateOf({ agentId: "first", alias: "first", startedAt: 1 }),
+			stateOf({ agentId: "second", alias: "second", startedAt: 2 }),
+		]);
+
+		expect(panel.handleInput("\x1b[B")).toBe(true);
+		expect(panel.handleInput("d")).toBe(true);
+		expect(panel.render(80).join("\n")).toContain("Kill second");
+		expect(panel.handleInput("y")).toBe(true);
+		expect(killed).toEqual(["second"]);
+	});
+
+	it("clears pending kill safely if the selected agent exits before confirmation", () => {
+		const killed: string[] = [];
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => undefined,
+			requestRender: () => undefined,
+			onKill: (state) => {
+				killed.push(state.agentId);
+			},
+		});
+		const first = stateOf({ agentId: "first", alias: "first", startedAt: 1 });
+		const second = stateOf({ agentId: "second", alias: "second", startedAt: 2 });
+		panel.setStates([first, second]);
+
+		expect(panel.handleInput("\x1b[B")).toBe(true);
+		expect(panel.handleInput("d")).toBe(true);
+		expect(panel.render(110).join("\n")).toContain("Kill second");
+		panel.setStates([first, { ...second, status: "done", finishedAt: 3, exitCode: 0 }]);
+		expect(panel.render(110).join("\n")).not.toContain("Kill second");
+		expect(panel.render(110).join("\n")).toContain("▸ ⏳ first");
+		expect(panel.handleInput("y")).toBe(true);
+		expect(killed).toEqual([]);
+	});
+});
+
+describe("renderSubagentsPanel", () => {
+	it("renders a width-safe wide split layout with an agent list and selected details pane", () => {
+		const lines = renderSubagentsPanel({
+			states: [
+				stateOf({ agentId: "abc12345", alias: "auth-search", task: "inspect auth flows" }),
+				stateOf({ agentId: "def67890", alias: "api-search", task: "inspect API flows", startedAt: 2 }),
+			],
+			selectedIdx: 0,
+			transcript: { kind: "events", events: ["assistant: auth transcript"] },
+			width: 110,
+			currentBatchId: "batch-new",
+			theme: theme as never,
+		});
+		const rendered = lines.join("\n");
+
+		expect(rendered).toContain("├ agents");
+		expect(rendered).toContain("┬ details");
+		expect(rendered).toContain("▸ ⏳ auth-search");
+		expect(rendered).toContain("api-search");
+		expect(rendered).toContain("status  running");
+		expect(rendered).toContain("alias   auth-search");
+		expect(rendered).toContain("─ task");
+		expect(rendered).toContain("inspect auth flows");
+		expect(rendered).toContain("─ recent transcript");
+		expect(rendered).toContain("assistant: auth transcript");
+		expect(rendered).toContain("enter/→ expand");
+		expect(rendered).toContain("d kill");
+		expect(rendered).not.toContain("r refresh");
+		expect(rendered).not.toContain("shortcut");
+		expect(lines.every((line) => visibleWidth(line) <= 110)).toBe(true);
+	});
+
+	it("renders a readable narrow single-column list instead of forcing split layout", () => {
+		const lines = renderSubagentsPanel({
+			states: [stateOf({ agentId: "abc12345", alias: "auth-search" })],
+			selectedIdx: 0,
+			width: 70,
+			theme: theme as never,
+		});
+		const rendered = lines.join("\n");
+
+		expect(rendered).toContain("├ agents");
+		expect(rendered).toContain("enter/→ details");
+		expect(rendered).toContain("▸ ⏳ auth-search");
+		expect(rendered).not.toContain("┬ details");
+		expect(rendered).not.toContain("status running");
+		expect(lines.every((line) => visibleWidth(line) <= 70)).toBe(true);
+	});
+
+	it("auto-updates the wide detail pane when selection changes without requiring Enter", async () => {
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => undefined,
+			requestRender: () => undefined,
+			onKill: () => undefined,
+			loadTranscript: async (state) => ({ kind: "events", events: [`assistant: ${state.alias} transcript`] }),
+		});
+		panel.setStates([
+			stateOf({ agentId: "abc12345", alias: "auth-search", task: "auth task", startedAt: 1 }),
+			stateOf({ agentId: "def67890", alias: "api-search", task: "api task", startedAt: 2 }),
+		]);
+		await Promise.resolve();
+
+		const initial = panel.render(110).join("\n");
+		expect(initial).toContain("├ agents");
+		expect(initial).toContain("┬ details");
+		expect(initial).toContain("alias   auth-search");
+		expect(initial).toContain("assistant: auth-search transcript");
+
+		expect(panel.handleInput("\x1b[B")).toBe(true);
+		await Promise.resolve();
+		const selected = panel.render(110).join("\n");
+		expect(selected).toContain("▸ ⏳ api-search");
+		expect(selected).toContain("alias   api-search");
+		expect(selected).toContain("api task");
+		expect(selected).toContain("assistant: api-search transcript");
+		expect(selected).toContain("enter/→ expand");
+	});
+
+	it("expands to full-width details, backs out with Left/Escape, and does not use Ctrl+C as close", async () => {
+		let closed = false;
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => {
+				closed = true;
+			},
+			requestRender: () => undefined,
+			onKill: () => undefined,
+			loadTranscript: async (state) => ({ kind: "events", events: [`assistant: ${state.alias} transcript`] }),
+		});
+		panel.setStates([stateOf({ agentId: "abc12345", alias: "auth-search", task: "auth task" })]);
+		await Promise.resolve();
+
+		expect(panel.handleInput("\r")).toBe(true);
+		await Promise.resolve();
+		const detail = panel.render(110).join("\n");
+		expect(detail).toContain("├ details");
+		expect(detail).not.toContain("┬ details");
+		expect(detail).toContain("←/esc back");
+		expect(detail).toContain("assistant: auth-search transcript");
+
+		expect(panel.handleInput("\x03")).toBe(false);
+		expect(closed).toBe(false);
+		expect(panel.render(110).join("\n")).toContain("←/esc back");
+
+		expect(panel.handleInput("\x1b[D")).toBe(true);
+		expect(panel.render(110).join("\n")).toContain("┬ details");
+		expect(closed).toBe(false);
+		expect(panel.handleInput("\x1b")).toBe(true);
+		expect(closed).toBe(true);
+	});
+
+	it("renders a bordered full-width detail view preserving detail substance", () => {
 		const lines = renderSubagentsPanel({
 			states: [
 				stateOf({
@@ -116,7 +433,7 @@ describe("renderSubagentsPanel", () => {
 		expect(lines[0]).toContain("╭");
 		expect(lines.at(-1)).toContain("╰");
 		expect(rendered).toContain("pi-crew sub-agents");
-		expect(rendered).toContain("←/esc list");
+		expect(rendered).toContain("←/esc back");
 		expect(rendered).toContain("d kill");
 		expect(rendered).not.toContain("esc esc kills batch");
 		expect(rendered).toContain("auth-search #abc12345");
@@ -146,7 +463,7 @@ describe("renderSubagentsPanel", () => {
 		});
 
 		expect(lines.join("\n")).toContain("0 active");
-		expect(lines.join("\n")).toContain("No running sub-agents in current batch.");
+		expect(lines.join("\n")).toContain(NO_ACTIVE_SUBAGENTS_MESSAGE);
 		expect(lines.join("\n")).not.toContain("done #");
 	});
 
@@ -269,3 +586,42 @@ describe("renderSubagentsPanel", () => {
 		expect(panel.render(80).join("\n")).toContain("assistant: transcript 2");
 	});
 });
+
+async function writeSessionState(agentDir: string, state: SubagentState): Promise<void> {
+	const statePath = path.join(agentDir, "subagents", state.sessionId, state.agentId, "state.json");
+	await writeState({
+		...state,
+		paths: {
+			state: statePath,
+			output: path.join(path.dirname(statePath), "output.jsonl"),
+			stderr: path.join(path.dirname(statePath), "stderr.log"),
+			prompt: path.join(path.dirname(statePath), "prompt.md"),
+		},
+	});
+}
+
+function createCustomHarness(extraUi: Record<string, unknown> = {}) {
+	let resolveReady: () => void = () => undefined;
+	const ready = new Promise<void>((resolve) => {
+		resolveReady = resolve;
+	});
+	const harness: {
+		component: SubagentsPanel | undefined;
+		custom: ReturnType<typeof vi.fn>;
+		ctx: never;
+		ready: Promise<void>;
+	} = {
+		component: undefined,
+		custom: vi.fn(),
+		ctx: undefined as never,
+		ready,
+	};
+	harness.custom = vi.fn((factory, _options) => {
+		return new Promise<void>((resolve) => {
+			harness.component = factory({ requestRender: () => undefined }, theme, {}, () => resolve());
+			resolveReady();
+		});
+	});
+	harness.ctx = { ui: { custom: harness.custom, notify: vi.fn(), ...extraUi } } as never;
+	return harness;
+}

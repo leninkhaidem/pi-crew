@@ -15,6 +15,7 @@ interface SubagentsPanelArgs {
 	requestRender: () => void;
 	onKill?: (state: SubagentState) => void | Promise<void>;
 	canKill?: boolean;
+	currentBatchId?: string | null;
 	loadTranscript?: (state: SubagentState) => Promise<TranscriptExcerpt>;
 }
 
@@ -36,16 +37,18 @@ export class SubagentsPanel implements Component {
 	constructor(private args: SubagentsPanelArgs) {}
 
 	setStates(s: SubagentState[]) {
-		this.states = sortStates(s.filter(isActiveSubagentState));
-		if (this.detailedAgentId && !this.states.some((state) => state.agentId === this.detailedAgentId)) {
-			this.detailedAgentId = null;
+		this.states = sortStates(s.filter(isActiveSubagentState), this.args.currentBatchId ?? null);
+		if (this.detailedAgentId) {
+			const detailedIdx = this.states.findIndex((state) => state.agentId === this.detailedAgentId);
+			if (detailedIdx >= 0) this.selectedIdx = detailedIdx;
+			else this.detailedAgentId = null;
 		}
 		if (this.pendingKillAgentId && !this.states.some((state) => state.agentId === this.pendingKillAgentId)) {
 			this.pendingKillAgentId = null;
 		}
 		this.selectedIdx = this.states.length === 0 ? 0 : Math.min(Math.max(0, this.selectedIdx), this.states.length - 1);
 		this.ensureSelectionVisible();
-		this.loadDetailedTranscript();
+		this.loadVisibleTranscript();
 		this.args.requestRender();
 	}
 
@@ -86,6 +89,7 @@ export class SubagentsPanel implements Component {
 			detailedAgentId: this.detailedAgentId,
 			pendingKillAgentId: this.pendingKillAgentId,
 			canKill: this.canKill(),
+			currentBatchId: this.args.currentBatchId ?? null,
 			transcript: this.currentTranscript(),
 			maxHeight,
 		});
@@ -93,6 +97,10 @@ export class SubagentsPanel implements Component {
 
 	invalidate(): void {
 		// no cached state
+	}
+
+	dispose(): void {
+		this.transcripts.clear();
 	}
 
 	private handleKillConfirmation(data: string): boolean {
@@ -120,12 +128,13 @@ export class SubagentsPanel implements Component {
 	private moveSelection(delta: number): true {
 		this.selectedIdx = Math.min(this.states.length - 1, Math.max(0, this.selectedIdx + delta));
 		this.ensureSelectionVisible();
+		this.loadVisibleTranscript();
 		this.args.requestRender();
 		return true;
 	}
 
 	private requestKillSelected(): void {
-		const state = this.states[this.selectedIdx];
+		const state = this.currentTargetState();
 		if (!this.canKill() || !state || !isActiveSubagentState(state)) return;
 		this.pendingKillAgentId = state.agentId;
 		this.args.requestRender();
@@ -146,8 +155,8 @@ export class SubagentsPanel implements Component {
 		this.args.requestRender();
 	}
 
-	private loadDetailedTranscript(force = false): void {
-		const state = this.states.find((candidate) => candidate.agentId === this.detailedAgentId);
+	private loadVisibleTranscript(force = false): void {
+		const state = this.currentTargetState();
 		if (state) this.ensureTranscriptLoaded(state, force);
 	}
 
@@ -195,10 +204,18 @@ export class SubagentsPanel implements Component {
 	}
 
 	private currentTranscript(): TranscriptExcerpt | "loading" | undefined {
-		const state = this.states.find((candidate) => candidate.agentId === this.detailedAgentId);
+		const state = this.currentTargetState();
 		if (!state) return undefined;
 		const cached = this.transcripts.get(state.agentId);
 		return cached?.status === "ready" ? cached.excerpt : "loading";
+	}
+
+	private currentTargetState(): SubagentState | undefined {
+		if (this.detailedAgentId) {
+			const detailed = this.states.find((candidate) => candidate.agentId === this.detailedAgentId);
+			if (detailed) return detailed;
+		}
+		return this.states[this.selectedIdx];
 	}
 
 	private canKill(): boolean {
@@ -224,11 +241,12 @@ function isExpectedTranscriptPath(state: SubagentState): boolean {
 	return path.basename(outputPath) === "output.jsonl" && path.dirname(outputPath) === stateDir;
 }
 
-function sortStates(states: SubagentState[]): SubagentState[] {
+function sortStates(states: SubagentState[], currentBatchId: string | null): SubagentState[] {
 	return [...states].sort((a, b) => {
-		const ra = isActiveSubagentState(a) ? 0 : 1;
-		const rb = isActiveSubagentState(b) ? 0 : 1;
-		if (ra !== rb) return ra - rb;
-		return ra === 0 ? a.startedAt - b.startedAt : (b.finishedAt ?? 0) - (a.finishedAt ?? 0);
+		const aRank = currentBatchId && a.batchId === currentBatchId ? 0 : 1;
+		const bRank = currentBatchId && b.batchId === currentBatchId ? 0 : 1;
+		if (aRank !== bRank) return aRank - bRank;
+		if (a.startedAt !== b.startedAt) return a.startedAt - b.startedAt;
+		return a.agentId.localeCompare(b.agentId);
 	});
 }
