@@ -38,14 +38,12 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 	const doubleEscapeMs = args.doubleEscapeMs ?? 3000;
 	const now = args.now ?? (() => Date.now());
 	let pendingEscapeRefresh: Promise<void> | null = null;
-	let noActiveRefreshConfirmed = false;
 	const warnForTargets = (targets: EscapeTargets) => {
 		lastEscapeWarning = { at: now(), scope: targets.scope };
 		args.ctx.ui.notify?.(escapeWarningMessage(targets), "warning");
 	};
 	const refreshEmptySnapshot = () => {
 		if (!args.loadStates || pendingEscapeRefresh) return;
-		noActiveRefreshConfirmed = false;
 		pendingEscapeRefresh = (async () => {
 			try {
 				const states = await args.loadStates?.();
@@ -57,10 +55,8 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 					return;
 				}
 				lastEscapeWarning = null;
-				noActiveRefreshConfirmed = true;
 			} catch {
-				// Failed refresh is not a confirmed no-active snapshot; keep retrying/consuming later Escapes.
-				noActiveRefreshConfirmed = false;
+				// Failed refreshes are retried/consumed on later Escapes.
 			}
 		})().finally(() => {
 			pendingEscapeRefresh = null;
@@ -97,13 +93,11 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 			}
 			const targets = escapeTargets(latestStates, args.getBatchId());
 			if (targets) {
-				noActiveRefreshConfirmed = false;
 				warnForTargets(targets);
 				return { consume: true };
 			}
 			if (args.loadStates) {
 				if (pendingEscapeRefresh) return { consume: true };
-				if (noActiveRefreshConfirmed) return undefined;
 				refreshEmptySnapshot();
 				return { consume: true };
 			}
@@ -115,7 +109,6 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 	return {
 		update(states) {
 			latestStates = states;
-			if (activeStates(states).length > 0) noActiveRefreshConfirmed = false;
 		},
 		stop() {
 			stopped = true;

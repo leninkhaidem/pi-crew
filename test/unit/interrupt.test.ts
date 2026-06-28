@@ -418,7 +418,7 @@ describe("mountInterruptHandler", () => {
 		}
 	});
 
-	it("consumes the first empty-watcher Escape while confirming no active agents, then lets later Escapes pass through", async () => {
+	it("revalidates later empty-watcher Escapes after no-active or terminal-only refreshes", async () => {
 		for (const setupTerminalState of [false, true]) {
 			const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-interrupt-empty-"));
 			try {
@@ -456,8 +456,11 @@ describe("mountInterruptHandler", () => {
 
 				expect(notify).not.toHaveBeenCalled();
 				expect(abortStates).not.toHaveBeenCalled();
-				expect(handler?.("\x1b")).toBeUndefined();
-				expect(loadStates).toHaveBeenCalledOnce();
+				expect(handler?.("\x1b")).toEqual({ consume: true });
+				expect(loadStates).toHaveBeenCalledTimes(2);
+				await loadStates.mock.results[1]?.value;
+				await Promise.resolve();
+				await Promise.resolve();
 				expect(notify).not.toHaveBeenCalled();
 				expect(abortStates).not.toHaveBeenCalled();
 			} finally {
@@ -466,7 +469,80 @@ describe("mountInterruptHandler", () => {
 		}
 	});
 
-	it("does not confirm no-active when the empty-watcher refresh fails and retries on later Escapes", async () => {
+	it("revalidates after a no-active refresh and warns/aborts if later refresh finds active agents", async () => {
+		const current = stateOf({ agentId: "fresh-current", batchId: "batch-new" });
+		const old = stateOf({ agentId: "fresh-old", batchId: "batch-old" });
+		const cases: Array<{
+			name: string;
+			freshActive: SubagentState[];
+			expectedWarning: string;
+			expectedAbortTargets: SubagentState[];
+		}> = [
+			{
+				name: "current-batch active after confirmation",
+				freshActive: [current, old],
+				expectedWarning: "Press Escape again within 3s to abort 1 active sub-agent in current batch.",
+				expectedAbortTargets: [current],
+			},
+			{
+				name: "all-session active after confirmation",
+				freshActive: [old],
+				expectedWarning: "Press Escape again within 3s to abort 1 active sub-agent in this session.",
+				expectedAbortTargets: [old],
+			},
+		];
+
+		for (const testCase of cases) {
+			let handler: TerminalHandler | undefined;
+			let now = 1000;
+			const notify = vi.fn();
+			const abortStates = vi.fn();
+			const loadResults: SubagentState[][] = [[], testCase.freshActive, testCase.freshActive];
+			const loadStates = vi.fn(async () => loadResults.shift() ?? testCase.freshActive);
+			const controller = mountInterruptHandler({
+				ctx: {
+					ui: {
+						notify,
+						onTerminalInput: (registered: TerminalHandler) => {
+							handler = registered;
+							return vi.fn();
+						},
+					},
+				} as never,
+				getBatchId: () => "batch-new",
+				now: () => now,
+				loadStates,
+				abortStates,
+			});
+
+			expect(handler?.("\x1b")).toEqual({ consume: true });
+			expect(loadStates).toHaveBeenCalledOnce();
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(notify, testCase.name).not.toHaveBeenCalled();
+			expect(abortStates, testCase.name).not.toHaveBeenCalled();
+
+			now += 200;
+			expect(handler?.("\x1b")).toEqual({ consume: true });
+			expect(loadStates).toHaveBeenCalledTimes(2);
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(notify, testCase.name).toHaveBeenCalledWith(testCase.expectedWarning, "warning");
+
+			now += 200;
+			expect(handler?.("\x1b")).toEqual({ consume: true });
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(loadStates).toHaveBeenCalledTimes(3);
+			expect(abortStates, testCase.name).toHaveBeenCalledWith(
+				testCase.expectedAbortTargets,
+				"killed by double Escape",
+			);
+			controller.stop();
+		}
+	});
+
+	it("retries after failed empty-watcher refreshes and keeps revalidating after no-active success", async () => {
 		let handler: TerminalHandler | undefined;
 		let calls = 0;
 		const notify = vi.fn();
@@ -501,8 +577,10 @@ describe("mountInterruptHandler", () => {
 		await Promise.resolve();
 		await Promise.resolve();
 
-		expect(handler?.("\x1b")).toBeUndefined();
-		expect(loadStates).toHaveBeenCalledTimes(2);
+		expect(handler?.("\x1b")).toEqual({ consume: true });
+		expect(loadStates).toHaveBeenCalledTimes(3);
+		await Promise.resolve();
+		await Promise.resolve();
 		expect(notify).not.toHaveBeenCalled();
 		expect(abortStates).not.toHaveBeenCalled();
 	});
