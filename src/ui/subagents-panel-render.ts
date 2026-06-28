@@ -24,6 +24,7 @@ export interface PanelRenderArgs {
 	pendingKillAgentId?: string | null;
 	transcript?: TranscriptExcerpt | "loading";
 	canKill?: boolean;
+	currentBatchId?: string | null;
 	maxHeight?: number;
 }
 
@@ -35,7 +36,7 @@ export function renderSubagentsPanel(args: PanelRenderArgs): string[] {
 	lines.push(helpLine(panelArgs, Boolean(detailed)));
 	lines.push(border("├", "┤", "", panelArgs.width, panelArgs.theme));
 	if (panelArgs.states.length === 0) {
-		lines.push(row(" No running sub-agents in current batch.", panelArgs.width, panelArgs.theme, "muted"));
+		lines.push(row(" No active sub-agents in this session.", panelArgs.width, panelArgs.theme, "muted"));
 	} else if (detailed) {
 		appendDetailRows(lines, panelArgs, detailed);
 	} else {
@@ -69,7 +70,7 @@ function appendStateRows(lines: string[], args: PanelRenderArgs): void {
 	for (const [idx, state] of visible.entries()) {
 		const absoluteIdx = offset + idx;
 		const selected = absoluteIdx === args.selectedIdx;
-		lines.push(row(summaryLine(state, selected, args.theme), args.width, args.theme));
+		lines.push(row(summaryLine(state, selected, args.theme, args.currentBatchId ?? null), args.width, args.theme));
 	}
 	const hiddenBefore = offset;
 	const hiddenAfter = Math.max(0, args.states.length - offset - visible.length);
@@ -151,11 +152,13 @@ function detailLine(theme: Theme, label: string, value: string): string {
 	return ` ${theme.fg("dim", label.padEnd(7))} ${oneLine(value)}`;
 }
 
-function summaryLine(state: SubagentState, selected: boolean, theme: Theme): string {
+function summaryLine(state: SubagentState, selected: boolean, theme: Theme, currentBatchId: string | null): string {
 	const pointer = selected ? theme.fg("accent", "▸") : " ";
 	const icon = iconFor(state.status, theme);
 	const elapsed = formatDuration(Date.now() - state.startedAt);
-	return `${pointer} ${icon} ${oneLine(state.alias)} · ${oneLine(state.agent)} · ${oneLine(state.status)} · ${elapsed} · ${oneLine(formatStateActivity(state))}`;
+	const scope = scopeLabel(state, currentBatchId);
+	const scopePart = scope ? ` · ${scope}` : "";
+	return `${pointer} ${icon} ${oneLine(state.alias)} · ${oneLine(state.agent)} · ${oneLine(state.status)} · ${elapsed}${scopePart} · ${oneLine(formatStateActivity(state))}`;
 }
 
 function wrapText(value: string, width: number): string[] {
@@ -200,6 +203,12 @@ function row(
 
 export function isActiveSubagentState(state: SubagentState): boolean {
 	return state.status === "running" || state.status === "starting";
+}
+
+function scopeLabel(state: SubagentState, currentBatchId: string | null): string | null {
+	if (currentBatchId && state.batchId !== currentBatchId) return state.batchId ? "older batch" : "unbatched";
+	if (!currentBatchId && !state.batchId) return "unbatched";
+	return null;
 }
 
 function iconFor(status: SubagentState["status"], theme: Theme): string {

@@ -1,6 +1,6 @@
 # Bug: Single Escape Kills Sub-Agents Instead of Showing Warning
 
-**Status:** Open  
+**Status:** Fixed by the `/subagents` overlay and targeted Escape safety update
 **Severity:** Medium  
 **Reported:** 2026-04-27  
 
@@ -71,14 +71,20 @@ The parent AbortSignal fires → pi-crew's `parentAbortTracker` picks it up → 
 - `pi-coding-agent: interactive-mode.js:1893` — editor `onEscape` that calls `agent.abort()`
 - `src/runtime/parent-abort.ts` — parent abort → sub-agent kill propagation
 
-## Suggested Investigation
+## Fix Implemented
+
+- Overlay Escape is handled by the focused `/subagents` component; the ambient interrupt listener defers while that overlay is active, so Escape closes/back-outs instead of arming or triggering sub-agent abort.
+- Ambient single Escape now consumes when any active current-session sub-agent exists and warns with the target scope/count.
+- Ambient double Escape refreshes state once before aborting current-batch active agents when present; it falls back to all active current-session agents only after an all-session warning.
+
+## Historical Investigation Notes
 
 1. Add logging to confirm whether `currentBatchActiveStates()` is returning an empty array on first Escape.
 2. Check if `latestStates` is populated at the time the escape fires (state watcher timing).
 3. Check if `getBatchId()` returns `null` when sub-agents are running (batch tracker state).
 4. Consider making the escape handler fall back to **any** active sub-agent (not just current batch) when the current batch has no matches.
 
-## Suggested Fix (Candidate)
+## Historical Suggested Fix (Candidate)
 
 In `src/ui/interrupt.ts`, if the batch-filtered list is empty but there **are** active sub-agents globally, still consume the escape and show the warning:
 

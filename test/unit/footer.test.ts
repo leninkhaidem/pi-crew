@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SubagentState } from "../../src/types.js";
 import { mountFooter } from "../../src/ui/footer.js";
+import { SubagentsPanel } from "../../src/ui/subagents-panel.js";
 
 type TerminalHandler = (data: string) => { consume?: boolean } | undefined;
 
@@ -64,7 +65,7 @@ describe("mountFooter", () => {
 		expect(calls).toEqual([{ id: "pi-crew", value: undefined }]);
 	});
 
-	it("shows only the active running count", () => {
+	it("shows only the active running count with explicit command and cancellation hints", () => {
 		const calls: Array<{ id: string; value: string | undefined }> = [];
 		const footer = mountFooter({
 			ui: {
@@ -78,65 +79,54 @@ describe("mountFooter", () => {
 			stateOf({ agentId: "ghi23456", status: "done", finishedAt: 2, exitCode: 0 }),
 		]);
 
-		expect(calls).toEqual([{ id: "pi-crew", value: "⟳ 2 running" }]);
-	});
-
-	it("focuses the below-input running status with Down only when the editor is empty", () => {
-		let handler: TerminalHandler | undefined;
-		let editorText = "";
-		const calls: Array<{ id: string; value: string | undefined }> = [];
-		const footer = mountFooter({
-			ui: {
-				setStatus: (id: string, value: string | undefined) => calls.push({ id, value }),
-				getEditorText: () => editorText,
-				onTerminalInput: (registered: TerminalHandler) => {
-					handler = registered;
-					return () => undefined;
-				},
+		expect(calls).toEqual([
+			{
+				id: "pi-crew",
+				value: "⟳ 2 sub-agents running · /subagents · Ctrl+B background · Esc Esc abort",
 			},
-		} as never);
-		footer.update([stateOf({ status: "running" })]);
-
-		expect(handler?.("\x1b[B")).toEqual({ consume: true });
-		expect(calls.at(-1)).toEqual({ id: "pi-crew", value: "▸ ⟳ 1 running" });
-
-		editorText = "hello";
-		expect(handler?.("\x1b[B")).toBeUndefined();
-		expect(calls.at(-1)).toEqual({ id: "pi-crew", value: "⟳ 1 running" });
+		]);
 	});
 
-	it("opens and closes the active list from the focused running status", () => {
-		let handler: TerminalHandler | undefined;
-		let widgetFactory: unknown;
-		const widgetCalls: Array<{ id: string; value: unknown; options: unknown }> = [];
+	it("does not register ambient terminal input or consume Down/Enter from editor-empty or editor-nonempty states", () => {
+		const setStatus = vi.fn();
+		const onTerminalInput = vi.fn((_handler: TerminalHandler) => () => undefined);
+		const setWidget = vi.fn();
 		const footer = mountFooter({
 			ui: {
-				setStatus: () => undefined,
+				setStatus,
 				getEditorText: () => "",
-				onTerminalInput: (registered: TerminalHandler) => {
-					handler = registered;
-					return () => undefined;
-				},
-				setWidget: (id: string, value: unknown, options: unknown) => {
-					widgetCalls.push({ id, value, options });
-					if (typeof value === "function") widgetFactory = value;
-				},
+				onTerminalInput,
+				setWidget,
 			},
 		} as never);
+
 		footer.update([stateOf({ status: "running" })]);
+		expect(onTerminalInput).not.toHaveBeenCalled();
+		expect(setWidget).not.toHaveBeenCalled();
+		expect(setStatus).toHaveBeenLastCalledWith(
+			"pi-crew",
+			"⟳ 1 sub-agent running · /subagents · Ctrl+B background · Esc Esc abort",
+		);
 
-		expect(handler?.("\x1b[B")).toEqual({ consume: true });
-		expect(handler?.("\r")).toEqual({ consume: true });
-		expect(widgetCalls.at(-1)).toMatchObject({ id: "pi-crew-footer-details", options: { placement: "belowEditor" } });
+		footer.update([stateOf({ status: "running", lastUpdate: 2 })]);
+		expect(setWidget).not.toHaveBeenCalled();
+		expect(onTerminalInput).not.toHaveBeenCalled();
+	});
 
-		expect(typeof widgetFactory).toBe("function");
-		const panel = (
-			widgetFactory as (tui: { requestRender(): void }, theme: unknown) => { render(width: number): string[] }
-		)({ requestRender: () => undefined }, theme);
-		expect(panel.render(80).join("\n")).not.toContain("d kill");
-		expect(handler?.("d")).toEqual({ consume: true });
-		expect(panel.render(80).join("\n")).not.toContain("Kill auth-search");
-		expect(handler?.("\x1b")).toEqual({ consume: true });
-		expect(widgetCalls.at(-1)).toEqual({ id: "pi-crew-footer-details", value: undefined, options: undefined });
+	it("leaves Up/Down navigation inside an explicitly opened panel intact", () => {
+		const panel = new SubagentsPanel({
+			theme: theme as never,
+			onClose: () => undefined,
+			requestRender: () => undefined,
+		});
+		panel.setStates([
+			stateOf({ agentId: "abc12345", alias: "first", startedAt: 1 }),
+			stateOf({ agentId: "def67890", alias: "second", startedAt: 2 }),
+		]);
+
+		expect(panel.handleInput("\x1b[B")).toBe(true);
+		expect(panel.render(80).join("\n")).toContain("▸ ⏳ second");
+		expect(panel.handleInput("\x1b[A")).toBe(true);
+		expect(panel.render(80).join("\n")).toContain("▸ ⏳ first");
 	});
 });
