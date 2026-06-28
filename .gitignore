@@ -7,5 +7,7 @@ dist/
 .pi/
 
 .worktrees/
+.tasks/
+.planning/
 .claude/model-preferences.yml
 *.tgz
