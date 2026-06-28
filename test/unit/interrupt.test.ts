@@ -551,6 +551,38 @@ describe("mountInterruptHandler", () => {
 		expect(abortStates).toHaveBeenCalledWith([current], "killed by Ctrl+C");
 	});
 
+	it("aborts all active session sub-agents on ctrl+c when no current batch is known", async () => {
+		let handler: TerminalHandler | undefined;
+		const abortStates = vi.fn();
+		const current = stateOf({ agentId: "current", batchId: "batch-new" });
+		const old = stateOf({ agentId: "old", batchId: "batch-old" });
+		const unbatched = stateOf({ agentId: "legacy", batchId: null });
+		const done = stateOf({ agentId: "done", status: "done", finishedAt: 1 });
+		const active = [current, old, unbatched];
+		const loadStates = vi.fn(async () => active);
+		const controller = mountInterruptHandler({
+			ctx: {
+				ui: {
+					onTerminalInput: (registered: TerminalHandler) => {
+						handler = registered;
+						return vi.fn();
+					},
+				},
+			} as never,
+			getBatchId: () => null,
+			loadStates,
+			abortStates,
+		});
+		controller.update([...active, done]);
+
+		expect(handler?.("\x03")).toEqual({ consume: true });
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(loadStates).toHaveBeenCalledOnce();
+		expect(abortStates).toHaveBeenCalledWith(active, "killed by Ctrl+C");
+	});
+
 	it("backgrounds active detach scopes on ctrl+b without changing existing notification text", () => {
 		let handler: TerminalHandler | undefined;
 		const detachAll = vi.fn();

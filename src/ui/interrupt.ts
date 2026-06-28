@@ -74,10 +74,12 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 			return { consume: true };
 		}
 		if (matchesKey(data, Key.ctrl("c"))) {
-			const targets = currentBatchActiveStates(latestStates, args.getBatchId());
+			const batchId = args.getBatchId();
+			const targets = currentBatchActiveStates(latestStates, batchId);
 			if (targets.length === 0) return undefined;
 			lastEscapeWarning = null;
-			void abortFresh(args, "killed by Ctrl+C", latestStates, "current-batch");
+			const scope = batchId ? "current-batch" : "current-session";
+			void abortFresh(args, "killed by Ctrl+C", latestStates, scope, batchId);
 			return { consume: true };
 		}
 		if (matchesKey(data, Key.escape)) {
@@ -127,6 +129,7 @@ async function abortFresh(
 	reason: string,
 	fallbackStates: SubagentState[],
 	warnedScope: EscapeScope,
+	batchId?: string | null,
 ): Promise<void> {
 	let states: SubagentState[];
 	try {
@@ -134,7 +137,8 @@ async function abortFresh(
 	} catch {
 		states = fallbackStates;
 	}
-	const batchTargets = strictCurrentBatchActiveStates(states, args.getBatchId());
+	const targetBatchId = batchId === undefined ? args.getBatchId() : batchId;
+	const batchTargets = strictCurrentBatchActiveStates(states, targetBatchId);
 	const targets = batchTargets.length > 0 ? batchTargets : warnedScope === "current-session" ? activeStates(states) : [];
 	if (targets.length > 0) await args.abortStates(targets, reason);
 }
