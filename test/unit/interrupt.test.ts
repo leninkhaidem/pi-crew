@@ -92,6 +92,91 @@ describe("mountInterruptHandler", () => {
 		expect(abortStates).toHaveBeenCalledWith([current], "killed by double Escape");
 	});
 
+	it("loads fresh states for first Escape when watcher state is empty and warns before aborting", async () => {
+		let handler: TerminalHandler | undefined;
+		let now = 1000;
+		const notify = vi.fn();
+		const abortStates = vi.fn();
+		const current = stateOf({ agentId: "fresh-current", batchId: "batch-new" });
+		const old = stateOf({ agentId: "fresh-old", batchId: "batch-old" });
+		const loadStates = vi.fn(async () => [current, old]);
+		mountInterruptHandler({
+			ctx: {
+				ui: {
+					notify,
+					onTerminalInput: (registered: TerminalHandler) => {
+						handler = registered;
+						return vi.fn();
+					},
+				},
+			} as never,
+			getBatchId: () => "batch-new",
+			now: () => now,
+			loadStates,
+			abortStates,
+		});
+
+		expect(handler?.("\x1b")).toEqual({ consume: true });
+		expect(loadStates).toHaveBeenCalledOnce();
+		expect(abortStates).not.toHaveBeenCalled();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(notify).toHaveBeenCalledWith(
+			"Press Escape again within 3s to abort 1 active sub-agent in current batch.",
+			"warning",
+		);
+		expect(abortStates).not.toHaveBeenCalled();
+		now += 200;
+		expect(handler?.("\x1b")).toEqual({ consume: true });
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(loadStates).toHaveBeenCalledTimes(2);
+		expect(abortStates).toHaveBeenCalledWith([current], "killed by double Escape");
+	});
+
+	it("uses all-session fresh fallback for first Escape when empty watcher has no current-batch targets", async () => {
+		let handler: TerminalHandler | undefined;
+		let now = 1000;
+		const notify = vi.fn();
+		const abortStates = vi.fn();
+		const old = stateOf({ agentId: "fresh-old", batchId: "batch-old" });
+		const loadStates = vi.fn(async () => [old]);
+		mountInterruptHandler({
+			ctx: {
+				ui: {
+					notify,
+					onTerminalInput: (registered: TerminalHandler) => {
+						handler = registered;
+						return vi.fn();
+					},
+				},
+			} as never,
+			getBatchId: () => "batch-new",
+			now: () => now,
+			loadStates,
+			abortStates,
+		});
+
+		expect(handler?.("\x1b")).toEqual({ consume: true });
+		expect(loadStates).toHaveBeenCalledOnce();
+		expect(abortStates).not.toHaveBeenCalled();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(notify).toHaveBeenCalledWith(
+			"Press Escape again within 3s to abort 1 active sub-agent in this session.",
+			"warning",
+		);
+		now += 200;
+		expect(handler?.("\x1b")).toEqual({ consume: true });
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(abortStates).toHaveBeenCalledWith([old], "killed by double Escape");
+	});
+
 	it("does not abort when the second escape is outside the timeout", async () => {
 		let handler: TerminalHandler | undefined;
 		let now = 1000;

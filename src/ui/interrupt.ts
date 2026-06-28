@@ -34,8 +34,30 @@ interface EscapeWarning {
 export function mountInterruptHandler(args: InterruptArgs): InterruptController {
 	let latestStates: SubagentState[] = [];
 	let lastEscapeWarning: EscapeWarning | null = null;
+	let stopped = false;
 	const doubleEscapeMs = args.doubleEscapeMs ?? 3000;
 	const now = args.now ?? (() => Date.now());
+	let pendingEscapeRefresh: Promise<void> | null = null;
+	const warnForTargets = (targets: EscapeTargets) => {
+		lastEscapeWarning = { at: now(), scope: targets.scope };
+		args.ctx.ui.notify?.(escapeWarningMessage(targets), "warning");
+	};
+	const refreshAndWarnForStaleEscape = () => {
+		if (!args.loadStates || pendingEscapeRefresh) return;
+		pendingEscapeRefresh = (async () => {
+			try {
+				const states = await args.loadStates?.();
+				if (!states || stopped) return;
+				latestStates = states;
+				const targets = escapeTargets(states, args.getBatchId());
+				if (targets) warnForTargets(targets);
+			} catch {
+				// The key was already consumed to keep Escape non-destructive while state is stale.
+			}
+		})().finally(() => {
+			pendingEscapeRefresh = null;
+		});
+	};
 	const unsubscribe = args.ctx.ui.onTerminalInput((data) => {
 		if (matchesKey(data, Key.ctrl("b"))) {
 			if (!args.detach?.hasActiveScopes()) return undefined;
@@ -52,18 +74,21 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 		}
 		if (matchesKey(data, Key.escape)) {
 			if (isSubagentsOverlayActive()) return undefined;
-			const targets = escapeTargets(latestStates, args.getBatchId());
-			if (!targets) return undefined;
 			const at = now();
 			const previousWarning = lastEscapeWarning;
 			const isDoubleEscape = previousWarning !== null && at - previousWarning.at <= doubleEscapeMs;
 			if (isDoubleEscape) {
 				lastEscapeWarning = null;
 				void abortFresh(args, "killed by double Escape", latestStates, previousWarning.scope);
-			} else {
-				lastEscapeWarning = { at, scope: targets.scope };
-				args.ctx.ui.notify?.(escapeWarningMessage(targets), "warning");
+				return { consume: true };
 			}
+			const targets = escapeTargets(latestStates, args.getBatchId());
+			if (targets) {
+				warnForTargets(targets);
+				return { consume: true };
+			}
+			if (!args.loadStates) return undefined;
+			refreshAndWarnForStaleEscape();
 			return { consume: true };
 		}
 		return undefined;
@@ -74,6 +99,7 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 			latestStates = states;
 		},
 		stop() {
+			stopped = true;
 			unsubscribe();
 		},
 	};
