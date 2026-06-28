@@ -21,7 +21,7 @@
       "path": ".tasks/pi-crew-tui-improvements/packages/WP2.md",
       "proof_path": ".tasks/pi-crew-tui-improvements/proofs/WP2.proof.md",
       "report_path": ".tasks/pi-crew-tui-improvements/reports/WP2.package-verification.md",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "WP1"
       ]
