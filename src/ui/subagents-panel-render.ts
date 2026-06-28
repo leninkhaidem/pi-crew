@@ -7,6 +7,10 @@ import { formatUsageStats } from "./format.js";
 
 const MAX_PANEL_ITEMS = 5;
 const MAX_TRANSCRIPT_LINES = 15;
+const SPLIT_LAYOUT_MIN_WIDTH = 88;
+const LEFT_PANE_MIN_WIDTH = 30;
+const LEFT_PANE_MAX_WIDTH = 38;
+const RIGHT_PANE_MIN_WIDTH = 34;
 const ESC = "\\u001B";
 const BEL = "\\u0007";
 const ANSI_OR_OSC_PATTERN = new RegExp(
@@ -29,39 +33,207 @@ export interface PanelRenderArgs {
 }
 
 export function renderSubagentsPanel(args: PanelRenderArgs): string[] {
-	const panelArgs = { ...args, states: args.states.filter(isActiveSubagentState), width: Math.max(40, args.width) };
+	const panelArgs = {
+		...args,
+		states: args.states.filter(isActiveSubagentState),
+		width: Math.max(1, Math.floor(args.width)),
+	};
+	const selected = selectedState(panelArgs);
+	const expanded = panelArgs.states.find((state) => state.agentId === panelArgs.detailedAgentId);
+	const mode = panelMode(panelArgs, expanded);
 	const lines = [border("╭", "╮", " pi-crew sub-agents ", panelArgs.width, panelArgs.theme)];
-	const detailed = panelArgs.states.find((state) => state.agentId === panelArgs.detailedAgentId);
-	lines.push(row(headerLine(panelArgs, detailed), panelArgs.width, panelArgs.theme));
-	lines.push(helpLine(panelArgs, Boolean(detailed)));
-	lines.push(border("├", "┤", "", panelArgs.width, panelArgs.theme));
+
+	lines.push(row(headerLine(panelArgs, expanded), panelArgs.width, panelArgs.theme));
+	lines.push(helpLine(panelArgs, mode, expanded ?? selected));
+
 	if (panelArgs.states.length === 0) {
+		lines.push(border("├", "┤", "", panelArgs.width, panelArgs.theme));
 		lines.push(row(" No active sub-agents in this session.", panelArgs.width, panelArgs.theme, "muted"));
-	} else if (detailed) {
-		appendDetailRows(lines, panelArgs, detailed);
+		lines.push(border("╰", "╯", "", panelArgs.width, panelArgs.theme));
+	} else if (expanded) {
+		lines.push(border("├", "┤", " details ", panelArgs.width, panelArgs.theme));
+		appendDetailRows(lines, panelArgs, expanded);
+		lines.push(border("╰", "╯", "", panelArgs.width, panelArgs.theme));
+	} else if (mode === "split" && selected) {
+		appendSplitDashboard(lines, panelArgs, selected);
 	} else {
+		lines.push(border("├", "┤", " agents ", panelArgs.width, panelArgs.theme));
 		appendStateRows(lines, panelArgs);
+		lines.push(border("╰", "╯", "", panelArgs.width, panelArgs.theme));
 	}
-	lines.push(border("╰", "╯", "", panelArgs.width, panelArgs.theme));
+
 	if (args.maxHeight && lines.length > args.maxHeight) {
 		lines.length = args.maxHeight;
-		lines[lines.length - 1] = border("╰", "╯", "", panelArgs.width, panelArgs.theme);
+		lines[lines.length - 1] =
+			mode === "split" && !expanded
+				? splitBottomBorder(panelArgs)
+				: border("╰", "╯", "", panelArgs.width, panelArgs.theme);
 	}
 	return lines;
 }
 
-function headerLine(args: PanelRenderArgs, detailed: SubagentState | undefined): string {
-	if (!detailed) return ` ${args.states.length} active`;
-	return ` ${args.states.length} active · ${oneLine(detailed.alias)} #${oneLine(detailed.agentId)}`;
+function panelMode(args: PanelRenderArgs, expanded: SubagentState | undefined): "expanded" | "split" | "narrow-list" {
+	if (expanded) return "expanded";
+	if (args.states.length > 0 && canRenderSplit(args.width)) return "split";
+	return "narrow-list";
 }
 
-function helpLine(args: PanelRenderArgs, isDetail: boolean): string {
+function canRenderSplit(width: number): boolean {
+	if (width < SPLIT_LAYOUT_MIN_WIDTH) return false;
+	const innerWidth = Math.max(0, width - 2);
+	return innerWidth - LEFT_PANE_MIN_WIDTH - 1 >= RIGHT_PANE_MIN_WIDTH;
+}
+
+function selectedState(args: PanelRenderArgs): SubagentState | undefined {
+	if (args.states.length === 0) return undefined;
+	const idx = Math.min(Math.max(0, args.selectedIdx), args.states.length - 1);
+	return args.states[idx];
+}
+
+function headerLine(args: PanelRenderArgs, expanded: SubagentState | undefined): string {
+	if (args.states.length === 0) return " 0 active";
+	const summary = `${args.states.length} active · current session`;
+	if (!expanded) return ` ${summary}`;
+	return ` ${summary} · ${oneLine(expanded.alias)} #${oneLine(expanded.agentId)}`;
+}
+
+function helpLine(
+	args: PanelRenderArgs,
+	mode: "expanded" | "split" | "narrow-list",
+	selected: SubagentState | undefined,
+): string {
 	const pending = args.states.find((state) => state.agentId === args.pendingKillAgentId);
 	if (pending)
 		return row(` Kill ${oneLine(pending.alias)} #${oneLine(pending.agentId)}? y/N`, args.width, args.theme, "warning");
-	const killHelp = args.canKill === false ? "" : " · d kill";
-	if (isDetail) return row(` ←/esc list${killHelp}`, args.width, args.theme, "dim");
+	const killHelp = args.canKill === false || !selected ? "" : " · d kill";
+	if (args.states.length === 0) return row(" esc close", args.width, args.theme, "dim");
+	if (mode === "expanded") return row(` ←/esc back${killHelp}`, args.width, args.theme, "dim");
+	if (mode === "split") return row(` ↑↓/j/k select · enter/→ expand · ←/esc close${killHelp}`, args.width, args.theme, "dim");
 	return row(` ↑↓/j/k select · enter/→ details · ←/esc close${killHelp}`, args.width, args.theme, "dim");
+}
+
+function appendSplitDashboard(lines: string[], args: PanelRenderArgs, selected: SubagentState): void {
+	const widths = splitWidths(args.width);
+	lines.push(splitDivider("agents", "details", args, widths));
+	const leftRows = buildAgentListRows(args, widths.left);
+	const rightRows = buildSelectedDetailRows(args, selected, widths.right);
+	const rowCount = Math.max(leftRows.length, rightRows.length, 1);
+	for (let idx = 0; idx < rowCount; idx++) {
+		lines.push(splitRow(leftRows[idx] ?? "", rightRows[idx] ?? "", widths, args.theme));
+	}
+	lines.push(splitBottomBorder(args));
+}
+
+interface SplitWidths {
+	left: number;
+	right: number;
+}
+
+function splitWidths(width: number): SplitWidths {
+	const innerWidth = Math.max(0, width - 2);
+	const left = Math.max(
+		LEFT_PANE_MIN_WIDTH,
+		Math.min(LEFT_PANE_MAX_WIDTH, Math.floor(innerWidth * 0.36), innerWidth - RIGHT_PANE_MIN_WIDTH - 1),
+	);
+	const right = Math.max(0, innerWidth - left - 1);
+	return { left, right };
+}
+
+function splitDivider(leftTitle: string, rightTitle: string, args: PanelRenderArgs, widths: SplitWidths): string {
+	const line = `├${titledRule(leftTitle, widths.left)}┬${titledRule(rightTitle, widths.right)}┤`;
+	return args.theme.fg("borderAccent", truncateToWidth(line, args.width, ""));
+}
+
+function splitBottomBorder(args: PanelRenderArgs): string {
+	const widths = splitWidths(args.width);
+	const line = `╰${"─".repeat(widths.left)}┴${"─".repeat(widths.right)}╯`;
+	return args.theme.fg("borderAccent", truncateToWidth(line, args.width, ""));
+}
+
+function titledRule(title: string, width: number): string {
+	if (width <= 0) return "";
+	const label = ` ${title} `;
+	if (visibleWidth(label) >= width) return truncateToWidth(label, width, "");
+	return `${label}${"─".repeat(width - visibleWidth(label))}`;
+}
+
+function splitRow(left: string, right: string, widths: SplitWidths, theme: Theme): string {
+	const border = theme.fg("borderMuted", "│");
+	return `${border}${cell(left, widths.left)}${border}${cell(right, widths.right)}${border}`;
+}
+
+function cell(content: string, width: number): string {
+	if (width <= 0) return "";
+	const singleLine = content.replace(/[\r\n]+/g, " ").replace(/\t/g, "  ");
+	const trimmed = truncateToWidth(singleLine, width, "…");
+	return `${trimmed}${" ".repeat(Math.max(0, width - visibleWidth(trimmed)))}`;
+}
+
+function buildAgentListRows(args: PanelRenderArgs, width: number): string[] {
+	const rows: string[] = [];
+	const offset = args.scrollOffset ?? 0;
+	const visible = args.states.slice(offset, offset + MAX_PANEL_ITEMS);
+	for (const [idx, state] of visible.entries()) {
+		const absoluteIdx = offset + idx;
+		const selected = absoluteIdx === args.selectedIdx;
+		rows.push(compactAgentTitle(state, selected, args.theme));
+		rows.push(compactAgentMeta(state, args.theme));
+		const scope = scopeLabel(state, args.currentBatchId ?? null);
+		if (scope) rows.push(args.theme.fg("muted", `  ${scope}`));
+		rows.push(args.theme.fg("dim", `  ${oneLine(formatStateActivity(state))}`));
+		if (idx < visible.length - 1) rows.push("");
+	}
+	const hiddenBefore = offset;
+	const hiddenAfter = Math.max(0, args.states.length - offset - visible.length);
+	if (hiddenBefore > 0 || hiddenAfter > 0) {
+		if (rows.length > 0) rows.push("");
+		rows.push(args.theme.fg("dim", `… ${hiddenBefore} above, ${hiddenAfter} below`));
+	}
+	return rows.map((line) => truncateToWidth(line, width, "…"));
+}
+
+function compactAgentTitle(state: SubagentState, selected: boolean, theme: Theme): string {
+	const pointer = selected ? theme.fg("accent", "▸") : " ";
+	return `${pointer} ${iconFor(state.status, theme)} ${theme.fg(selected ? "accent" : "text", oneLine(state.alias))}`;
+}
+
+function compactAgentMeta(state: SubagentState, theme: Theme): string {
+	const elapsed = formatDuration(Date.now() - state.startedAt);
+	return theme.fg("muted", `  ${oneLine(state.agent)} · ${elapsed}`);
+}
+
+function buildSelectedDetailRows(args: PanelRenderArgs, state: SubagentState, width: number): string[] {
+	const rows: string[] = [];
+	rows.push(`${args.theme.fg("accent", oneLine(state.alias))} ${args.theme.fg("dim", `#${oneLine(state.agentId)}`)}`);
+	rows.push(detailCellLine(args.theme, "status", state.status));
+	rows.push(detailCellLine(args.theme, "alias", state.alias));
+	rows.push(
+		detailCellLine(
+			args.theme,
+			"model",
+			`${oneLine(state.agent)} · ${oneLine(state.provider)}/${oneLine(state.model)} · ${oneLine(state.thinking)}`,
+		),
+	);
+	rows.push(detailCellLine(args.theme, "cwd", state.cwd));
+	rows.push(detailCellLine(args.theme, "elapsed", formatDuration(Date.now() - state.startedAt)));
+	rows.push(detailCellLine(args.theme, "usage", formatUsageStats({ ...state.usage, turns: state.turns }) || "no usage yet"));
+	rows.push("");
+	rows.push(sectionCellTitle(args.theme, "task", width));
+	rows.push(...wrapText(state.task, Math.max(10, width)).map((line) => `  ${line}`));
+	rows.push("");
+	rows.push(sectionCellTitle(args.theme, "recent transcript", width));
+	rows.push(...transcriptChunks(args.transcript, Math.max(10, width - 2)).map((line) => `  ${line}`));
+	return rows.map((line) => truncateToWidth(line, width, "…"));
+}
+
+function sectionCellTitle(theme: Theme, title: string, width: number): string {
+	const label = `─ ${title} `;
+	if (visibleWidth(label) >= width) return theme.fg("borderAccent", truncateToWidth(label, width, ""));
+	return theme.fg("borderAccent", `${label}${"─".repeat(width - visibleWidth(label))}`);
+}
+
+function detailCellLine(theme: Theme, label: string, value: string): string {
+	return `${theme.fg("dim", label.padEnd(7))} ${oneLine(value)}`;
 }
 
 function appendStateRows(lines: string[], args: PanelRenderArgs): void {
@@ -83,7 +255,7 @@ function appendDetailRows(lines: string[], args: PanelRenderArgs, state: Subagen
 	appendMetadataRows(lines, args, state);
 	lines.push(border("├", "┤", " task ", args.width, args.theme));
 	appendWrappedDetail(lines, args, "task", state.task);
-	lines.push(border("├", "┤", " transcript ", args.width, args.theme));
+	lines.push(border("├", "┤", " recent transcript ", args.width, args.theme));
 	appendTranscriptRows(lines, args);
 }
 
@@ -184,8 +356,10 @@ function wrapText(value: string, width: number): string[] {
 }
 
 function border(left: string, right: string, title: string, width: number, theme: Theme): string {
+	if (width <= 0) return "";
 	const fill = Math.max(0, width - visibleWidth(left) - visibleWidth(right) - visibleWidth(title));
-	return theme.fg("borderAccent", `${left}${title}${"─".repeat(fill)}${right}`);
+	const line = `${left}${title}${"─".repeat(fill)}${right}`;
+	return theme.fg("borderAccent", truncateToWidth(line, width, ""));
 }
 
 function row(
@@ -194,6 +368,8 @@ function row(
 	theme: Theme,
 	color: "text" | "muted" | "dim" | "warning" = "text",
 ): string {
+	if (width <= 0) return "";
+	if (width === 1) return theme.fg("borderMuted", "│");
 	const innerWidth = Math.max(0, width - 2);
 	const singleLine = content.replace(/\s+/g, " ").trim();
 	const trimmed = truncateToWidth(theme.fg(color, singleLine), innerWidth, "…");
