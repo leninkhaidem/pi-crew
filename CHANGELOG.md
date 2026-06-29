@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.3 — 2026-06-29
+
+### Fixed
+
+- **Escape key interop.** `Esc` now passes through to focused overlays and Pi's default interrupt handling when pi-crew has no active sub-agent target, while preserving double-Escape protection for active sub-agents.
+
 ## v0.6.2 — 2026-06-28
 
 ### Added
