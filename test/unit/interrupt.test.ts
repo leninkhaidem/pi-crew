@@ -113,6 +113,7 @@ describe("mountInterruptHandler", () => {
 			getBatchId: () => "batch-new",
 			now: () => now,
 			loadStates,
+			hasActiveSubagentWork: () => true,
 			abortStates,
 		});
 
@@ -155,6 +156,7 @@ describe("mountInterruptHandler", () => {
 			getBatchId: () => "batch-new",
 			now: () => now,
 			loadStates,
+			hasActiveSubagentWork: () => true,
 			abortStates,
 		});
 
@@ -418,7 +420,7 @@ describe("mountInterruptHandler", () => {
 		}
 	});
 
-	it("revalidates later empty-watcher Escapes after no-active or terminal-only refreshes", async () => {
+	it("passes through empty-watcher Escapes when no active sub-agent work is known", async () => {
 		for (const setupTerminalState of [false, true]) {
 			const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-interrupt-empty-"));
 			try {
@@ -448,7 +450,9 @@ describe("mountInterruptHandler", () => {
 					abortStates,
 				});
 
-				expect(handler?.("\x1b")).toEqual({ consume: true });
+				expect(handler?.("\x1b")).toBeUndefined();
+				expect(loadStates).toHaveBeenCalledOnce();
+				expect(handler?.("\x1b")).toBeUndefined();
 				expect(loadStates).toHaveBeenCalledOnce();
 				await loadStates.mock.results[0]?.value;
 				await Promise.resolve();
@@ -456,7 +460,7 @@ describe("mountInterruptHandler", () => {
 
 				expect(notify).not.toHaveBeenCalled();
 				expect(abortStates).not.toHaveBeenCalled();
-				expect(handler?.("\x1b")).toEqual({ consume: true });
+				expect(handler?.("\x1b")).toBeUndefined();
 				expect(loadStates).toHaveBeenCalledTimes(2);
 				await loadStates.mock.results[1]?.value;
 				await Promise.resolve();
@@ -512,6 +516,7 @@ describe("mountInterruptHandler", () => {
 				getBatchId: () => "batch-new",
 				now: () => now,
 				loadStates,
+				hasActiveSubagentWork: () => true,
 				abortStates,
 			});
 
@@ -564,6 +569,7 @@ describe("mountInterruptHandler", () => {
 			} as never,
 			getBatchId: () => "batch-new",
 			loadStates,
+			hasActiveSubagentWork: () => true,
 			abortStates,
 		});
 
