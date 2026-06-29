@@ -14,6 +14,7 @@ interface InterruptArgs {
 	getBatchId(): string | null;
 	abortStates(states: SubagentState[], reason: string): void | Promise<void>;
 	loadStates?(): SubagentState[] | Promise<SubagentState[]>;
+	hasActiveSubagentWork?(): boolean;
 	detach?: DetachController;
 	doubleEscapeMs?: number;
 	now?: () => number;
@@ -42,7 +43,7 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 		lastEscapeWarning = { at: now(), scope: targets.scope };
 		args.ctx.ui.notify?.(escapeWarningMessage(targets), "warning");
 	};
-	const refreshEmptySnapshot = () => {
+	const refreshEmptySnapshot = (warnIfTargets: boolean) => {
 		if (!args.loadStates || pendingEscapeRefresh) return;
 		pendingEscapeRefresh = (async () => {
 			try {
@@ -50,13 +51,13 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 				if (!states || stopped) return;
 				latestStates = states;
 				const targets = escapeTargets(states, args.getBatchId());
-				if (targets) {
+				if (targets && warnIfTargets) {
 					warnForTargets(targets);
 					return;
 				}
 				lastEscapeWarning = null;
 			} catch {
-				// Failed refreshes are retried/consumed on later Escapes.
+				// Failed refreshes are retried/consumed on later Escapes when active work is known.
 			}
 		})().finally(() => {
 			pendingEscapeRefresh = null;
@@ -97,9 +98,10 @@ export function mountInterruptHandler(args: InterruptArgs): InterruptController 
 				return { consume: true };
 			}
 			if (args.loadStates) {
-				if (pendingEscapeRefresh) return { consume: true };
-				refreshEmptySnapshot();
-				return { consume: true };
+				const protectActiveWork = args.hasActiveSubagentWork?.() === true;
+				if (pendingEscapeRefresh) return protectActiveWork ? { consume: true } : undefined;
+				refreshEmptySnapshot(protectActiveWork);
+				return protectActiveWork ? { consume: true } : undefined;
 			}
 			return undefined;
 		}

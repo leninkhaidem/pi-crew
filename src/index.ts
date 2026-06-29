@@ -239,6 +239,7 @@ export default function (pi: ExtensionAPI) {
 			ctx,
 			getBatchId: () => rt.getCurrentBatchId(ctx),
 			loadStates: () => listStates(sessionDir, { includeDetached: true }),
+			hasActiveSubagentWork: () => rt.concurrency.active.current() > 0,
 			detach: rt.detach,
 			abortStates: async (states, reason) => {
 				await Promise.all(
