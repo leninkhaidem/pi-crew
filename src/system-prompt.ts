@@ -1,3 +1,5 @@
+import { supportsThinkingLevel } from "./thinking.js";
+
 export interface SystemPromptArgs {
 	agents: Array<{ name: string; description: string; source: string }>;
 	configuredSlots: Set<string>;
@@ -135,14 +137,6 @@ function isSameModel(
 	return Boolean(other && model.provider === other.provider && model.id === other.id);
 }
 
-function isMaxCapable(model: { thinkingLevelMap?: unknown }): boolean {
-	if (!Object.prototype.hasOwnProperty.call(model, "thinkingLevelMap")) return false;
-	const map = model.thinkingLevelMap;
-	return (
-		typeof map === "object" &&
-		map !== null &&
-		!Array.isArray(map) &&
-		Object.prototype.hasOwnProperty.call(map, "max") &&
-		typeof (map as Record<string, unknown>).max === "string"
-	);
+function isMaxCapable(model: { reasoning?: boolean; thinkingLevelMap?: unknown }): boolean {
+	return supportsThinkingLevel(model as { reasoning: boolean; thinkingLevelMap?: unknown }, "max", () => false);
 }

@@ -153,9 +153,15 @@ describe("get_subagent_result", () => {
 		expect(result.details.thinkingAdjustment).toEqual({ requested: "max", effective: "high" });
 	});
 
-	it("does not feed duplicate final output back to the parent when completion was already handled", async () => {
+	it("adds the adjustment warning without duplicate output when completion was already handled", async () => {
 		const longOutput = `start-${"x".repeat(2000)}-end`;
-		await writeState(stateOf(tmp, { finalOutput: longOutput }));
+		await writeState(
+			stateOf(tmp, {
+				thinking: "high",
+				thinkingAdjustment: { requested: "max", effective: "high" },
+				finalOutput: longOutput,
+			}),
+		);
 		let tool: RegisteredResultTool | undefined;
 		const pi = {
 			registerTool: vi.fn((registeredTool) => {
@@ -168,12 +174,39 @@ describe("get_subagent_result", () => {
 		registerGetSubagentResultTool(pi as never, { agentDir: tmp, consumeCompletion, completionHandled } as never);
 		const result = (await tool?.execute("call", { agent_id: "abc12345" })) as {
 			content: Array<{ type: "text"; text: string }>;
+			details: Record<string, unknown>;
 		};
 
 		expect(result.content[0]?.text).toContain("already completed");
 		expect(result.content[0]?.text).toContain("already handled");
+		expect(result.content[0]?.text).toContain('requested thinking level "max"');
 		expect(result.content[0]?.text).not.toContain(longOutput);
+		expect(result.details).toMatchObject({
+			thinking: "high",
+			thinkingAdjustment: { requested: "max", effective: "high" },
+		});
 		expect(consumeCompletion).toHaveBeenCalledWith("abc12345");
+	});
+
+	it("drops mismatched persisted provenance without a false warning on the read surface", async () => {
+		await writeState(
+			stateOf(tmp, {
+				thinking: "low",
+				thinkingAdjustment: { requested: "max", effective: "high" },
+				finalOutput: "legacy output",
+			}),
+		);
+		const { tool } = registerResultTool(tmp);
+
+		const result = (await tool.execute("call", { agent_id: "abc12345" })) as {
+			content: Array<{ text: string }>;
+			details: Record<string, unknown>;
+		};
+
+		expect(result.content[0]?.text).toContain("legacy output");
+		expect(result.content[0]?.text).not.toContain("requested thinking level");
+		expect(result.details.thinking).toBe("low");
+		expect(result.details).not.toHaveProperty("thinkingAdjustment");
 	});
 
 	it("omits recent output when recentEvents is absent", async () => {

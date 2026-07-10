@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { visibleWidth } from "@mariozechner/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDetachController } from "../../src/runtime/detach.js";
 import { registerDispatchTool } from "../../src/tools/dispatch.js";
@@ -32,15 +33,9 @@ beforeEach(() => {
 	mocks.dispatch.mockReset();
 	let sequence = 0;
 	mocks.dispatch.mockImplementation(async (plan) => {
-		const state = stateOf({
+		const state = stateForPlan(plan, {
 			agentId: `agent-${++sequence}`,
-			agent: plan.agent.name,
-			alias: plan.options.alias,
-			task: plan.options.task,
-			thinking: plan.model.thinking,
-			thinkingAdjustment: plan.thinkingAdjustment,
-			provider: plan.model.provider,
-			model: plan.model.modelId,
+			finalOutput: `output:${plan.options.alias}`,
 		});
 		return { agentId: state.agentId, state, donePromise: Promise.resolve(state) };
 	});
@@ -118,6 +113,127 @@ describe("normal launch activation", () => {
 		}
 	});
 
+	it("keeps mixed adjusted and unadjusted parallel launches associated with their real result shapes", async () => {
+		const { rt } = runtime();
+		const tool = registeredRun(rt);
+		const result = await tool.execute(
+			"call",
+			{
+				tasks: [
+					{ agent: "general-purpose", alias: "adjusted-parallel", task: "adjusted", model: "reasoner" },
+					{ agent: "general-purpose", alias: "plain-parallel", task: "plain", model: "max-capable" },
+				],
+			},
+			undefined,
+			undefined,
+			context(),
+		);
+
+		expectLaunchAssociation([
+			{ alias: "adjusted-parallel", model: "reasoner", thinking: "high", adjusted: true },
+			{ alias: "plain-parallel", model: "max-capable", thinking: "max", adjusted: false },
+		]);
+		const results = result.details.results as Array<Record<string, unknown>>;
+		expect(results).toEqual([
+			expect.objectContaining({
+				agentId: "agent-1",
+				alias: "adjusted-parallel",
+				model: "reasoner",
+				thinking: "high",
+				thinkingAdjustment: { requested: "max", effective: "high" },
+				status: "done",
+				finalOutput: "output:adjusted-parallel",
+			}),
+			expect.objectContaining({
+				agentId: "agent-2",
+				alias: "plain-parallel",
+				model: "max-capable",
+				thinking: "max",
+				status: "done",
+				finalOutput: "output:plain-parallel",
+			}),
+		]);
+		expect(results[1]).not.toHaveProperty("thinkingAdjustment");
+		expect(result.content[0]?.text).toContain("output:adjusted-parallel");
+		expect(result.content[0]?.text).toContain("output:plain-parallel");
+		assertRealBatchRendering(tool, result, [
+			{ agentId: "agent-1", alias: "adjusted-parallel", status: "done", thinking: "high", warning: true },
+			{ agentId: "agent-2", alias: "plain-parallel", status: "done", thinking: "max", warning: false },
+		]);
+	});
+
+	it("keeps mixed chain launch provenance bound through failure and partial output", async () => {
+		mocks.dispatch.mockImplementation(async (plan) => {
+			const failed = plan.options.alias === "plain-chain";
+			const state = stateForPlan(plan, {
+				agentId: `chain-${plan.options.alias}`,
+				status: failed ? "failed" : "done",
+				exitCode: failed ? 1 : 0,
+				errorMessage: failed ? "plain chain failed" : null,
+				finalOutput: failed ? null : "adjusted chain output",
+			});
+			return { agentId: state.agentId, state, donePromise: Promise.resolve(state) };
+		});
+		const { rt } = runtime();
+		const tool = registeredRun(rt);
+		const result = await tool.execute(
+			"call",
+			{
+				chain: [
+					{ agent: "general-purpose", alias: "adjusted-chain", task: "first", model: "reasoner" },
+					{ agent: "general-purpose", alias: "plain-chain", task: "second {previous}", model: "max-capable" },
+					{ agent: "general-purpose", alias: "not-launched", task: "third", model: "reasoner" },
+				],
+			},
+			undefined,
+			undefined,
+			context(),
+		);
+
+		expectLaunchAssociation([
+			{ alias: "adjusted-chain", model: "reasoner", thinking: "high", adjusted: true },
+			{ alias: "plain-chain", model: "max-capable", thinking: "max", adjusted: false },
+		]);
+		expect(result.details.partial).toBe(true);
+		expect(result.details.results).toEqual([
+			expect.objectContaining({
+				agentId: "chain-adjusted-chain",
+				alias: "adjusted-chain",
+				model: "reasoner",
+				thinking: "high",
+				status: "done",
+				finalOutput: "adjusted chain output",
+				thinkingAdjustment: { requested: "max", effective: "high" },
+			}),
+			expect.objectContaining({
+				agentId: "chain-plain-chain",
+				alias: "plain-chain",
+				model: "max-capable",
+				status: "failed",
+				errorMessage: "plain chain failed",
+				finalOutput: null,
+				thinking: "max",
+			}),
+		]);
+		assertRealBatchRendering(tool, result, [
+			{
+				agentId: "chain-adjusted-chain",
+				alias: "adjusted-chain",
+				status: "done",
+				thinking: "high",
+				warning: true,
+			},
+			{
+				agentId: "chain-plain-chain",
+				alias: "plain-chain",
+				status: "failed",
+				thinking: "max",
+				warning: false,
+				error: "plain chain failed",
+			},
+		]);
+	});
+
 	it("retains effective thinking and warning when Ctrl+B backgrounds a blocking run", async () => {
 		let resolveDone!: (state: SubagentState) => void;
 		const pending = new Promise<SubagentState>((resolve) => {
@@ -152,19 +268,33 @@ describe("normal launch activation", () => {
 		resolveDone({ ...adjusted, status: "done", finishedAt: 1 });
 	});
 
-	it("keeps item-specific provenance when Ctrl+B backgrounds a parallel batch", async () => {
-		const pending = [deferredState(), deferredState()];
-		mocks.dispatch.mockReset();
-		mocks.dispatch
-			.mockResolvedValueOnce(handleFor("batch-one", pending[0]!.promise))
-			.mockResolvedValueOnce(handleFor("batch-two", pending[1]!.promise));
+	it("keeps mixed Ctrl+B batch plans associated with completed and backgrounded details", async () => {
+		const pending = deferredState();
+		let backgroundFinal!: SubagentState;
+		mocks.dispatch.mockImplementation(async (plan) => {
+			const state = stateForPlan(plan, {
+				agentId: `ctrl-b-batch-${plan.options.alias}`,
+				status: plan.options.alias === "plain-background" ? "running" : "done",
+				finishedAt: plan.options.alias === "plain-background" ? null : 1,
+				finalOutput: plan.options.alias === "plain-background" ? null : "adjusted batch output",
+			});
+			if (plan.options.alias === "plain-background") {
+				backgroundFinal = { ...state, status: "done", finishedAt: 1, finalOutput: "plain batch output" };
+			}
+			return {
+				agentId: state.agentId,
+				state,
+				donePromise: plan.options.alias === "plain-background" ? pending.promise : Promise.resolve(state),
+			};
+		});
 		const { rt, detach } = runtime();
-		const execution = registeredRun(rt).execute(
+		const tool = registeredRun(rt);
+		const execution = tool.execute(
 			"call",
 			{
 				tasks: [
-					{ agent: "general-purpose", alias: "one", task: "one" },
-					{ agent: "general-purpose", alias: "two", task: "two" },
+					{ agent: "general-purpose", alias: "adjusted-complete", task: "one", model: "reasoner" },
+					{ agent: "general-purpose", alias: "plain-background", task: "two", model: "max-capable" },
 				],
 			},
 			undefined,
@@ -174,51 +304,139 @@ describe("normal launch activation", () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		detach.detachAll();
 		const result = await execution;
-		const backgrounded = result.details.backgrounded as Array<Record<string, unknown>>;
-		expect(backgrounded).toHaveLength(2);
-		expect(backgrounded.every((item) => item.thinking === "high")).toBe(true);
-		expect(
-			backgrounded.every(
-				(item) => JSON.stringify(item.thinkingAdjustment) === JSON.stringify({ requested: "max", effective: "high" }),
-			),
-		).toBe(true);
-		expect(result.content[0]?.text.match(/Warning: requested thinking level/g)).toHaveLength(2);
-		pending.forEach((item, index) => item.resolve(stateOf({ agentId: `batch-${index}`, status: "done" })));
-	});
 
-	it("keeps current-step provenance and abandoned metadata when Ctrl+B backgrounds a chain", async () => {
-		const pending = deferredState();
-		mocks.dispatch.mockReset();
-		mocks.dispatch
-			.mockResolvedValueOnce(handleFor("chain-done", Promise.resolve(stateOf({ agentId: "chain-done" }))))
-			.mockResolvedValueOnce(handleFor("chain-pending", pending.promise));
-		const { rt, detach } = runtime();
-		const execution = registeredRun(rt).execute(
-			"call",
-			{
-				chain: [
-					{ agent: "general-purpose", alias: "one", task: "one" },
-					{ agent: "general-purpose", alias: "two", task: "two" },
-					{ agent: "general-purpose", alias: "three", task: "three" },
-				],
-			},
-			undefined,
-			undefined,
-			context(),
-		);
-		await new Promise((resolve) => setTimeout(resolve, 0));
-		detach.detachAll();
-		const result = await execution;
-		expect(result.details.abandoned).toEqual(["three"]);
-		expect(result.details.backgrounded).toEqual([
+		expectLaunchAssociation([
+			{ alias: "adjusted-complete", model: "reasoner", thinking: "high", adjusted: true },
+			{ alias: "plain-background", model: "max-capable", thinking: "max", adjusted: false },
+		]);
+		expect(result.details.partial).toBe(true);
+		expect(result.details.results).toEqual([
 			expect.objectContaining({
-				agentId: "chain-pending",
+				agentId: "ctrl-b-batch-adjusted-complete",
+				alias: "adjusted-complete",
+				model: "reasoner",
 				thinking: "high",
+				status: "done",
+				finalOutput: "adjusted batch output",
 				thinkingAdjustment: { requested: "max", effective: "high" },
 			}),
 		]);
-		expect(result.content[0]?.text).toContain(warning);
-		pending.resolve(stateOf({ agentId: "chain-pending", status: "done" }));
+		expect(result.details.backgrounded).toEqual([
+			expect.objectContaining({
+				agentId: "ctrl-b-batch-plain-background",
+				alias: "plain-background",
+				model: "max-capable",
+				status: "backgrounded",
+				thinking: "max",
+			}),
+		]);
+		expect((result.details.backgrounded as Array<Record<string, unknown>>)[0]).not.toHaveProperty("thinkingAdjustment");
+		assertRealBatchRendering(tool, result, [
+			{
+				agentId: "ctrl-b-batch-adjusted-complete",
+				alias: "adjusted-complete",
+				status: "done",
+				thinking: "high",
+				warning: true,
+			},
+			{
+				agentId: "ctrl-b-batch-plain-background",
+				alias: "plain-background",
+				status: "backgrounded",
+				thinking: "max",
+				warning: false,
+			},
+		]);
+		pending.resolve(backgroundFinal);
+	});
+
+	it("keeps mixed Ctrl+B chain plans associated with current and abandoned steps", async () => {
+		const pending = deferredState();
+		let backgroundFinal!: SubagentState;
+		mocks.dispatch.mockImplementation(async (plan) => {
+			const backgrounded = plan.options.alias === "plain-chain-background";
+			const state = stateForPlan(plan, {
+				agentId: `ctrl-b-chain-${plan.options.alias}`,
+				status: backgrounded ? "running" : "done",
+				finishedAt: backgrounded ? null : 1,
+				finalOutput: backgrounded ? null : "adjusted chain output",
+			});
+			if (backgrounded) {
+				backgroundFinal = { ...state, status: "done", finishedAt: 1, finalOutput: "plain chain output" };
+			}
+			return { agentId: state.agentId, state, donePromise: backgrounded ? pending.promise : Promise.resolve(state) };
+		});
+		const { rt, detach } = runtime();
+		const tool = registeredRun(rt);
+		const execution = tool.execute(
+			"call",
+			{
+				chain: [
+					{ agent: "general-purpose", alias: "adjusted-chain-complete", task: "one", model: "reasoner" },
+					{
+						agent: "general-purpose",
+						alias: "plain-chain-background",
+						task: "two {previous}",
+						model: "max-capable",
+					},
+					{ agent: "general-purpose", alias: "abandoned-chain", task: "three", model: "reasoner" },
+				],
+			},
+			undefined,
+			undefined,
+			context(),
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		detach.detachAll();
+		const result = await execution;
+
+		expectLaunchAssociation([
+			{ alias: "adjusted-chain-complete", model: "reasoner", thinking: "high", adjusted: true },
+			{ alias: "plain-chain-background", model: "max-capable", thinking: "max", adjusted: false },
+		]);
+		expect(result.details.partial).toBe(true);
+		expect(result.details.abandoned).toEqual(["abandoned-chain"]);
+		expect(result.details.results).toEqual([
+			expect.objectContaining({
+				agentId: "ctrl-b-chain-adjusted-chain-complete",
+				alias: "adjusted-chain-complete",
+				model: "reasoner",
+				thinking: "high",
+				finalOutput: "adjusted chain output",
+				thinkingAdjustment: { requested: "max", effective: "high" },
+			}),
+		]);
+		expect(result.details.backgrounded).toEqual([
+			expect.objectContaining({
+				agentId: "ctrl-b-chain-plain-chain-background",
+				alias: "plain-chain-background",
+				model: "max-capable",
+				status: "backgrounded",
+				thinking: "max",
+			}),
+		]);
+		assertRealBatchRendering(
+			tool,
+			result,
+			[
+				{
+					agentId: "ctrl-b-chain-adjusted-chain-complete",
+					alias: "adjusted-chain-complete",
+					status: "done",
+					thinking: "high",
+					warning: true,
+				},
+				{
+					agentId: "ctrl-b-chain-plain-chain-background",
+					alias: "plain-chain-background",
+					status: "backgrounded",
+					thinking: "max",
+					warning: false,
+				},
+			],
+			"abandoned-chain",
+		);
+		pending.resolve(backgroundFinal);
 	});
 });
 
@@ -256,15 +474,26 @@ function runtime() {
 }
 
 function context() {
+	const models = {
+		reasoner: {
+			provider: "example",
+			id: "reasoner",
+			reasoning: true,
+			thinkingLevelMap: { xhigh: null, max: null },
+		},
+		"max-capable": {
+			provider: "example",
+			id: "max-capable",
+			reasoning: true,
+			thinkingLevelMap: { max: "provider-max" },
+		},
+	};
 	return {
 		cwd: tmp,
 		modelRegistry: {
-			find: vi.fn(() => ({
-				provider: "example",
-				id: "reasoner",
-				reasoning: true,
-				thinkingLevelMap: { xhigh: null, max: null },
-			})),
+			find: vi.fn((provider: string, modelId: string) =>
+				provider === "example" ? models[modelId as keyof typeof models] : undefined,
+			),
 		},
 	} as never;
 }
@@ -310,6 +539,103 @@ interface Tool {
 		onUpdate?: unknown,
 		ctx?: unknown,
 	): Promise<ToolResult>;
+	renderResult(
+		result: ToolResult,
+		options: { expanded: boolean },
+		theme: typeof renderTheme,
+		context: unknown,
+	): { render(width: number): string[] };
+}
+
+interface TestDispatchPlan {
+	agent: { name: string };
+	model: { provider: string; modelId: string; thinking: SubagentState["thinking"] };
+	thinkingAdjustment?: NonNullable<SubagentState["thinkingAdjustment"]>;
+	options: { alias: string; task: string };
+}
+
+interface ExpectedLaunch {
+	alias: string;
+	model: string;
+	thinking: SubagentState["thinking"];
+	adjusted: boolean;
+}
+
+interface ExpectedRender {
+	agentId: string;
+	alias: string;
+	status: string;
+	thinking: SubagentState["thinking"];
+	warning: boolean;
+	error?: string;
+}
+
+const renderTheme = {
+	bold: (text: string) => text,
+	fg: (_token: string, text: string) => text,
+};
+
+function stateForPlan(plan: TestDispatchPlan, overrides: Partial<SubagentState> = {}): SubagentState {
+	return stateOf({
+		agent: plan.agent.name,
+		alias: plan.options.alias,
+		task: plan.options.task,
+		thinking: plan.model.thinking,
+		thinkingAdjustment: plan.thinkingAdjustment,
+		provider: plan.model.provider,
+		model: plan.model.modelId,
+		...overrides,
+	});
+}
+
+function expectLaunchAssociation(expected: ExpectedLaunch[]): void {
+	expect(mocks.dispatch).toHaveBeenCalledTimes(expected.length);
+	for (const [index, item] of expected.entries()) {
+		const plan = mocks.dispatch.mock.calls[index]?.[0] as TestDispatchPlan;
+		expect(plan.options.alias).toBe(item.alias);
+		expect(plan.model).toMatchObject({ provider: "example", modelId: item.model, thinking: item.thinking });
+		if (item.adjusted) {
+			expect(plan.thinkingAdjustment).toEqual({ requested: "max", effective: "high" });
+		} else {
+			expect(plan.thinkingAdjustment).toBeUndefined();
+		}
+	}
+}
+
+function assertRealBatchRendering(
+	tool: Tool,
+	result: ToolResult,
+	expected: ExpectedRender[],
+	abandoned?: string,
+): void {
+	const compactLines = tool.renderResult(result, { expanded: false }, renderTheme, {}).render(100);
+	const compact = compactLines.join("\n");
+	const expanded = tool.renderResult(result, { expanded: true }, renderTheme, {}).render(100).join("\n");
+	expect(compactLines.every((line) => visibleWidth(line) <= 100)).toBe(true);
+	for (const item of expected) {
+		expect(compact).toContain(`${item.alias} #${item.agentId}`);
+		expect(compact).toContain(item.status);
+		expect(compact).toContain(item.thinking);
+		expect(expanded).toContain(item.alias);
+		expect(expanded).toContain(item.status);
+		if (item.error) {
+			expect(compact).toContain(item.error);
+			expect(expanded).toContain(item.error);
+		}
+	}
+	const warningCount = expected.filter((item) => item.warning).length;
+	expect(compact.match(/Warning: requested thinking level/g) ?? []).toHaveLength(warningCount);
+	expect(expanded.match(/Warning: requested thinking level/g) ?? []).toHaveLength(warningCount);
+	if (abandoned) {
+		expect(compact).toContain(`${abandoned} abandoned`);
+		expect(expanded).toContain(`[abandoned] ${abandoned}`);
+	}
+	for (const item of result.details.results as Array<Record<string, unknown>>) {
+		if (typeof item.finalOutput === "string") {
+			expect(compact).not.toContain(item.finalOutput);
+			expect(expanded).toContain(item.finalOutput);
+		}
+	}
 }
 
 function deferredState() {
@@ -318,18 +644,6 @@ function deferredState() {
 		resolve = done;
 	});
 	return { promise, resolve };
-}
-
-function handleFor(agentId: string, donePromise: Promise<SubagentState>) {
-	const state = stateOf({
-		agentId,
-		alias: agentId,
-		status: "running",
-		finishedAt: null,
-		thinking: "high",
-		thinkingAdjustment: { requested: "max", effective: "high" },
-	});
-	return { agentId, state, donePromise };
 }
 
 function stateOf(overrides: Partial<SubagentState>): SubagentState {

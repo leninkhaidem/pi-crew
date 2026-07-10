@@ -86,6 +86,7 @@ describe("buildSystemPromptBlock", () => {
 		const inherited = Object.create({ max: "inherited" }) as Record<string, unknown>;
 		const models = [
 			{ provider: "p", id: "string", reasoning: true, thinkingLevelMap: { max: "provider-max" } },
+			{ provider: "p", id: "non-reasoning-string", reasoning: false, thinkingLevelMap: { max: "provider-max" } },
 			{ provider: "p", id: "absent", reasoning: true },
 			{ provider: "p", id: "null-map", reasoning: true, thinkingLevelMap: null },
 			{ provider: "p", id: "array-map", reasoning: true, thinkingLevelMap: ["max"] },
@@ -115,18 +116,25 @@ describe("buildSystemPromptBlock", () => {
 		}));
 		const current = { provider: "z", id: "current", reasoning: false };
 		const duplicateCurrent = { ...current };
+		const misleadingMax = {
+			provider: "0",
+			id: "non-reasoning-string-max",
+			reasoning: false,
+			thinkingLevelMap: { max: "max" },
+		};
 		const other = { provider: "a", id: "other", reasoning: true };
 		const block = buildSystemPromptBlock({
 			agents: [],
 			configuredSlots: new Set(),
 			stateDirRoot: "/x",
-			models: [other, ...maxModels.reverse(), current, duplicateCurrent],
+			models: [other, misleadingMax, ...maxModels.reverse(), current, duplicateCurrent],
 			currentModel: { provider: "z", id: "current" },
 		});
 		const modelLines = block.split("\n").filter((line) => line.startsWith("    - provider:"));
 		expect(modelLines).toHaveLength(40);
 		expect(modelLines[0]).toContain("provider: z, model: current");
 		expect(modelLines.filter((line) => line.includes("model: current"))).toHaveLength(1);
+		expect(modelLines.some((line) => line.includes("model: non-reasoning-string-max"))).toBe(false);
 		expect(modelLines.slice(1).every((line) => line.includes("max-capable"))).toBe(true);
 		const maxKeys = modelLines.slice(1).map(
 			(line) =>
@@ -136,7 +144,7 @@ describe("buildSystemPromptBlock", () => {
 					.join("/") ?? "",
 		);
 		expect(maxKeys).toEqual([...maxKeys].sort());
-		expect(block).toContain("… 4 more models omitted (3 max-capable)");
+		expect(block).toContain("… 5 more models omitted (3 max-capable)");
 	});
 });
 

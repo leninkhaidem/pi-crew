@@ -94,7 +94,7 @@ describe("state store", () => {
 		expect(back?.alias).toBe("explore");
 	});
 
-	it("round-trips only the minimal valid differing thinking adjustment", async () => {
+	it("round-trips only the minimal valid differing thinking adjustment bound to effective state thinking", async () => {
 		const s = baseState("adjust01");
 		s.thinking = "high";
 		s.thinkingAdjustment = { requested: "max", effective: "high" };
@@ -107,6 +107,31 @@ describe("state store", () => {
 		expect(back?.thinking).toBe("high");
 		expect(back?.thinkingAdjustment).toEqual({ requested: "max", effective: "high" });
 		expect(Object.keys(back?.thinkingAdjustment ?? {})).toEqual(["requested", "effective"]);
+	});
+
+	it("retains valid provenance that matches legacy defaulted thinking without re-clamping", async () => {
+		const s = baseState("legacy02");
+		const { thinking: _thinking, ...legacy } = s;
+		await writeState(legacy as SubagentState);
+		const raw = JSON.parse(readFileSync(s.paths.state, "utf-8")) as Record<string, unknown>;
+		raw.thinkingAdjustment = { requested: "max", effective: "low" };
+		writeFileSync(s.paths.state, JSON.stringify(raw));
+
+		const back = await readState(s.paths.state);
+		expect(back?.thinking).toBe("low");
+		expect(back?.thinkingAdjustment).toEqual({ requested: "max", effective: "low" });
+	});
+
+	it("drops provenance whose effective value contradicts normalized state thinking", async () => {
+		const s = baseState("mismatch");
+		await writeState(s);
+		const raw = JSON.parse(readFileSync(s.paths.state, "utf-8")) as Record<string, unknown>;
+		raw.thinkingAdjustment = { requested: "max", effective: "high" };
+		writeFileSync(s.paths.state, JSON.stringify(raw));
+
+		const back = await readState(s.paths.state);
+		expect(back?.thinking).toBe("low");
+		expect(back).not.toHaveProperty("thinkingAdjustment");
 	});
 
 	it("drops malformed, invalid, partial, and equal adjustments without rejecting legacy state", async () => {

@@ -21,8 +21,18 @@ interface DispatchDetails {
 	errorMessage?: string | null;
 }
 
+interface BatchDetails {
+	results: DispatchDetails[];
+	backgrounded?: DispatchDetails[];
+	abandoned?: string[];
+	errors?: string[];
+	partial?: boolean;
+}
+
+type ResultDetails = DispatchDetails | BatchDetails;
+
 export function renderDispatchResult(
-	result: AgentToolResult<DispatchDetails>,
+	result: AgentToolResult<ResultDetails>,
 	options: ToolRenderResultOptions,
 	theme: Theme,
 ) {
@@ -30,23 +40,46 @@ export function renderDispatchResult(
 	const first = result.content[0];
 	const text = (first && "text" in first ? first.text : undefined) ?? "(no output)";
 	if (!options.expanded) {
-		return new Text(formatCompactResult(details, text, theme), 0, 0);
+		return new Text(
+			isBatchDetails(details)
+				? formatCompactBatchResult(details, text, theme)
+				: formatCompactResult(details, text, theme),
+			0,
+			0,
+		);
 	}
 	const md = getMarkdownTheme();
 	const c = new Container();
-	c.addChild(new Text(theme.fg("accent", `${details.alias ?? "subagent"} #${details.agentId ?? "?"}`), 0, 0));
+	const scalarDetails = isBatchDetails(details) ? {} : details;
+	c.addChild(
+		new Text(theme.fg("accent", `${scalarDetails.alias ?? "subagent"} #${scalarDetails.agentId ?? "?"}`), 0, 0),
+	);
 	c.addChild(new Spacer(1));
 	c.addChild(new Markdown(text.trim(), 0, 0, md));
-	const warning = formatThinkingAdjustment(details.thinkingAdjustment);
+	const warning = formatThinkingAdjustment(scalarDetails.thinkingAdjustment);
 	if (warning && !text.includes(warning)) {
 		c.addChild(new Spacer(1));
 		c.addChild(new Text(theme.fg("warning", warning), 0, 0));
 	}
-	if (details.usage) {
+	if (scalarDetails.usage) {
 		c.addChild(new Spacer(1));
-		c.addChild(new Text(theme.fg("dim", formatUsageStats(details.usage)), 0, 0));
+		c.addChild(new Text(theme.fg("dim", formatUsageStats(scalarDetails.usage)), 0, 0));
 	}
 	return c;
+}
+
+function isBatchDetails(details: ResultDetails): details is BatchDetails {
+	return "results" in details && Array.isArray(details.results);
+}
+
+function formatCompactBatchResult(details: BatchDetails, fallbackText: string, theme: Theme): string {
+	const items = [...details.results, ...(details.backgrounded ?? [])];
+	const lines = items.map((item) => formatCompactResult(item, fallbackText, theme));
+	for (const alias of details.abandoned ?? []) {
+		lines.push(`${theme.fg("warning", "○")} ${theme.bold(alias)} abandoned`);
+	}
+	for (const error of details.errors ?? []) lines.push(theme.fg("warning", `! ${firstLine(error)}`));
+	return lines.length > 0 ? lines.join("\n") : theme.fg("dim", firstLine(fallbackText));
 }
 
 function formatCompactResult(details: DispatchDetails, fallbackText: string, theme: Theme): string {

@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
+import { Key, KeybindingsManager, TUI_KEYBINDINGS } from "@mariozechner/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyConfig, parsePiCrewConfig } from "../../src/config/schema.js";
 import { runConfigTui } from "../../src/config/tui.js";
@@ -109,7 +110,11 @@ describe("runConfigTui", () => {
 		expect(parseSavedConfig(configPath).agents.explore).toMatchObject({ thinking: "high" });
 	});
 
-	it("shows zero-level explanation and Back returns to model selection without mutating the original slot", async () => {
+	it.each([
+		{ protocol: "legacy Enter", input: ENTER },
+		{ protocol: "Kitty Enter", input: "\x1b[13u" },
+		{ protocol: "modifyOtherKeys Backspace", input: "\x1b[27;1;127~" },
+	])("zero-level $protocol Back returns to model selection without mutating the original slot", async ({ input }) => {
 		const configPath = path.join(tmp, "pi-crew.json");
 		const currentConfig = emptyConfig();
 		currentConfig.agents.explore = { provider: "example", modelId: "zero", thinking: "max" };
@@ -120,7 +125,7 @@ describe("runConfigTui", () => {
 			calls += 1;
 			if (calls === 1) return "session";
 			if (calls === 2) return "example::zero";
-			if (calls === 3) return interact(factory, screens, ENTER);
+			if (calls === 3) return interact(factory, screens, input);
 			return "__skip__";
 		});
 
@@ -138,18 +143,24 @@ describe("runConfigTui", () => {
 		expect(parseSavedConfig(configPath).agents.explore).toEqual(original.agents.explore);
 	});
 
-	it("zero-level Cancel/Esc exits unsaved without a file write or slot mutation", async () => {
+	it.each([
+		{ cancellation: "legacy Escape", input: "\x1b", configured: false },
+		{ cancellation: "configured Ctrl+X", input: "\x18", configured: true },
+	])("zero-level $cancellation exits unsaved without a file write or slot mutation", async ({ input, configured }) => {
 		const configPath = path.join(tmp, "pi-crew.json");
 		const currentConfig = emptyConfig();
 		currentConfig.agents.explore = { provider: "example", modelId: "original", thinking: "max" };
 		const original = JSON.parse(JSON.stringify(currentConfig));
 		const screens: string[][] = [];
+		const keybindings = configured
+			? new KeybindingsManager(TUI_KEYBINDINGS, { "tui.select.cancel": Key.ctrl("x") })
+			: defaultKeybindings;
 		let calls = 0;
 		const custom = vi.fn(async (factory: CustomFactory) => {
 			calls += 1;
 			if (calls === 1) return "session";
 			if (calls === 2) return "example::zero";
-			return interact(factory, screens, "\x1b");
+			return interact(factory, screens, input, keybindings);
 		});
 
 		const result = await runConfigTui(mockContext(custom), {
@@ -159,6 +170,7 @@ describe("runConfigTui", () => {
 		});
 
 		expect(result).toEqual({ saved: false });
+		expect((screens[0] ?? []).join("\n")).toContain(configured ? "ctrl+x cancel" : "escape/ctrl+c cancel");
 		expect(existsSync(configPath)).toBe(false);
 		expect(currentConfig).toEqual(original);
 	});
@@ -179,10 +191,12 @@ interface FakeTui {
 	requestRender(): void;
 }
 
+type TestKeybindings = Pick<KeybindingsManager, "getKeys" | "matches">;
+
 type CustomFactory = (
 	tui: FakeTui,
 	theme: FakeTheme,
-	keyboard: unknown,
+	keyboard: TestKeybindings,
 	done: (value: string | null) => void,
 ) => CustomWidget;
 
@@ -210,19 +224,34 @@ function renderScreen(factory: CustomFactory, screens: string[][]): void {
 	screens.push(widget.render(120));
 }
 
-function interact(factory: CustomFactory, screens: string[][], input: string): string | null {
+function interact(
+	factory: CustomFactory,
+	screens: string[][],
+	input: string,
+	keybindings: TestKeybindings = defaultKeybindings,
+): string | null {
 	let selected: string | null = null;
-	const widget = createWidget(factory, (value) => {
-		selected = value;
-	});
+	const widget = createWidget(
+		factory,
+		(value) => {
+			selected = value;
+		},
+		keybindings,
+	);
 	screens.push(widget.render(120));
 	widget.handleInput(input);
 	return selected;
 }
 
-function createWidget(factory: CustomFactory, done: (value: string | null) => void): CustomWidget {
-	return factory({ requestRender: () => undefined }, fakeTheme, undefined, done);
+function createWidget(
+	factory: CustomFactory,
+	done: (value: string | null) => void,
+	keybindings: TestKeybindings = defaultKeybindings,
+): CustomWidget {
+	return factory({ requestRender: () => undefined }, fakeTheme, keybindings, done);
 }
+
+const defaultKeybindings = new KeybindingsManager(TUI_KEYBINDINGS);
 
 const fakeTheme: FakeTheme = {
 	fg: (_name, text) => text,

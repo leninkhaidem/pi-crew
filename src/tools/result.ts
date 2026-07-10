@@ -12,6 +12,7 @@ import type { ExtensionRuntime } from "../runtime/types.js";
 import { getRoot } from "../state/paths.js";
 import { readState } from "../state/store.js";
 import { formatParentSummary } from "../summary.js";
+import { formatThinkingAdjustment } from "../thinking.js";
 import type { SubagentState } from "../types.js";
 import { renderDispatchResult } from "../ui/render-result.js";
 
@@ -172,7 +173,10 @@ async function formatResultText(
 	recentOutput?: TranscriptExcerpt,
 ): Promise<string> {
 	if (alreadyHandled && state.status === "done" && !verbose) {
-		return appendRecentOutput([formatAlreadyHandledText(state)], recentOutput).join("\n");
+		const lines = [formatAlreadyHandledText(state)];
+		const warning = formatThinkingAdjustment(state.thinkingAdjustment);
+		if (warning) lines.push(warning);
+		return appendRecentOutput(lines, recentOutput).join("\n");
 	}
 	const lines = [formatParentSummary(state, { full: true })];
 	if (!TERMINAL.has(state.status)) {

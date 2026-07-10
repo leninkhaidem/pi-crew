@@ -41,12 +41,13 @@ function normalizeState(input: unknown, statePath: string): SubagentState {
 		thinkingAdjustment?: unknown;
 	};
 	const { thinkingAdjustment: rawAdjustment, ...legacyState } = state;
-	const thinkingAdjustment = normalizeThinkingAdjustment(rawAdjustment);
+	const thinking = state.thinking ?? defaultThinkingForAgent(state.agent);
+	const thinkingAdjustment = normalizeThinkingAdjustment(rawAdjustment, thinking);
 	const dir = path.dirname(statePath);
 	return {
 		...legacyState,
 		alias: state.alias ?? state.agent,
-		thinking: state.thinking ?? defaultThinkingForAgent(state.agent),
+		thinking,
 		...(thinkingAdjustment ? { thinkingAdjustment } : {}),
 		paths: {
 			state: statePath,
@@ -57,11 +58,14 @@ function normalizeState(input: unknown, statePath: string): SubagentState {
 	};
 }
 
-function normalizeThinkingAdjustment(value: unknown): ThinkingAdjustment | undefined {
+function normalizeThinkingAdjustment(
+	value: unknown,
+	effectiveThinking: SubagentState["thinking"],
+): ThinkingAdjustment | undefined {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
 	const pair = value as Record<string, unknown>;
 	if (!isThinkingLevel(pair.requested) || !isThinkingLevel(pair.effective)) return undefined;
-	if (pair.requested === pair.effective) return undefined;
+	if (pair.requested === pair.effective || pair.effective !== effectiveThinking) return undefined;
 	return { requested: pair.requested, effective: pair.effective };
 }
 

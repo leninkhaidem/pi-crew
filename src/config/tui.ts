@@ -2,7 +2,7 @@
 import { type Api, type Model, supportsXhigh } from "@mariozechner/pi-ai";
 import type { ExtensionCommandContext, Theme } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder } from "@mariozechner/pi-coding-agent";
-import { Container, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
+import { Container, Key, type SelectItem, SelectList, Text, matchesKey } from "@mariozechner/pi-tui";
 import { resolveThinkingLevel, supportsThinkingLevel } from "../thinking.js";
 import {
 	type AgentSlot,
@@ -210,7 +210,7 @@ async function selectNoThinkingLevel(
 	slot: string,
 	model: Model<Api>,
 ): Promise<typeof BACK_CHOICE | null> {
-	return ctx.ui.custom<typeof BACK_CHOICE | null>((tui, theme, _kb, done) => {
+	return ctx.ui.custom<typeof BACK_CHOICE | null>((tui, theme, keybindings, done) => {
 		const c = new Container();
 		c.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 		c.addChild(new Text(theme.fg("accent", theme.bold(`pi-crew · ${slot} thinking`)), 1, 0));
@@ -220,14 +220,22 @@ async function selectNoThinkingLevel(
 		c.addChild(
 			new Text(theme.fg("dim", "Choose Back to select another model, or Cancel to exit without saving."), 1, 0),
 		);
-		c.addChild(new Text(theme.fg("dim", "enter/← back · esc cancel"), 1, 0));
+		const backKeys = [...keybindings.getKeys("tui.select.confirm"), Key.left, Key.backspace].join("/");
+		const cancelKeys = keybindings.getKeys("tui.select.cancel").join("/");
+		c.addChild(new Text(theme.fg("dim", `${backKeys} back · ${cancelKeys} cancel`), 1, 0));
 		c.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 		return {
 			render: (width) => c.render(width),
 			invalidate: () => c.invalidate(),
 			handleInput: (data) => {
-				if (data === "\r" || data === "\n" || data === "\x1b[D" || data === "\x7f") done(BACK_CHOICE);
-				else if (data === "\x1b") done(null);
+				if (keybindings.matches(data, "tui.select.cancel")) done(null);
+				else if (
+					keybindings.matches(data, "tui.select.confirm") ||
+					matchesKey(data, Key.left) ||
+					matchesKey(data, Key.backspace)
+				) {
+					done(BACK_CHOICE);
+				}
 				tui.requestRender();
 			},
 		};
