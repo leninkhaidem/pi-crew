@@ -18,8 +18,8 @@ import { createDetachController } from "./runtime/detach.js";
 import { abortSubagentByStatePath } from "./runtime/kill.js";
 import type { DispatchHandle, LifecycleEnv, LifecycleHooks } from "./runtime/lifecycle.js";
 import { createParentAbortTracker } from "./runtime/parent-abort.js";
-import { shouldSuppressPiCrewSubagentTools } from "./runtime/tool-suppression.js";
 import { killTmuxWindow, launchTmuxView } from "./runtime/tmux.js";
+import { shouldSuppressPiCrewSubagentTools } from "./runtime/tool-suppression.js";
 import type { ExtensionRuntime } from "./runtime/types.js";
 import { listStates, readState, writeState } from "./state/store.js";
 import { sweep } from "./state/sweep.js";
@@ -27,9 +27,9 @@ import { buildSystemPromptBlock } from "./system-prompt.js";
 import { registerDispatchTool } from "./tools/dispatch.js";
 import { registerKillTool } from "./tools/kill.js";
 import { registerGetSubagentResultTool } from "./tools/result.js";
+import { registerResumeTool } from "./tools/resume.js";
 import { registerRunTool } from "./tools/run.js";
 import { registerStatusTool } from "./tools/status.js";
-import { registerResumeTool } from "./tools/resume.js";
 import { registerSteerTool } from "./tools/steer.js";
 import type { PiCrewConfig } from "./types.js";
 import { type FooterController, mountFooter } from "./ui/footer.js";
@@ -322,12 +322,7 @@ export default function (pi: ExtensionAPI) {
 			})),
 			configuredSlots,
 			stateDirRoot: path.join(agentDir, "subagents"),
-			models: availableModels.map((model) => ({
-				provider: model.provider,
-				id: model.id,
-				name: model.name,
-				reasoning: model.reasoning,
-			})),
+			models: availableModels.map(projectPromptModel),
 			currentModel: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : null,
 		});
 		return {
@@ -344,11 +339,28 @@ function safeAvailableModels(ctx: ExtensionContext) {
 	}
 }
 
+function projectPromptModel(model: ReturnType<typeof safeAvailableModels>[number]) {
+	const metadata = thinkingLevelMapOf(model);
+	return {
+		provider: model.provider,
+		id: model.id,
+		name: model.name,
+		reasoning: model.reasoning,
+		...(metadata.present ? { thinkingLevelMap: metadata.value } : {}),
+	};
+}
+
+function thinkingLevelMapOf(model: object): { present: boolean; value?: unknown } {
+	if (!Object.prototype.hasOwnProperty.call(model, "thinkingLevelMap")) return { present: false };
+	return { present: true, value: (model as Record<string, unknown>).thinkingLevelMap };
+}
+
 // Programmatic API re-exports
 export { dispatch as dispatchSubagent } from "./runtime/lifecycle.js";
 export { readState as getSubagentState, listStates as listSubagentStates } from "./state/store.js";
 export type { LifecycleEnv, LifecycleHooks, DispatchPlan, DispatchHandle } from "./runtime/lifecycle.js";
 export type { AgentDiscoveryResult, AgentScope, DiscoverArgs } from "./agents/discovery.js";
+export { THINKING_LEVELS } from "./types.js";
 export type {
 	AgentConfig,
 	AgentSlot,
@@ -364,5 +376,7 @@ export type {
 	SubagentState,
 	SubagentStatus,
 	SubagentUsage,
+	ThinkingAdjustment,
+	ThinkingLevel,
 	TmuxSettings,
 } from "./types.js";

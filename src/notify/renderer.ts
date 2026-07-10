@@ -1,5 +1,6 @@
 import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
+import { formatThinkingAdjustment } from "../thinking.js";
 import type { SubagentState } from "../types.js";
 import { formatUsageStats } from "../ui/format.js";
 
@@ -24,7 +25,10 @@ function renderState(state: SubagentState, expanded: boolean, theme: Theme): str
 		? (state.finalOutput ?? "No output.")
 		: (state.errorMessage ?? `exit ${state.exitCode ?? "unknown"}`);
 	const preview = expanded ? reason : reason.split("\n")[0]?.slice(0, 160) || "No output.";
-	const lines = [title, `  ${theme.fg("dim", stats)}`, `  ${theme.fg("dim", `⎿  ${preview}`)}`];
+	const lines = [title, `  ${theme.fg("dim", stats)}`];
+	const warning = formatThinkingAdjustment(state.thinkingAdjustment);
+	if (warning) lines.push(`  ${theme.fg("warning", warning)}`);
+	lines.push(`  ${theme.fg("dim", `⎿  ${preview}`)}`);
 	if (!ok || expanded) lines.push(`  ${theme.fg("muted", `state: ${state.paths.state}`)}`);
 	if (expanded) lines.push(`  ${theme.fg("muted", `transcript: ${state.paths.output}`)}`);
 	return lines.join("\n");

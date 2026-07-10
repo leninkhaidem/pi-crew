@@ -102,6 +102,7 @@ export function registerGetSubagentResultTool(pi: ExtensionAPI, rt: ExtensionRun
 				provider: state.provider,
 				model: state.model,
 				thinking: state.thinking,
+				...(state.thinkingAdjustment ? { thinkingAdjustment: state.thinkingAdjustment } : {}),
 				turns: state.turns,
 				paths: state.paths,
 				usage: state.usage,

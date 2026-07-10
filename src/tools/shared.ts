@@ -1,16 +1,13 @@
 // src/tools/shared.ts
 import { Type } from "typebox";
+import { THINKING_LEVELS } from "../types.js";
 
 export const ThinkingLevelSchema = Type.Union(
-	[
-		Type.Literal("off"),
-		Type.Literal("minimal"),
-		Type.Literal("low"),
-		Type.Literal("medium"),
-		Type.Literal("high"),
-		Type.Literal("xhigh"),
-	],
-	{ description: "Valid values: off|minimal|low|medium|high|xhigh. Non-reasoning models force off." },
+	THINKING_LEVELS.map((level) => Type.Literal(level)),
+	{
+		description:
+			"Valid values: off|minimal|low|medium|high|xhigh|max. Unsupported max uses the nearest supported lower level with a warning; non-reasoning models force off.",
+	},
 );
 
 export const SlotOverrideProperties = {

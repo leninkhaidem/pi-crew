@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { parsePiCrewConfig } from "../../src/config/schema.js";
+import { THINKING_LEVELS } from "../../src/types.js";
 
 describe("parsePiCrewConfig", () => {
+	it("exports the exact canonical public thinking vocabulary", () => {
+		expect(THINKING_LEVELS).toEqual(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+		expect(THINKING_LEVELS).not.toContain("maximum");
+	});
 	it("accepts a complete config", () => {
 		const r = parsePiCrewConfig({
 			version: 1,
@@ -84,13 +89,16 @@ describe("parsePiCrewConfig", () => {
 		}
 	});
 
-	it("accepts explicit thinking levels", () => {
-		const r = parsePiCrewConfig({
-			version: 1,
-			agents: { explore: { provider: "anthropic", modelId: "claude-haiku-4-5", thinking: "off" } },
-		});
-		expect(r.ok).toBe(true);
-		if (r.ok) expect((r.value.agents.explore as { thinking?: string } | undefined)?.thinking).toBe("off");
+	it("accepts exactly the seven canonical thinking levels", () => {
+		const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+		for (const thinking of levels) {
+			const r = parsePiCrewConfig({
+				version: 1,
+				agents: { explore: { provider: "example", modelId: "model", thinking } },
+			});
+			expect(r.ok).toBe(true);
+			if (r.ok) expect((r.value.agents.explore as { thinking?: string } | undefined)?.thinking).toBe(thinking);
+		}
 	});
 
 	it("preserves unknown per-slot config keys", () => {

@@ -20,16 +20,16 @@ afterEach(() => {
 });
 
 describe("spawnSubagent", () => {
-	it("passes the configured thinking level to pi", async () => {
+	it.each(["high", "max"] as const)("passes the effective %s thinking level to pi", async (thinking) => {
 		const mock = prepareMockPi({ events: [], exitCode: 0, delayMs: 1 });
-		const runDir = path.join(tmp, "run");
+		const runDir = path.join(tmp, `run-${thinking}`);
 		mkdirSync(runDir, { recursive: true });
 
 		try {
 			const spawned = spawnSubagent({
 				binary: mock.binary,
 				model: "mock/mock-model",
-				thinking: "high",
+				thinking,
 				tools: null,
 				systemPromptPath: path.join(runDir, "prompt.md"),
 				task: "say ok",
@@ -38,11 +38,11 @@ describe("spawnSubagent", () => {
 				stderrPath: path.join(runDir, "stderr.log"),
 				parentAgentId: "parent",
 				sessionId: "session",
-			} as Parameters<typeof spawnSubagent>[0] & { thinking: "high" });
+			});
 
 			const thinkingFlagIndex = spawned.args.indexOf("--thinking");
 			expect(thinkingFlagIndex).toBeGreaterThan(-1);
-			expect(spawned.args[thinkingFlagIndex + 1]).toBe("high");
+			expect(spawned.args[thinkingFlagIndex + 1]).toBe(thinking);
 
 			await once(spawned.proc, "close");
 			closeSpawnFds(spawned);

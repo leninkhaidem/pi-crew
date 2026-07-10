@@ -94,6 +94,19 @@ describe("renderActiveAgentsPanel", () => {
 		expect(lines.filter((line) => line.includes("⎿"))).toEqual(["     ⎿  editing src/ui/widget.ts"]);
 	});
 
+	it("shows canonical adjustment warning beside effective thinking in the compact active widget", () => {
+		const lines = renderActiveAgentsPanel({
+			states: [stateOf({ thinking: "high", thinkingAdjustment: { requested: "max", effective: "high" } })],
+			width: 180,
+			theme: theme as never,
+		});
+		const rendered = lines.join("\n");
+		expect(rendered).toContain("openai-codex/gpt-5.4-mini · high");
+		expect(rendered).toContain(
+			'Warning: requested thinking level "max" is unsupported by the selected model; using "high" instead.',
+		);
+	});
+
 	it("never emits embedded newlines from multiline task or activity text", () => {
 		const lines = renderActiveAgentsPanel({
 			states: [

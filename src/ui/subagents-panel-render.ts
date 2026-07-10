@@ -1,6 +1,7 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import type { TranscriptExcerpt } from "../runtime/transcript.js";
+import { formatThinkingAdjustment } from "../thinking.js";
 import type { SubagentState } from "../types.js";
 import { formatStateActivity } from "./activity.js";
 import { formatUsageStats } from "./format.js";
@@ -108,7 +109,8 @@ function helpLine(
 	const killHelp = args.canKill === false || !selected ? "" : " · d kill";
 	if (args.states.length === 0) return row(" esc close", args.width, args.theme, "dim");
 	if (mode === "expanded") return row(` ←/esc back${killHelp}`, args.width, args.theme, "dim");
-	if (mode === "split") return row(` ↑↓/j/k select · enter/→ expand · ←/esc close${killHelp}`, args.width, args.theme, "dim");
+	if (mode === "split")
+		return row(` ↑↓/j/k select · enter/→ expand · ←/esc close${killHelp}`, args.width, args.theme, "dim");
 	return row(` ↑↓/j/k select · enter/→ details · ←/esc close${killHelp}`, args.width, args.theme, "dim");
 }
 
@@ -180,6 +182,8 @@ function buildAgentListRows(args: PanelRenderArgs, width: number): string[] {
 		rows.push(compactAgentMeta(state, args.theme));
 		const scope = scopeLabel(state, args.currentBatchId ?? null);
 		if (scope) rows.push(args.theme.fg("muted", `  ${scope}`));
+		const warning = formatThinkingAdjustment(state.thinkingAdjustment);
+		if (warning) rows.push(args.theme.fg("warning", `  ${warning}`));
 		rows.push(args.theme.fg("dim", `  ${oneLine(formatStateActivity(state))}`));
 		if (idx < visible.length - 1) rows.push("");
 	}
@@ -214,9 +218,13 @@ function buildSelectedDetailRows(args: PanelRenderArgs, state: SubagentState, wi
 			`${oneLine(state.agent)} · ${oneLine(state.provider)}/${oneLine(state.model)} · ${oneLine(state.thinking)}`,
 		),
 	);
+	const warning = formatThinkingAdjustment(state.thinkingAdjustment);
+	if (warning) rows.push(args.theme.fg("warning", warning));
 	rows.push(detailCellLine(args.theme, "cwd", state.cwd));
 	rows.push(detailCellLine(args.theme, "elapsed", formatDuration(Date.now() - state.startedAt)));
-	rows.push(detailCellLine(args.theme, "usage", formatUsageStats({ ...state.usage, turns: state.turns }) || "no usage yet"));
+	rows.push(
+		detailCellLine(args.theme, "usage", formatUsageStats({ ...state.usage, turns: state.turns }) || "no usage yet"),
+	);
 	rows.push("");
 	rows.push(sectionCellTitle(args.theme, "task", width));
 	rows.push(...wrapText(state.task, Math.max(10, width)).map((line) => `  ${line}`));
@@ -243,6 +251,8 @@ function appendStateRows(lines: string[], args: PanelRenderArgs): void {
 		const absoluteIdx = offset + idx;
 		const selected = absoluteIdx === args.selectedIdx;
 		lines.push(row(summaryLine(state, selected, args.theme, args.currentBatchId ?? null), args.width, args.theme));
+		const warning = formatThinkingAdjustment(state.thinkingAdjustment);
+		if (warning) lines.push(row(`   ${warning}`, args.width, args.theme, "warning"));
 	}
 	const hiddenBefore = offset;
 	const hiddenAfter = Math.max(0, args.states.length - offset - visible.length);
@@ -273,6 +283,8 @@ function appendMetadataRows(lines: string[], args: PanelRenderArgs, state: Subag
 			args.theme,
 		),
 	);
+	const warning = formatThinkingAdjustment(state.thinkingAdjustment);
+	if (warning) lines.push(row(warning, args.width, args.theme, "warning"));
 	lines.push(row(detailLine(args.theme, "cwd", state.cwd), args.width, args.theme));
 	lines.push(
 		row(detailLine(args.theme, "elapsed", formatDuration(Date.now() - state.startedAt)), args.width, args.theme),

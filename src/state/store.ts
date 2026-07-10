@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { type SubagentState, defaultThinkingForAgent } from "../types.js";
+import { type SubagentState, THINKING_LEVELS, type ThinkingAdjustment, defaultThinkingForAgent } from "../types.js";
 
 const READ_RETRIES = 3;
 const READ_RETRY_DELAY_MS = 50;
@@ -35,12 +35,19 @@ export async function readState(p: string): Promise<SubagentState | null> {
 }
 
 function normalizeState(input: unknown, statePath: string): SubagentState {
-	const state = input as SubagentState & { thinking?: SubagentState["thinking"]; alias?: string };
+	const state = input as SubagentState & {
+		thinking?: SubagentState["thinking"];
+		alias?: string;
+		thinkingAdjustment?: unknown;
+	};
+	const { thinkingAdjustment: rawAdjustment, ...legacyState } = state;
+	const thinkingAdjustment = normalizeThinkingAdjustment(rawAdjustment);
 	const dir = path.dirname(statePath);
 	return {
-		...state,
+		...legacyState,
 		alias: state.alias ?? state.agent,
 		thinking: state.thinking ?? defaultThinkingForAgent(state.agent),
+		...(thinkingAdjustment ? { thinkingAdjustment } : {}),
 		paths: {
 			state: statePath,
 			output: path.join(dir, "output.jsonl"),
@@ -48,6 +55,18 @@ function normalizeState(input: unknown, statePath: string): SubagentState {
 			prompt: path.join(dir, "prompt.md"),
 		},
 	};
+}
+
+function normalizeThinkingAdjustment(value: unknown): ThinkingAdjustment | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const pair = value as Record<string, unknown>;
+	if (!isThinkingLevel(pair.requested) || !isThinkingLevel(pair.effective)) return undefined;
+	if (pair.requested === pair.effective) return undefined;
+	return { requested: pair.requested, effective: pair.effective };
+}
+
+function isThinkingLevel(value: unknown): value is SubagentState["thinking"] {
+	return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value);
 }
 
 export interface ListOptions {

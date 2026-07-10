@@ -32,9 +32,7 @@ describe("buildSystemPromptBlock", () => {
 		expect(block).not.toContain("Unconfigured");
 		expect(block).toContain("/home/u/.pi/agent/subagents/<sessionId>/<agentId>/");
 		expect(block).toContain("Every sub-agent launch requires `alias`");
-		expect(block).toContain(
-			"Prefer background completion notifications and blocking `subagent_run` results",
-		);
+		expect(block).toContain("Prefer background completion notifications and blocking `subagent_run` results");
 		expect(block).toContain(
 			"Do not use it for routine polling or after a normal completion notification/blocking result",
 		);
@@ -81,6 +79,64 @@ describe("buildSystemPromptBlock", () => {
 		);
 		expect(block).toContain("provider: openai-codex, model: gpt-5.4-mini — reasoning current parent");
 		expect(block).toContain("provider: local, model: qwen — non-reasoning");
+		expect(block).toContain("off, minimal, low, medium, high, xhigh, max");
+	});
+
+	it("labels max capability only for an own string max mapping", () => {
+		const inherited = Object.create({ max: "inherited" }) as Record<string, unknown>;
+		const models = [
+			{ provider: "p", id: "string", reasoning: true, thinkingLevelMap: { max: "provider-max" } },
+			{ provider: "p", id: "absent", reasoning: true },
+			{ provider: "p", id: "null-map", reasoning: true, thinkingLevelMap: null },
+			{ provider: "p", id: "array-map", reasoning: true, thinkingLevelMap: ["max"] },
+			{ provider: "p", id: "missing-entry", reasoning: true, thinkingLevelMap: {} },
+			{ provider: "p", id: "null-entry", reasoning: true, thinkingLevelMap: { max: null } },
+			{ provider: "p", id: "inherited-entry", reasoning: true, thinkingLevelMap: inherited },
+		];
+		const block = buildSystemPromptBlock({
+			agents: [],
+			configuredSlots: new Set(),
+			stateDirRoot: "/x",
+			models,
+		});
+		expect(block).toContain("model: string — reasoning max-capable");
+		for (const id of models.slice(1).map((model) => model.id)) {
+			const line = block.split("\n").find((candidate) => candidate.includes(`model: ${id} —`));
+			expect(line).not.toContain("max-capable");
+		}
+	});
+
+	it("bounds and deterministically prioritizes current, max-capable, then other authenticated models", () => {
+		const maxModels = Array.from({ length: 42 }, (_, index) => ({
+			provider: index % 2 === 0 ? "b" : "a",
+			id: `max-${index.toString().padStart(2, "0")}`,
+			reasoning: true,
+			thinkingLevelMap: { max: "max" },
+		}));
+		const current = { provider: "z", id: "current", reasoning: false };
+		const duplicateCurrent = { ...current };
+		const other = { provider: "a", id: "other", reasoning: true };
+		const block = buildSystemPromptBlock({
+			agents: [],
+			configuredSlots: new Set(),
+			stateDirRoot: "/x",
+			models: [other, ...maxModels.reverse(), current, duplicateCurrent],
+			currentModel: { provider: "z", id: "current" },
+		});
+		const modelLines = block.split("\n").filter((line) => line.startsWith("    - provider:"));
+		expect(modelLines).toHaveLength(40);
+		expect(modelLines[0]).toContain("provider: z, model: current");
+		expect(modelLines.filter((line) => line.includes("model: current"))).toHaveLength(1);
+		expect(modelLines.slice(1).every((line) => line.includes("max-capable"))).toBe(true);
+		const maxKeys = modelLines.slice(1).map(
+			(line) =>
+				line
+					.match(/provider: ([^,]+), model: ([^ ]+)/)
+					?.slice(1)
+					.join("/") ?? "",
+		);
+		expect(maxKeys).toEqual([...maxKeys].sort());
+		expect(block).toContain("… 4 more models omitted (3 max-capable)");
 	});
 });
 

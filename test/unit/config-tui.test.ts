@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
@@ -51,23 +51,116 @@ describe("runConfigTui", () => {
 
 	it("prompts for thinking when a concrete model is selected", async () => {
 		const configPath = path.join(tmp, "pi-crew.json");
-		const choices = ["session", "anthropic::claude-haiku-4-5", "minimal", "__skip__"];
+		const choices = ["session", "example::reasoner", "minimal", "__skip__"];
 		let choiceIndex = 0;
 		const custom = vi.fn(async () => choices[choiceIndex++] ?? null);
 
 		const result = await runConfigTui(mockContext(custom), {
 			configPath,
 			currentConfig: emptyConfig(),
-			availableModels: [model("anthropic", "claude-haiku-4-5", false)],
+			availableModels: [model("example", "reasoner", true, { minimal: "m" })],
 		});
 
 		expect(result.saved).toBe(true);
 		expect(custom).toHaveBeenCalledTimes(4);
 		expect(parseSavedConfig(configPath).agents.explore).toMatchObject({
-			provider: "anthropic",
-			modelId: "claude-haiku-4-5",
+			provider: "example",
+			modelId: "reasoner",
 			thinking: "minimal",
 		});
+	});
+
+	it("filters standard and extended holes and preselects stale max's effective lower level", async () => {
+		const configPath = path.join(tmp, "pi-crew.json");
+		const currentConfig = emptyConfig();
+		currentConfig.agents.explore = { provider: "example", modelId: "reasoner", thinking: "max" };
+		const screens: string[][] = [];
+		let calls = 0;
+		const custom = vi.fn(async (factory: CustomFactory) => {
+			calls += 1;
+			if (calls === 1) return "session";
+			if (calls === 2) return "example::reasoner";
+			if (calls === 3) return selectCurrent(factory, screens);
+			return "__skip__";
+		});
+
+		const result = await runConfigTui(mockContext(custom), {
+			configPath,
+			currentConfig,
+			availableModels: [
+				model("example", "reasoner", true, {
+					off: "off",
+					minimal: null,
+					low: null,
+					medium: null,
+					high: "high",
+					xhigh: null,
+					max: null,
+				}),
+			],
+		});
+
+		expect(result.saved).toBe(true);
+		expect(selectedLine(screens[0] ?? [])).toContain("high");
+		const thinkingScreen = (screens[0] ?? []).join("\n");
+		expect(thinkingScreen).toContain("off");
+		expect(thinkingScreen).not.toMatch(/→?\s+minimal\s/);
+		expect(thinkingScreen).not.toMatch(/→?\s+xhigh\s/);
+		expect(parseSavedConfig(configPath).agents.explore).toMatchObject({ thinking: "high" });
+	});
+
+	it("shows zero-level explanation and Back returns to model selection without mutating the original slot", async () => {
+		const configPath = path.join(tmp, "pi-crew.json");
+		const currentConfig = emptyConfig();
+		currentConfig.agents.explore = { provider: "example", modelId: "zero", thinking: "max" };
+		const original = JSON.parse(JSON.stringify(currentConfig));
+		const screens: string[][] = [];
+		let calls = 0;
+		const custom = vi.fn(async (factory: CustomFactory) => {
+			calls += 1;
+			if (calls === 1) return "session";
+			if (calls === 2) return "example::zero";
+			if (calls === 3) return interact(factory, screens, ENTER);
+			return "__skip__";
+		});
+
+		const result = await runConfigTui(mockContext(custom), {
+			configPath,
+			currentConfig,
+			availableModels: [model("example", "zero", true, noLevelsMap())],
+		});
+
+		expect(result).toEqual({ saved: true });
+		expect((screens[0] ?? []).join("\n")).toContain("advertises no supported thinking levels");
+		expect((screens[0] ?? []).join("\n")).toContain("Back");
+		expect(selectedLine(screens[0] ?? [])).toBe("");
+		expect(currentConfig).toEqual(original);
+		expect(parseSavedConfig(configPath).agents.explore).toEqual(original.agents.explore);
+	});
+
+	it("zero-level Cancel/Esc exits unsaved without a file write or slot mutation", async () => {
+		const configPath = path.join(tmp, "pi-crew.json");
+		const currentConfig = emptyConfig();
+		currentConfig.agents.explore = { provider: "example", modelId: "original", thinking: "max" };
+		const original = JSON.parse(JSON.stringify(currentConfig));
+		const screens: string[][] = [];
+		let calls = 0;
+		const custom = vi.fn(async (factory: CustomFactory) => {
+			calls += 1;
+			if (calls === 1) return "session";
+			if (calls === 2) return "example::zero";
+			return interact(factory, screens, "\x1b");
+		});
+
+		const result = await runConfigTui(mockContext(custom), {
+			configPath,
+			currentConfig,
+			availableModels: [model("example", "zero", true, noLevelsMap())],
+		});
+
+		expect(result).toEqual({ saved: false });
+		expect(existsSync(configPath)).toBe(false);
+		expect(currentConfig).toEqual(original);
 	});
 });
 
@@ -117,6 +210,16 @@ function renderScreen(factory: CustomFactory, screens: string[][]): void {
 	screens.push(widget.render(120));
 }
 
+function interact(factory: CustomFactory, screens: string[][], input: string): string | null {
+	let selected: string | null = null;
+	const widget = createWidget(factory, (value) => {
+		selected = value;
+	});
+	screens.push(widget.render(120));
+	widget.handleInput(input);
+	return selected;
+}
+
 function createWidget(factory: CustomFactory, done: (value: string | null) => void): CustomWidget {
 	return factory({ requestRender: () => undefined }, fakeTheme, undefined, done);
 }
@@ -137,11 +240,16 @@ function parseSavedConfig(configPath: string) {
 	return result.value;
 }
 
-function model(provider: string, id: string, reasoning: boolean): Model<Api> {
+function model(provider: string, id: string, reasoning: boolean, thinkingLevelMap?: unknown): Model<Api> {
 	return {
 		provider,
 		id,
 		reasoning,
 		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+		...(thinkingLevelMap !== undefined ? { thinkingLevelMap } : {}),
 	} as Model<Api>;
+}
+
+function noLevelsMap(): Record<string, null> {
+	return Object.fromEntries(["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => [level, null]));
 }

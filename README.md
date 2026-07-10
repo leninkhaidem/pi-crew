@@ -10,7 +10,7 @@ Sub-agent extension for the [pi coding assistant](https://github.com/badlogic/pi
 - **Live status.** Widget above the editor appears while sub-agents are active and shows status, model, and one-line current activity.
 - **Multi-provider.** Each agent slot's model is configured via TUI from your authenticated providers. No hardcoded model IDs.
 - **Per-call model overrides.** `Agent`, `subagent_dispatch`, and `subagent_run` accept optional `provider`, `model`, and `thinking` overrides; available models are injected into the prompt.
-- **Per-slot thinking budget.** Reasoning effort (`off|minimal|low|medium|high|xhigh`) is configurable for `explore`; `general-purpose` inherits the parent model and thinking effort by default.
+- **Per-slot thinking budget.** Reasoning effort (`off|minimal|low|medium|high|xhigh|max`) is configurable for `explore`; `general-purpose` inherits the parent model and thinking effort by default. Levels are filtered from each model's structural `reasoning` and `thinkingLevelMap` metadata.
 - **Two bundled defaults.** `general-purpose` and `explore`. Override by creating same-named `.md` in `~/.pi/agent/agents/`.
 - **Tmux integration.** Optional live view of sub-agents in tmux windows or a separate session.
 - **Deliberate cancellation.** `Ctrl+C` keeps its current-batch interrupt behavior; double `Esc` within 3 seconds aborts warned active sub-agents after a non-destructive first press.
@@ -36,6 +36,12 @@ After install:
 | `subagent_run` | Blocking single / parallel / chain modes. |
 | `subagent_status` | Default uncapped current active list (`starting`/`running`); `scope: 'stopped'` returns a capped problematic triage list; `agentId` does exact lookup. |
 | `subagent_kill` | Abort a running sub-agent. |
+
+## Thinking capability behavior
+
+`max` is opt-in: a reasoning model supports it only when its own `thinkingLevelMap.max` value is a string. Model and provider names are never used as capability rules. When a normal launch requests unsupported `max`, pi-crew selects the first supported level in `xhigh`, `high`, `medium`, `low`, `minimal`, `off` order and reports both the requested and effective values. For example, a generic model advertising `high` but not `max` runs at `high` and emits a warning. Non-reasoning models use `off`. If no lower level is supported, launch fails before dispatch.
+
+Configuration keeps the requested value; launch state and tool details show the effective value plus adjustment provenance when a downgrade occurred.
 
 ## Slash commands
 

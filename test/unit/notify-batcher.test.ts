@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCompletionDispatcher } from "../../src/notify/batcher.js";
+import { registerNotificationRenderer } from "../../src/notify/renderer.js";
 import type { SubagentState } from "../../src/types.js";
 
 const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
@@ -38,6 +39,38 @@ const stateOf = (overrides: Partial<SubagentState>): SubagentState => ({
 		prompt: "/p/prompt.md",
 	},
 	...overrides,
+});
+
+describe("notification renderer", () => {
+	it("shows effective thinking and canonical warning in compact and expanded completion UI", () => {
+		let renderer:
+			| ((
+					message: { details: { states: SubagentState[] } },
+					options: { expanded: boolean },
+					theme: unknown,
+			  ) => { render(width: number): string[] } | undefined)
+			| undefined;
+		registerNotificationRenderer({
+			registerMessageRenderer: (_type: string, value: typeof renderer) => {
+				renderer = value;
+			},
+		} as never);
+		const adjusted = stateOf({
+			thinking: "high",
+			thinkingAdjustment: { requested: "max", effective: "high" },
+		});
+		for (const expanded of [false, true]) {
+			const component = renderer?.(
+				{ details: { states: [adjusted] } },
+				{ expanded },
+				{ bold: (text: string) => text, fg: (_name: string, text: string) => text },
+			);
+			const rendered = component?.render(180).join("\n") ?? "";
+			expect(rendered).toContain("openai-codex/gpt-5.4-mini · high");
+			expect(rendered).toContain('requested thinking level "max"');
+			expect(rendered).toContain("Found auth files.");
+		}
+	});
 });
 
 describe("createCompletionDispatcher", () => {
@@ -83,6 +116,17 @@ describe("createCompletionDispatcher", () => {
 
 		expect(sendMessage).not.toHaveBeenCalled();
 		expect(dispatcher.wasHandled("abc12345")).toBe(true);
+	});
+
+	it("preserves structured adjustment provenance in injected completion details", () => {
+		const sendMessage = vi.fn();
+		const dispatcher = createCompletionDispatcher({ sendMessage } as never);
+		dispatcher.push(stateOf({ thinking: "high", thinkingAdjustment: { requested: "max", effective: "high" } }));
+		vi.runAllTimers();
+		const message = sendMessage.mock.calls[0]?.[0] as { content: string; details: { states: SubagentState[] } };
+		expect(message.content).toContain('requested thinking level "max"');
+		expect(message.details.states[0]?.thinking).toBe("high");
+		expect(message.details.states[0]?.thinkingAdjustment).toEqual({ requested: "max", effective: "high" });
 	});
 
 	it("still displays failed completion messages", () => {

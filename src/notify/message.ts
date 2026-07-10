@@ -1,4 +1,5 @@
 import { buildSummaryPreview, formatParentSummary } from "../summary.js";
+import { formatThinkingAdjustment } from "../thinking.js";
 import type { SubagentState } from "../types.js";
 
 export function formatUsage(state: SubagentState): string {
@@ -44,6 +45,8 @@ export function formatBatchedMessage(states: SubagentState[]): string {
 				? `done (${s.provider}/${s.model}, ${s.turns} turns, $${s.usage.cost.toFixed(4)})`
 				: `failed (${s.provider}/${s.model}): ${s.errorMessage ?? "unknown"}`;
 		lines.push(`  ${icon} ${s.alias} (${s.agent}) #${s.agentId} ${ext}`);
+		const warning = formatThinkingAdjustment(s.thinkingAdjustment);
+		if (warning) lines.push(`    ${warning}`);
 	}
 	lines.push("");
 	lines.push("Details for each:");

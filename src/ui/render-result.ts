@@ -2,6 +2,8 @@
 import { type Theme, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import type { AgentToolResult, ToolRenderResultOptions } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
+import { formatThinkingAdjustment } from "../thinking.js";
+import type { ThinkingAdjustment } from "../types.js";
 import { type UsageStatsLike, formatUsageStats } from "./format.js";
 
 interface DispatchDetails {
@@ -12,6 +14,7 @@ interface DispatchDetails {
 	provider?: string;
 	model?: string;
 	thinking?: string;
+	thinkingAdjustment?: ThinkingAdjustment;
 	turns?: number;
 	usage?: UsageStatsLike;
 	finalOutput?: string | null;
@@ -34,6 +37,11 @@ export function renderDispatchResult(
 	c.addChild(new Text(theme.fg("accent", `${details.alias ?? "subagent"} #${details.agentId ?? "?"}`), 0, 0));
 	c.addChild(new Spacer(1));
 	c.addChild(new Markdown(text.trim(), 0, 0, md));
+	const warning = formatThinkingAdjustment(details.thinkingAdjustment);
+	if (warning && !text.includes(warning)) {
+		c.addChild(new Spacer(1));
+		c.addChild(new Text(theme.fg("warning", warning), 0, 0));
+	}
 	if (details.usage) {
 		c.addChild(new Spacer(1));
 		c.addChild(new Text(theme.fg("dim", formatUsageStats(details.usage)), 0, 0));
@@ -58,6 +66,8 @@ function formatCompactResult(details: DispatchDetails, fallbackText: string, the
 	const stats = compactStats(details, model);
 	const lines = [`${icon} ${theme.bold(`${alias} #${details.agentId ?? "?"}`)}${theme.fg("dim", agent)}${status}`];
 	if (stats) lines.push(theme.fg("dim", `  ${stats}`));
+	const warning = formatThinkingAdjustment(details.thinkingAdjustment);
+	if (warning) lines.push(theme.fg("warning", `  ${warning}`));
 	if (!ok && details.errorMessage) lines.push(theme.fg("warning", `  ${firstLine(details.errorMessage)}`));
 	return lines.join("\n");
 }

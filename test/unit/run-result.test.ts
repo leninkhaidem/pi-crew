@@ -117,4 +117,15 @@ describe("formatRunStateResult", () => {
 		expect(result).toContain("[work-agent (general-purpose) #abc12345] failed — boom");
 		expect(result).toContain("State: /p/state.json");
 	});
+
+	it("adds the canonical requested/effective warning without hiding output or paths", () => {
+		const result = formatRunStateResult(
+			stateOf({ thinking: "high", thinkingAdjustment: { requested: "max", effective: "high" } }),
+		);
+		expect(result).toContain(
+			'Warning: requested thinking level "max" is unsupported by the selected model; using "high" instead.',
+		);
+		expect(result).toContain("done output");
+		expect(result).toContain("Trace: /p/output.jsonl");
+	});
 });

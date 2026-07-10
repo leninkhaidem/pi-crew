@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { emptyConfig } from "../../src/config/schema.js";
 import { resolveAgentSlot } from "../../src/tools/slot.js";
 
@@ -180,4 +180,177 @@ describe("resolveAgentSlot", () => {
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error).toBe("model_not_found");
 	});
+
+	it.each([
+		["configured", false, {}],
+		["implicit inheritance", true, {}],
+		["explicit inheritance", true, {}],
+		["thinking-only override", false, { thinking: "max" }],
+		["model-only override", false, { model: "selected" }],
+		["full override", false, { provider: "example", model: "selected", thinking: "max" }],
+	] as const)("resolves supported max after %s precedence", (_name, inherited, overrides) => {
+		const cfg = emptyConfig();
+		if (_name === "configured" || _name.includes("override")) {
+			cfg.agents.explore = { provider: "example", modelId: "selected", thinking: "max" };
+		} else if (_name === "explicit inheritance") cfg.agents.explore = { mode: "inherit" };
+		const model = registryModel({ thinkingLevelMap: { max: "provider-max" } });
+		const find = vi.fn(() => model);
+		const result = resolveAgentSlot(
+			"explore",
+			cfg,
+			{ model: { provider: "example", id: "selected" }, modelRegistry: { find } } as never,
+			{ getThinkingLevel: () => "max" } as never,
+			overrides as never,
+		);
+		expect(result).toMatchObject({
+			ok: true,
+			inherited,
+			slot: { provider: "example", modelId: "selected", thinking: "max" },
+		});
+		if (result.ok) expect(result.thinkingAdjustment).toBeUndefined();
+		expect(find).toHaveBeenCalledWith("example", "selected");
+	});
+
+	it.each([
+		["configured", false, {}],
+		["implicit inheritance", true, {}],
+		["explicit inheritance", true, {}],
+		["thinking-only override", false, { thinking: "max" }],
+		["model-only override", false, { model: "missing" }],
+		["full override", false, { provider: "example", model: "missing", thinking: "max" }],
+	] as const)("fails missing registry lookup before dispatch for max via %s", (name, _inherited, overrides) => {
+		const cfg = emptyConfig();
+		if (name === "configured" || name.includes("override")) {
+			cfg.agents.explore = { provider: "example", modelId: "missing", thinking: "max" };
+		} else if (name === "explicit inheritance") cfg.agents.explore = { mode: "inherit" };
+		const result = resolveAgentSlot(
+			"explore",
+			cfg,
+			{ model: { provider: "example", id: "missing" }, modelRegistry: { find: () => undefined } } as never,
+			{ getThinkingLevel: () => "max" } as never,
+			overrides as never,
+		);
+		expect(result).toMatchObject({ ok: false, error: "model_not_found" });
+	});
+
+	it("uses a found absent-map model distinctly from a missing max model", () => {
+		const cfg = emptyConfig();
+		cfg.agents.explore = { provider: "example", modelId: "legacy", thinking: "max" };
+		const found = resolveAgentSlot(
+			"explore",
+			cfg,
+			{ modelRegistry: { find: () => registryModel({ id: "legacy" }) } } as never,
+			{} as never,
+		);
+		expect(found).toMatchObject({
+			ok: true,
+			slot: { thinking: expect.stringMatching(/^(xhigh|high)$/) },
+			thinkingAdjustment: { requested: "max" },
+		});
+
+		const missing = resolveAgentSlot(
+			"explore",
+			cfg,
+			{ modelRegistry: { find: () => undefined } } as never,
+			{} as never,
+		);
+		expect(missing).toMatchObject({ ok: false, error: "model_not_found" });
+		if (!missing.ok) expect(missing.message).toContain("example/legacy");
+	});
+
+	it("applies representative max holes, non-reasoning coercion, and explicit no-lower failure", () => {
+		const cfg = emptyConfig();
+		cfg.agents.explore = { provider: "example", modelId: "selected", thinking: "max" };
+		const fallback = resolveAgentSlot(
+			"explore",
+			cfg,
+			{
+				modelRegistry: {
+					find: () => registryModel({ thinkingLevelMap: { xhigh: null, high: null, medium: "m" } }),
+				},
+			} as never,
+			{} as never,
+		);
+		expect(fallback).toMatchObject({
+			ok: true,
+			slot: { thinking: "medium" },
+			thinkingAdjustment: { requested: "max", effective: "medium" },
+		});
+
+		cfg.agents.explore = { provider: "example", modelId: "selected", thinking: "high" };
+		const nonReasoning = resolveAgentSlot(
+			"explore",
+			cfg,
+			{ modelRegistry: { find: () => registryModel({ reasoning: false }) } } as never,
+			{} as never,
+		);
+		expect(nonReasoning).toMatchObject({
+			ok: true,
+			slot: { thinking: "off" },
+			thinkingAdjustment: { requested: "high", effective: "off" },
+		});
+
+		cfg.agents.explore = { provider: "example", modelId: "selected", thinking: "max" };
+		const unsupported = resolveAgentSlot(
+			"explore",
+			cfg,
+			{
+				modelRegistry: {
+					find: () =>
+						registryModel({
+							thinkingLevelMap: {
+								off: null,
+								minimal: null,
+								low: null,
+								medium: null,
+								high: null,
+								xhigh: null,
+								max: null,
+							},
+						}),
+				},
+			} as never,
+			{} as never,
+		);
+		expect(unsupported).toMatchObject({ ok: false, error: "no_supported_thinking_level" });
+	});
+
+	it("leaves lower-level baseline behavior unchanged when registry lookup is unavailable or metadata has a hole", () => {
+		const cfg = emptyConfig();
+		cfg.agents.explore = { provider: "example", modelId: "selected", thinking: "high" };
+		const missing = resolveAgentSlot(
+			"explore",
+			cfg,
+			{ modelRegistry: { find: () => undefined } } as never,
+			{} as never,
+		);
+		expect(missing).toMatchObject({ ok: true, slot: { thinking: "high" } });
+
+		const hole = resolveAgentSlot(
+			"explore",
+			cfg,
+			{ modelRegistry: { find: () => registryModel({ thinkingLevelMap: { high: null } }) } } as never,
+			{} as never,
+		);
+		expect(hole).toMatchObject({ ok: true, slot: { thinking: "high" } });
+	});
 });
+
+function registryModel(overrides: { id?: string; reasoning?: boolean; thinkingLevelMap?: unknown } = {}) {
+	const model: Record<string, unknown> = {
+		provider: "example",
+		id: overrides.id ?? "selected",
+		name: "Selected",
+		api: "example",
+		baseUrl: "https://invalid.example",
+		reasoning: overrides.reasoning ?? true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1,
+		maxTokens: 1,
+	};
+	if (Object.prototype.hasOwnProperty.call(overrides, "thinkingLevelMap")) {
+		model.thinkingLevelMap = overrides.thinkingLevelMap;
+	}
+	return model;
+}

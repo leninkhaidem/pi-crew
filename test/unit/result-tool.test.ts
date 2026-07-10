@@ -71,11 +71,14 @@ function registerResultTool(agentDir: string, completionHandled = false) {
 	const consumeCompletion = vi.fn();
 	const completionHandledMock = vi.fn(() => completionHandled);
 
-	registerGetSubagentResultTool(pi as never, {
-		agentDir,
-		consumeCompletion,
-		completionHandled: completionHandledMock,
-	} as never);
+	registerGetSubagentResultTool(
+		pi as never,
+		{
+			agentDir,
+			consumeCompletion,
+			completionHandled: completionHandledMock,
+		} as never,
+	);
 	if (!tool) throw new Error("result tool was not registered");
 	return { tool, consumeCompletion, completionHandled: completionHandledMock };
 }
@@ -129,6 +132,25 @@ describe("get_subagent_result", () => {
 		expect(rendered).toContain("done");
 		expect(rendered).not.toContain(longOutput);
 		expect(lines.every((line) => visibleWidth(line) <= 100)).toBe(true);
+	});
+
+	it("recovers persisted adjustment warning and exact detail without re-clamping history", async () => {
+		await writeState(
+			stateOf(tmp, {
+				thinking: "high",
+				thinkingAdjustment: { requested: "max", effective: "high" },
+				finalOutput: "historical output",
+			}),
+		);
+		const { tool } = registerResultTool(tmp);
+		const result = (await tool.execute("call", { agent_id: "abc12345" })) as {
+			content: Array<{ text: string }>;
+			details: Record<string, unknown>;
+		};
+		expect(result.content[0]?.text).toContain('requested thinking level "max"');
+		expect(result.content[0]?.text).toContain("historical output");
+		expect(result.details.thinking).toBe("high");
+		expect(result.details.thinkingAdjustment).toEqual({ requested: "max", effective: "high" });
 	});
 
 	it("does not feed duplicate final output back to the parent when completion was already handled", async () => {

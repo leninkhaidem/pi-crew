@@ -6,15 +6,14 @@ import type { DetachScope } from "../runtime/detach.js";
 import { dispatch as runDispatch } from "../runtime/lifecycle.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import { formatParentSummary } from "../summary.js";
+import { formatThinkingAdjustment } from "../thinking.js";
 import type { SubagentState } from "../types.js";
 import { renderRunCall } from "../ui/render-call.js";
 import { renderDispatchResult } from "../ui/render-result.js";
 import { AliasSchema, ChainItemSchema, SlotOverrideProperties, TaskItemSchema } from "./shared.js";
 import { type SlotOverrides, resolveAgentSlot } from "./slot.js";
 
-type RunOutcome =
-	| { kind: "completed"; state: SubagentState }
-	| { kind: "backgrounded"; agentId: string; alias: string; agent: string };
+type RunOutcome = { kind: "completed"; state: SubagentState } | { kind: "backgrounded"; state: SubagentState };
 
 type BackgroundedOutcome = Extract<RunOutcome, { kind: "backgrounded" }>;
 
@@ -86,12 +85,22 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					const slotResolution = resolveAgentSlot(agent.name, config, ctx, pi, overrides);
 					if (!slotResolution.ok) throw new Error(slotResolution.message);
 					const slot = slotResolution.slot;
-					const approved = await rt.ensureProjectAgentApproved({ agentName: agent.name, agentSource: agent.source, ctx });
-					if (!approved) throw new Error(
-						`Project agent "${agent.name}" not approved. Set confirmProjectAgents: false in /subagent-config to disable prompts.`,
-					);
+					const approved = await rt.ensureProjectAgentApproved({
+						agentName: agent.name,
+						agentSource: agent.source,
+						ctx,
+					});
+					if (!approved)
+						throw new Error(
+							`Project agent "${agent.name}" not approved. Set confirmProjectAgents: false in /subagent-config to disable prompts.`,
+						);
 					const handle = await runDispatch(
-						{ agent, model: slot, options: { agent: agentName, alias: alias.trim(), task, cwd } },
+						{
+							agent,
+							model: slot,
+							thinkingAdjustment: slotResolution.thinkingAdjustment,
+							options: { agent: agentName, alias: alias.trim(), task, cwd },
+						},
 						rt.envFor(ctx),
 						rt.lifecycleHooks(),
 					);
@@ -102,7 +111,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 						if (!result) {
 							wasDetached = true;
 							void handle.donePromise.finally(() => rt.concurrency.active.release());
-							return { kind: "backgrounded", agentId: handle.agentId, alias: handle.state.alias, agent: handle.state.agent };
+							return { kind: "backgrounded", state: handle.state };
 						}
 						rt.consumeCompletion(handle.agentId);
 						return { kind: "completed", state: result };
@@ -124,11 +133,18 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					}
 					const singleScope = rt.detach.createScope();
 					try {
-						const outcome = await oneShot(single.agent, single.alias, single.task, params.cwd, {
-							provider: params.provider,
-							model: params.model,
-							thinking: params.thinking,
-						}, singleScope);
+						const outcome = await oneShot(
+							single.agent,
+							single.alias,
+							single.task,
+							params.cwd,
+							{
+								provider: params.provider,
+								model: params.model,
+								thinking: params.thinking,
+							},
+							singleScope,
+						);
 						if (outcome.kind === "backgrounded") return backgroundedToolResult(outcome);
 						return toolResult(outcome.state);
 					} finally {
@@ -152,11 +168,18 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 						const settled = await Promise.allSettled(
 							tasks.map((t) =>
 								rt.concurrency.pool.run(() =>
-									oneShot(t.agent, t.alias, t.task, t.cwd, {
-										provider: t.provider,
-										model: t.model,
-										thinking: t.thinking,
-									}, tasksScope),
+									oneShot(
+										t.agent,
+										t.alias,
+										t.task,
+										t.cwd,
+										{
+											provider: t.provider,
+											model: t.model,
+											thinking: t.thinking,
+										},
+										tasksScope,
+									),
 								),
 							),
 						);
@@ -181,11 +204,18 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 						for (let i = 0; i < chain.length; i++) {
 							const step = chain[i]!;
 							const taskText = step.task.replace(/\{previous\}/g, previous);
-							const outcome = await oneShot(step.agent, step.alias, taskText, step.cwd, {
-								provider: step.provider,
-								model: step.model,
-								thinking: step.thinking,
-							}, chainScope);
+							const outcome = await oneShot(
+								step.agent,
+								step.alias,
+								taskText,
+								step.cwd,
+								{
+									provider: step.provider,
+									model: step.model,
+									thinking: step.thinking,
+								},
+								chainScope,
+							);
 							if (outcome.kind === "backgrounded") {
 								const abandoned = chain.slice(i + 1).map((s) => s.alias);
 								return toolResultBatch(results, { backgrounded: [outcome], abandoned });
@@ -230,6 +260,7 @@ function toolResult(state: SubagentState) {
 			provider: state.provider,
 			model: state.model,
 			thinking: state.thinking,
+			...(state.thinkingAdjustment ? { thinkingAdjustment: state.thinkingAdjustment } : {}),
 			turns: state.turns,
 			finalOutput: state.finalOutput,
 			errorMessage: state.errorMessage,
@@ -240,14 +271,25 @@ function toolResult(state: SubagentState) {
 }
 
 function backgroundedToolResult(outcome: BackgroundedOutcome) {
+	const warning = formatThinkingAdjustment(outcome.state.thinkingAdjustment);
 	const text = [
-		`Sub-agent ${outcome.alias} #${outcome.agentId} moved to background.`,
+		`Sub-agent ${outcome.state.alias} #${outcome.state.agentId} moved to background.`,
+		...(warning ? [warning] : []),
 		"Completion will be injected automatically.",
 		"Do not poll or sleep for this result unless the user asks for progress or recovery.",
 	].join("\n");
 	return {
 		content: [{ type: "text" as const, text }],
-		details: { agentId: outcome.agentId, alias: outcome.alias, agent: outcome.agent, status: "backgrounded" },
+		details: {
+			agentId: outcome.state.agentId,
+			alias: outcome.state.alias,
+			agent: outcome.state.agent,
+			status: "backgrounded",
+			provider: outcome.state.provider,
+			model: outcome.state.model,
+			thinking: outcome.state.thinking,
+			...(outcome.state.thinkingAdjustment ? { thinkingAdjustment: outcome.state.thinkingAdjustment } : {}),
+		},
 	};
 }
 
@@ -258,10 +300,13 @@ async function raceScope(donePromise: Promise<SubagentState>, scope: DetachScope
 function toolResultBatch(states: SubagentState[], opts: BatchResultOpts = {}) {
 	const { partial = false, errors = [], backgrounded = [], abandoned = [] } = opts;
 	const stateLines = states.map((s) => formatRunStateResult(s));
-	const bgLines = backgrounded.map(
-		(b) =>
-			`[backgrounded] ${b.alias} #${b.agentId} — completion will be injected automatically; do not poll/sleep unless asked`,
-	);
+	const bgLines = backgrounded.map((b) => {
+		const warning = formatThinkingAdjustment(b.state.thinkingAdjustment);
+		return [
+			`[backgrounded] ${b.state.alias} #${b.state.agentId} — completion will be injected automatically; do not poll/sleep unless asked`,
+			...(warning ? [warning] : []),
+		].join("\n");
+	});
 	const abLines = abandoned.map((a) => `[abandoned] ${a} — step was not started`);
 	const errLines = errors.map((e) => `[error] ${e}`);
 	const text = [...stateLines, ...bgLines, ...abLines, ...errLines].join("\n\n");
@@ -276,12 +321,26 @@ function toolResultBatch(states: SubagentState[], opts: BatchResultOpts = {}) {
 				provider: s.provider,
 				model: s.model,
 				thinking: s.thinking,
+				...(s.thinkingAdjustment ? { thinkingAdjustment: s.thinkingAdjustment } : {}),
 				turns: s.turns,
 				finalOutput: s.finalOutput,
 				errorMessage: s.errorMessage,
 				paths: s.paths,
 			})),
-			...(backgrounded.length > 0 ? { backgrounded: backgrounded.map((b) => ({ agentId: b.agentId, alias: b.alias, agent: b.agent, status: "backgrounded" })) } : {}),
+			...(backgrounded.length > 0
+				? {
+						backgrounded: backgrounded.map((b) => ({
+							agentId: b.state.agentId,
+							alias: b.state.alias,
+							agent: b.state.agent,
+							status: "backgrounded",
+							provider: b.state.provider,
+							model: b.state.model,
+							thinking: b.state.thinking,
+							...(b.state.thinkingAdjustment ? { thinkingAdjustment: b.state.thinkingAdjustment } : {}),
+						})),
+					}
+				: {}),
 			...(abandoned.length > 0 ? { abandoned } : {}),
 			...(partial || errors.length > 0 || backgrounded.length > 0 || abandoned.length > 0 ? { partial: true } : {}),
 			...(errors.length > 0 ? { errors } : {}),

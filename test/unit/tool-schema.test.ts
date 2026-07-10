@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { registerDispatchTool } from "../../src/tools/dispatch.js";
+import { registerGetSubagentResultTool } from "../../src/tools/result.js";
 import { registerResumeTool } from "../../src/tools/resume.js";
 import { registerRunTool } from "../../src/tools/run.js";
-import { registerGetSubagentResultTool } from "../../src/tools/result.js";
 import { registerStatusTool } from "../../src/tools/status.js";
 
 describe("sub-agent tool schemas", () => {
@@ -30,6 +30,14 @@ describe("sub-agent tool schemas", () => {
 		expect(requiredOf(tools.get("subagent_resume"))).toContain("agent_id");
 		expect(requiredOf(tools.get("subagent_resume"))).toContain("prompt");
 		expect(requiredOf(tools.get("subagent_dispatch"))).toContain("alias");
+
+		const canonical = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+		for (const name of ["subagent_dispatch", "subagent_run", "subagent_resume"]) {
+			const thinking = propertiesOf(tools.get(name)).thinking;
+			expect(literalValuesOf(thinking)).toEqual(canonical);
+			expect(JSON.stringify(thinking)).not.toContain("maximum");
+		}
+		expect(tools.get("subagent_resume")?.description).toContain("provider?, model?, thinking?");
 	});
 
 	it("exposes bounded recent output retrieval on the result tool", () => {
