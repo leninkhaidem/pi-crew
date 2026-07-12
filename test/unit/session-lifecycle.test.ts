@@ -607,6 +607,28 @@ describe("dispatchSession", () => {
 		}
 	});
 
+	it("forwards supported max through the narrow session SDK boundary and persists effective provenance", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "max" },
+				options: { agent: "general-purpose", alias: "max-test", task: "say ok" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess-max",
+				parentAgentId: null,
+				ctx: { modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) } } as never,
+			},
+		);
+		const final = await handle.donePromise;
+		expect((createdSessionOptions as { thinkingLevel?: string }).thinkingLevel).toBe("max");
+		expect(final.thinking).toBe("max");
+		expect(final.thinkingAdjustment).toBeUndefined();
+	});
+
 	it("persists session-mode child prompts without pi-crew delegation guidance", async () => {
 		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
 

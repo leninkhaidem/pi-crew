@@ -1,6 +1,7 @@
 // src/ui/widget.ts
 import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
 import { type Component, type TUI, truncateToWidth } from "@mariozechner/pi-tui";
+import { formatThinkingAdjustment } from "../thinking.js";
 import type { SubagentState } from "../types.js";
 import { formatStateActivity } from "./activity.js";
 import { formatUsageStats } from "./format.js";
@@ -128,10 +129,17 @@ class ActiveAgentsWidget implements Component {
 
 export function renderActiveAgentsPanel(args: ActivePanelArgs): string[] {
 	const width = Math.max(1, args.width);
-	const visibleStates = args.states.slice(0, Math.floor((MAX_WIDGET_LINES - 2) / 2));
-	const overflow = args.states.length - visibleStates.length;
 	const heading = `${args.theme.fg("accent", "●")} ${args.theme.fg("accent", "Agents")}`;
 	const lines = [truncateToWidth(heading, width)];
+	const visibleStates: SubagentState[] = [];
+	let projectedLines = lines.length;
+	for (const state of args.states) {
+		const lineCost = formatThinkingAdjustment(state.thinkingAdjustment) ? 3 : 2;
+		if (projectedLines + lineCost + 1 > MAX_WIDGET_LINES) break;
+		visibleStates.push(state);
+		projectedLines += lineCost;
+	}
+	const overflow = args.states.length - visibleStates.length;
 
 	visibleStates.forEach((state, index) => {
 		const isLast = index === visibleStates.length - 1 && overflow <= 0;
@@ -164,6 +172,8 @@ function appendAgent(
 			width,
 		),
 	);
+	const warning = formatThinkingAdjustment(state.thinkingAdjustment);
+	if (warning) lines.push(truncateToWidth(`${theme.fg("dim", stem)}  ${theme.fg("warning", warning)}`, width));
 	lines.push(truncateToWidth(`${theme.fg("dim", stem)}  ${theme.fg("dim", `⎿  ${activity}`)}`, width));
 }
 
@@ -212,6 +222,7 @@ function signatureFor(states: SubagentState[]): string {
 			activeTools: state.activeTools,
 			toolUses: state.toolUses,
 			activity: state.activity,
+			thinkingAdjustment: state.thinkingAdjustment,
 		})),
 	);
 }

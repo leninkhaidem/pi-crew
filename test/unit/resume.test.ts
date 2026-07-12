@@ -120,14 +120,20 @@ describe("subagent_resume tool", () => {
 		expect(release).toHaveBeenCalledOnce();
 	});
 
-	it("returns success result with agentId, alias, status, finalOutput, usage", async () => {
-		const state = stateOf();
-		const { rt, release, consumeCompletion } = createRuntime({ resumeResult: state });
+	it("returns success result with agentId, alias, status, finalOutput, usage, and persisted adjustment", async () => {
+		const state = stateOf({
+			thinking: "high",
+			thinkingAdjustment: { requested: "max", effective: "high" },
+		});
+		const { rt, release, consumeCompletion, resumeHandle } = createRuntime({ resumeResult: state });
 		const tool = registerAndGetTool(rt);
 
 		const result = (await tool.execute("call-3", {
 			agent_id: "resume-001",
 			prompt: "follow-up task",
+			provider: "reserved-provider",
+			model: "reserved-model",
+			thinking: "max",
 		})) as { content: Array<{ text: string }>; details: Record<string, unknown> };
 
 		expect(result.details.agentId).toBe("resume-001");
@@ -136,8 +142,11 @@ describe("subagent_resume tool", () => {
 		expect(result.details.finalOutput).toBe("Resumed successfully");
 		expect(result.details.usage).toEqual(state.usage);
 		expect(result.details.agent).toBe("general-purpose");
-		expect(result.content[0]?.text).toBeTruthy();
+		expect(result.details.thinking).toBe("high");
+		expect(result.details.thinkingAdjustment).toEqual({ requested: "max", effective: "high" });
+		expect(result.content[0]?.text).toContain('requested thinking level "max"');
 		expect(consumeCompletion).toHaveBeenCalledWith("resume-001");
+		expect(resumeHandle).toHaveBeenCalledWith("resume-001", "follow-up task", undefined);
 		expect(release).toHaveBeenCalledOnce();
 	});
 

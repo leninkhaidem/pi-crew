@@ -1,0 +1,7 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`formatThinkingAdjustment > formats the canonical 'high' to 'off' warning 1`] = `"Warning: requested thinking level "high" is unsupported by the selected model; using "off" instead."`;
+
+exports[`formatThinkingAdjustment > formats the canonical 'max' to 'high' warning 1`] = `"Warning: requested thinking level "max" is unsupported by the selected model; using "high" instead."`;
+
+exports[`formatThinkingAdjustment > formats the canonical 'max' to 'xhigh' warning 1`] = `"Warning: requested thinking level "max" is unsupported by the selected model; using "xhigh" instead."`;

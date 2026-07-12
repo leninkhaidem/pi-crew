@@ -5,18 +5,12 @@ import {
 	DEFAULT_GLOBAL_SETTINGS,
 	DEFAULT_TMUX_SETTINGS,
 	type PiCrewConfig,
+	THINKING_LEVELS,
 	defaultThinkingForAgent,
 	isInheritedAgentSlot,
 } from "../types.js";
 
-const ThinkingLevelSchema = Type.Union([
-	Type.Literal("off"),
-	Type.Literal("minimal"),
-	Type.Literal("low"),
-	Type.Literal("medium"),
-	Type.Literal("high"),
-	Type.Literal("xhigh"),
-]);
+const ThinkingLevelSchema = Type.Union(THINKING_LEVELS.map((level) => Type.Literal(level)));
 
 const ConcreteAgentSlotSchema = Type.Object({
 	provider: Type.String({ minLength: 1 }),

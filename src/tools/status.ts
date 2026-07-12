@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import { getRoot } from "../state/paths.js";
 import { listStates, readState } from "../state/store.js";
+import { formatThinkingAdjustment } from "../thinking.js";
 import type { SubagentState, SubagentStatus } from "../types.js";
 
 const ACTIVE_STATUSES = new Set<SubagentStatus>(["starting", "running"]);
@@ -198,6 +199,7 @@ function compactStateDetails(state: SubagentState) {
 		lastToolCall: state.lastToolCall,
 		usage: state.usage,
 		paths: state.paths,
+		...(state.thinkingAdjustment ? { thinkingAdjustment: state.thinkingAdjustment } : {}),
 	};
 }
 
@@ -210,6 +212,7 @@ function compactStoppedDetails(state: SubagentState) {
 		taskPreview: truncateLine(state.task, PREVIEW_LENGTH),
 		finishedAt: state.finishedAt,
 		errorMessagePreview: state.errorMessage ? truncateLine(state.errorMessage, PREVIEW_LENGTH) : null,
+		...(state.thinkingAdjustment ? { thinkingAdjustment: state.thinkingAdjustment } : {}),
 	};
 }
 
@@ -221,6 +224,8 @@ function formatStatusList(states: SubagentState[]): string {
 		lines.push(
 			`${icon} ${s.alias} #${s.agentId} (${s.agent}, ${s.model}, ${s.thinking}) ${s.status} — ${truncateLine(s.task, PREVIEW_LENGTH)}`,
 		);
+		const warning = formatThinkingAdjustment(s.thinkingAdjustment);
+		if (warning) lines.push(`    ${warning}`);
 		if (s.lastText) lines.push(`    last: ${truncateLine(s.lastText, PREVIEW_LENGTH)}`);
 		if (s.lastToolCall) lines.push(`    tool: ${s.lastToolCall.name}`);
 		lines.push(`    state: ${s.paths.state}`);
@@ -246,6 +251,8 @@ function formatStoppedList(
 		lines.push(`✗ ${details.alias} #${details.agentId} (${details.agent}) ${details.status} — ${details.taskPreview}`);
 		lines.push(`    finishedAt: ${details.finishedAt ?? "null"}`);
 		lines.push(`    errorMessagePreview: ${details.errorMessagePreview ?? ""}`);
+		const warning = formatThinkingAdjustment(s.thinkingAdjustment);
+		if (warning) lines.push(`    ${warning}`);
 	}
 	return lines.join("\n");
 }

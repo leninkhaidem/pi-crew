@@ -82,7 +82,10 @@ describe("sub-agent overlay access", () => {
 	it("registers /subagents and /tasks as the same command handler", () => {
 		const commands = new Map<string, { description: string; handler: unknown }>();
 		registerTreeCommand(
-			{ registerCommand: (name: string, command: { description: string; handler: unknown }) => commands.set(name, command) } as never,
+			{
+				registerCommand: (name: string, command: { description: string; handler: unknown }) =>
+					commands.set(name, command),
+			} as never,
 			{} as never,
 		);
 
@@ -96,13 +99,7 @@ describe("sub-agent overlay access", () => {
 		try {
 			const custom = vi.fn();
 			const notify = vi.fn();
-			await openSubagentsOverlay(
-				{ ui: { custom, notify } } as never,
-				tmp,
-				"sess",
-				"batch-new",
-				vi.fn(),
-			);
+			await openSubagentsOverlay({ ui: { custom, notify } } as never, tmp, "sess", "batch-new", vi.fn());
 
 			expect(notify).toHaveBeenCalledWith(NO_ACTIVE_SUBAGENTS_MESSAGE, "info");
 			expect(custom).not.toHaveBeenCalled();
@@ -134,8 +131,19 @@ describe("sub-agent overlay access", () => {
 	});
 
 	it("uses all active current-session agents with current-batch-first ordering and scope labels", () => {
-		const currentRunning = stateOf({ agentId: "current-running", alias: "current", batchId: "batch-new", startedAt: 30 });
-		const currentStarting = stateOf({ agentId: "current-starting", alias: "starting", batchId: "batch-new", status: "starting", startedAt: 10 });
+		const currentRunning = stateOf({
+			agentId: "current-running",
+			alias: "current",
+			batchId: "batch-new",
+			startedAt: 30,
+		});
+		const currentStarting = stateOf({
+			agentId: "current-starting",
+			alias: "starting",
+			batchId: "batch-new",
+			status: "starting",
+			startedAt: 10,
+		});
 		const older = stateOf({ agentId: "older", alias: "older", batchId: "batch-old", startedAt: 5 });
 		const unbatched = stateOf({ agentId: "unbatched", alias: "legacy", batchId: null, startedAt: 1 });
 		const done = stateOf({ agentId: "done", alias: "done", status: "done", finishedAt: 50 });
@@ -146,9 +154,7 @@ describe("sub-agent overlay access", () => {
 			unbatched,
 			older,
 		]);
-		expect(filterCurrentBatchActiveStates([older, currentRunning, unbatched], "batch-new")).toEqual([
-			currentRunning,
-		]);
+		expect(filterCurrentBatchActiveStates([older, currentRunning, unbatched], "batch-new")).toEqual([currentRunning]);
 
 		const rendered = renderSubagentsPanel({
 			states: [older, done, currentRunning, unbatched, currentStarting],
@@ -452,6 +458,26 @@ describe("renderSubagentsPanel", () => {
 		expect(rendered).not.toContain("output.jsonl");
 		expect(rendered).not.toContain("state.json");
 		expect(lines.every((line) => visibleWidth(line) <= 72)).toBe(true);
+	});
+
+	it("shows adjustment warnings in active list and expanded panel details", () => {
+		const adjusted = stateOf({
+			thinking: "high",
+			thinkingAdjustment: { requested: "max", effective: "high" },
+		});
+		for (const detailedAgentId of [undefined, "abc12345"]) {
+			const rendered = renderSubagentsPanel({
+				states: [adjusted],
+				selectedIdx: 0,
+				detailedAgentId,
+				width: 180,
+				theme: theme as never,
+			}).join("\n");
+			expect(rendered).toContain("explore · openai-codex/gpt-5.4-mini · high");
+			expect(rendered).toContain(
+				'Warning: requested thinking level "max" is unsupported by the selected model; using "high" instead.',
+			);
+		}
 	});
 
 	it("renders an empty active panel when only terminal agents are present", () => {

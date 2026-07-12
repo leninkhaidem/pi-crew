@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
+import { Key, KeybindingsManager, TUI_KEYBINDINGS } from "@mariozechner/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyConfig, parsePiCrewConfig } from "../../src/config/schema.js";
 import { runConfigTui } from "../../src/config/tui.js";
@@ -51,23 +52,127 @@ describe("runConfigTui", () => {
 
 	it("prompts for thinking when a concrete model is selected", async () => {
 		const configPath = path.join(tmp, "pi-crew.json");
-		const choices = ["session", "anthropic::claude-haiku-4-5", "minimal", "__skip__"];
+		const choices = ["session", "example::reasoner", "minimal", "__skip__"];
 		let choiceIndex = 0;
 		const custom = vi.fn(async () => choices[choiceIndex++] ?? null);
 
 		const result = await runConfigTui(mockContext(custom), {
 			configPath,
 			currentConfig: emptyConfig(),
-			availableModels: [model("anthropic", "claude-haiku-4-5", false)],
+			availableModels: [model("example", "reasoner", true, { minimal: "m" })],
 		});
 
 		expect(result.saved).toBe(true);
 		expect(custom).toHaveBeenCalledTimes(4);
 		expect(parseSavedConfig(configPath).agents.explore).toMatchObject({
-			provider: "anthropic",
-			modelId: "claude-haiku-4-5",
+			provider: "example",
+			modelId: "reasoner",
 			thinking: "minimal",
 		});
+	});
+
+	it("filters standard and extended holes and preselects stale max's effective lower level", async () => {
+		const configPath = path.join(tmp, "pi-crew.json");
+		const currentConfig = emptyConfig();
+		currentConfig.agents.explore = { provider: "example", modelId: "reasoner", thinking: "max" };
+		const screens: string[][] = [];
+		let calls = 0;
+		const custom = vi.fn(async (factory: CustomFactory) => {
+			calls += 1;
+			if (calls === 1) return "session";
+			if (calls === 2) return "example::reasoner";
+			if (calls === 3) return selectCurrent(factory, screens);
+			return "__skip__";
+		});
+
+		const result = await runConfigTui(mockContext(custom), {
+			configPath,
+			currentConfig,
+			availableModels: [
+				model("example", "reasoner", true, {
+					off: "off",
+					minimal: null,
+					low: null,
+					medium: null,
+					high: "high",
+					xhigh: null,
+					max: null,
+				}),
+			],
+		});
+
+		expect(result.saved).toBe(true);
+		expect(selectedLine(screens[0] ?? [])).toContain("high");
+		const thinkingScreen = (screens[0] ?? []).join("\n");
+		expect(thinkingScreen).toContain("off");
+		expect(thinkingScreen).not.toMatch(/→?\s+minimal\s/);
+		expect(thinkingScreen).not.toMatch(/→?\s+xhigh\s/);
+		expect(parseSavedConfig(configPath).agents.explore).toMatchObject({ thinking: "high" });
+	});
+
+	it.each([
+		{ protocol: "legacy Enter", input: ENTER },
+		{ protocol: "Kitty Enter", input: "\x1b[13u" },
+		{ protocol: "modifyOtherKeys Backspace", input: "\x1b[27;1;127~" },
+	])("zero-level $protocol Back returns to model selection without mutating the original slot", async ({ input }) => {
+		const configPath = path.join(tmp, "pi-crew.json");
+		const currentConfig = emptyConfig();
+		currentConfig.agents.explore = { provider: "example", modelId: "zero", thinking: "max" };
+		const original = JSON.parse(JSON.stringify(currentConfig));
+		const screens: string[][] = [];
+		let calls = 0;
+		const custom = vi.fn(async (factory: CustomFactory) => {
+			calls += 1;
+			if (calls === 1) return "session";
+			if (calls === 2) return "example::zero";
+			if (calls === 3) return interact(factory, screens, input);
+			return "__skip__";
+		});
+
+		const result = await runConfigTui(mockContext(custom), {
+			configPath,
+			currentConfig,
+			availableModels: [model("example", "zero", true, noLevelsMap())],
+		});
+
+		expect(result).toEqual({ saved: true });
+		expect((screens[0] ?? []).join("\n")).toContain("advertises no supported thinking levels");
+		expect((screens[0] ?? []).join("\n")).toContain("Back");
+		expect(selectedLine(screens[0] ?? [])).toBe("");
+		expect(currentConfig).toEqual(original);
+		expect(parseSavedConfig(configPath).agents.explore).toEqual(original.agents.explore);
+	});
+
+	it.each([
+		{ cancellation: "legacy Escape", input: "\x1b", configured: false },
+		{ cancellation: "configured Ctrl+X", input: "\x18", configured: true },
+	])("zero-level $cancellation exits unsaved without a file write or slot mutation", async ({ input, configured }) => {
+		const configPath = path.join(tmp, "pi-crew.json");
+		const currentConfig = emptyConfig();
+		currentConfig.agents.explore = { provider: "example", modelId: "original", thinking: "max" };
+		const original = JSON.parse(JSON.stringify(currentConfig));
+		const screens: string[][] = [];
+		const keybindings = configured
+			? new KeybindingsManager(TUI_KEYBINDINGS, { "tui.select.cancel": Key.ctrl("x") })
+			: defaultKeybindings;
+		let calls = 0;
+		const custom = vi.fn(async (factory: CustomFactory) => {
+			calls += 1;
+			if (calls === 1) return "session";
+			if (calls === 2) return "example::zero";
+			return interact(factory, screens, input, keybindings);
+		});
+
+		const result = await runConfigTui(mockContext(custom), {
+			configPath,
+			currentConfig,
+			availableModels: [model("example", "zero", true, noLevelsMap())],
+		});
+
+		expect(result).toEqual({ saved: false });
+		expect((screens[0] ?? []).join("\n")).toContain(configured ? "ctrl+x cancel" : "escape/ctrl+c cancel");
+		expect(existsSync(configPath)).toBe(false);
+		expect(currentConfig).toEqual(original);
 	});
 });
 
@@ -86,10 +191,12 @@ interface FakeTui {
 	requestRender(): void;
 }
 
+type TestKeybindings = Pick<KeybindingsManager, "getKeys" | "matches">;
+
 type CustomFactory = (
 	tui: FakeTui,
 	theme: FakeTheme,
-	keyboard: unknown,
+	keyboard: TestKeybindings,
 	done: (value: string | null) => void,
 ) => CustomWidget;
 
@@ -117,9 +224,34 @@ function renderScreen(factory: CustomFactory, screens: string[][]): void {
 	screens.push(widget.render(120));
 }
 
-function createWidget(factory: CustomFactory, done: (value: string | null) => void): CustomWidget {
-	return factory({ requestRender: () => undefined }, fakeTheme, undefined, done);
+function interact(
+	factory: CustomFactory,
+	screens: string[][],
+	input: string,
+	keybindings: TestKeybindings = defaultKeybindings,
+): string | null {
+	let selected: string | null = null;
+	const widget = createWidget(
+		factory,
+		(value) => {
+			selected = value;
+		},
+		keybindings,
+	);
+	screens.push(widget.render(120));
+	widget.handleInput(input);
+	return selected;
 }
+
+function createWidget(
+	factory: CustomFactory,
+	done: (value: string | null) => void,
+	keybindings: TestKeybindings = defaultKeybindings,
+): CustomWidget {
+	return factory({ requestRender: () => undefined }, fakeTheme, keybindings, done);
+}
+
+const defaultKeybindings = new KeybindingsManager(TUI_KEYBINDINGS);
 
 const fakeTheme: FakeTheme = {
 	fg: (_name, text) => text,
@@ -137,11 +269,16 @@ function parseSavedConfig(configPath: string) {
 	return result.value;
 }
 
-function model(provider: string, id: string, reasoning: boolean): Model<Api> {
+function model(provider: string, id: string, reasoning: boolean, thinkingLevelMap?: unknown): Model<Api> {
 	return {
 		provider,
 		id,
 		reasoning,
 		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+		...(thinkingLevelMap !== undefined ? { thinkingLevelMap } : {}),
 	} as Model<Api>;
+}
+
+function noLevelsMap(): Record<string, null> {
+	return Object.fromEntries(["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => [level, null]));
 }

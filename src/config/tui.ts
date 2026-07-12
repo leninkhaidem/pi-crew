@@ -1,9 +1,11 @@
 // src/config/tui.ts
-import type { Api, Model } from "@mariozechner/pi-ai";
-import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import { type Api, type Model, supportsXhigh } from "@mariozechner/pi-ai";
+import type { ExtensionCommandContext, Theme } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder } from "@mariozechner/pi-coding-agent";
-import { Container, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
+import { Container, Key, type SelectItem, SelectList, Text, matchesKey } from "@mariozechner/pi-tui";
+import { resolveThinkingLevel, supportsThinkingLevel } from "../thinking.js";
 import {
+	type AgentSlot,
 	type AgentSlotConfig,
 	EXECUTION_MODES,
 	type ExecutionMode,
@@ -18,6 +20,7 @@ import { saveConfig } from "./store.js";
 
 const SKIP_MODEL_CHOICE = "__skip__";
 const INHERIT_MODEL_CHOICE = "__inherit__";
+const BACK_CHOICE = "__back__";
 
 export interface ConfigTuiArgs {
 	configPath: string;
@@ -33,30 +36,35 @@ export async function runConfigTui(ctx: ExtensionCommandContext, args: ConfigTui
 	cfg.global.executionMode = executionMode;
 
 	for (const slot of AGENT_SLOT_NAMES) {
-		const current = cfg.agents[slot];
-		const currentConcrete = isInheritedAgentSlot(current) ? undefined : current;
-		const choice = await selectModel(ctx, slot, args.availableModels, current);
+		const original = cfg.agents[slot];
+		for (;;) {
+			const choice = await selectModel(ctx, slot, args.availableModels, original);
+			if (choice === null) return { saved: false };
+			if (choice === SKIP_MODEL_CHOICE) break;
+			if (choice === INHERIT_MODEL_CHOICE) {
+				cfg.agents[slot] = { mode: "inherit" };
+				break;
+			}
 
-		if (choice === null) return { saved: false };
-		if (choice === SKIP_MODEL_CHOICE) continue;
-		if (choice === INHERIT_MODEL_CHOICE) {
-			cfg.agents[slot] = { mode: "inherit" };
-			continue;
-		}
-		const [provider, modelId] = choice.split("::");
-		if (provider && modelId) {
-			cfg.agents[slot] = {
-				provider,
-				modelId,
-				thinking: currentConcrete?.thinking ?? defaultThinkingForAgent(slot),
+			const selectedModel = args.availableModels.find((model) => modelChoice(model) === choice);
+			if (!selectedModel) continue;
+			const originalConcrete = isInheritedAgentSlot(original) ? undefined : original;
+			const tentative: AgentSlot = {
+				provider: selectedModel.provider,
+				modelId: selectedModel.id,
+				thinking: originalConcrete?.thinking ?? defaultThinkingForAgent(slot),
 			};
+			const thinking = await selectThinking(
+				ctx,
+				slot,
+				selectedModel,
+				tentative.thinking ?? defaultThinkingForAgent(slot),
+			);
+			if (thinking === null) return { saved: false };
+			if (thinking === BACK_CHOICE) continue;
+			cfg.agents[slot] = { ...tentative, thinking };
+			break;
 		}
-
-		const configured = cfg.agents[slot];
-		if (!configured || isInheritedAgentSlot(configured)) continue;
-		const thinking = await selectThinking(ctx, slot, configured.thinking ?? defaultThinkingForAgent(slot));
-		if (thinking === null) return { saved: false };
-		configured.thinking = thinking;
 	}
 
 	await saveConfig(args.configPath, cfg);
@@ -72,40 +80,27 @@ async function selectModel(
 ): Promise<string | null> {
 	const items = modelSelectionItems(models);
 	const initialIndex = initialModelIndex(items, current);
-	const choice = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+	return ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
 		const c = new Container();
 		c.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 		c.addChild(new Text(theme.fg("accent", theme.bold(`pi-crew · ${slot}`)), 1, 0));
 		c.addChild(new Text(theme.fg("dim", "Pick a model from your authenticated providers."), 1, 0));
-		const list = new SelectList(items, Math.min(items.length, 10), {
-			selectedPrefix: (t) => theme.fg("accent", t),
-			selectedText: (t) => theme.fg("accent", t),
-			description: (t) => theme.fg("muted", t),
-			scrollInfo: (t) => theme.fg("dim", t),
-			noMatch: (t) => theme.fg("dim", t),
-		});
+		const list = createSelectList(items, Math.min(items.length, 10), theme);
 		list.setSelectedIndex(initialIndex);
 		list.onSelect = (item) => done(item.value);
 		list.onCancel = () => done(null);
 		c.addChild(list);
+		c.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc cancel"), 1, 0));
 		c.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-		return {
-			render: (w) => c.render(w),
-			invalidate: () => c.invalidate(),
-			handleInput: (data) => {
-				list.handleInput(data);
-				tui.requestRender();
-			},
-		};
+		return widget(c, list, tui);
 	});
-	return choice;
 }
 
 function modelSelectionItems(models: Model<Api>[]): SelectItem[] {
-	const modelItems = models.map((m) => ({
-		value: `${m.provider}::${m.id}`,
-		label: `${m.provider}/${m.id}`,
-		description: m.reasoning ? "reasoning" : "non-reasoning",
+	const modelItems = models.map((model) => ({
+		value: modelChoice(model),
+		label: `${model.provider}/${model.id}`,
+		description: model.reasoning ? "reasoning" : "non-reasoning",
 	}));
 	return [
 		{ value: SKIP_MODEL_CHOICE, label: "(skip — leave unchanged/unset)", description: "" },
@@ -114,11 +109,15 @@ function modelSelectionItems(models: Model<Api>[]): SelectItem[] {
 	];
 }
 
+function modelChoice(model: Pick<Model<Api>, "provider" | "id">): string {
+	return `${model.provider}::${model.id}`;
+}
+
 function initialModelIndex(items: SelectItem[], current: AgentSlotConfig | undefined): number {
 	const currentValue = modelChoiceFor(current);
 	return Math.max(
 		0,
-		items.findIndex((i) => i.value === currentValue),
+		items.findIndex((item) => item.value === currentValue),
 	);
 }
 
@@ -141,7 +140,7 @@ async function selectExecutionMode(
 	}));
 	const initialIndex = Math.max(
 		0,
-		items.findIndex((i) => i.value === current),
+		items.findIndex((item) => item.value === current),
 	);
 	const choice = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
 		const c = new Container();
@@ -149,26 +148,14 @@ async function selectExecutionMode(
 		c.addChild(new Text(theme.fg("accent", theme.bold("pi-crew · execution mode")), 1, 0));
 		c.addChild(new Text(theme.fg("dim", "Global backend for all sub-agents."), 1, 0));
 		c.addChild(new Text(theme.fg("dim", "session = smoother live UI; subprocess = stronger process isolation."), 1, 0));
-		const list = new SelectList(items, items.length, {
-			selectedPrefix: (t) => theme.fg("accent", t),
-			selectedText: (t) => theme.fg("accent", t),
-			description: (t) => theme.fg("muted", t),
-			scrollInfo: (t) => theme.fg("dim", t),
-			noMatch: (t) => theme.fg("dim", t),
-		});
+		const list = createSelectList(items, items.length, theme);
 		list.setSelectedIndex(initialIndex);
 		list.onSelect = (item) => done(item.value);
 		list.onCancel = () => done(null);
 		c.addChild(list);
+		c.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc cancel"), 1, 0));
 		c.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-		return {
-			render: (w) => c.render(w),
-			invalidate: () => c.invalidate(),
-			handleInput: (data) => {
-				list.handleInput(data);
-				tui.requestRender();
-			},
-		};
+		return widget(c, list, tui);
 	});
 	return isExecutionMode(choice) ? choice : null;
 }
@@ -176,44 +163,104 @@ async function selectExecutionMode(
 async function selectThinking(
 	ctx: ExtensionCommandContext,
 	slot: string,
+	model: Model<Api>,
 	current: ThinkingLevel,
-): Promise<ThinkingLevel | null> {
-	const items: SelectItem[] = THINKING_LEVELS.map((level) => ({
+): Promise<ThinkingLevel | typeof BACK_CHOICE | null> {
+	const supported = THINKING_LEVELS.filter((level) => supportsThinkingLevel(model, level, () => supportsXhigh(model)));
+	if (supported.length === 0) return selectNoThinkingLevel(ctx, slot, model);
+
+	const items: SelectItem[] = supported.map((level) => ({
 		value: level,
 		label: level,
 		description: level === "off" ? "disable reasoning" : "reasoning budget",
 	}));
+	const effectiveCurrent = pickerCurrentThinking(model, current);
 	const initialIndex = Math.max(
 		0,
-		items.findIndex((i) => i.value === current),
+		items.findIndex((item) => item.value === effectiveCurrent),
 	);
 	const choice = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
 		const c = new Container();
 		c.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 		c.addChild(new Text(theme.fg("accent", theme.bold(`pi-crew · ${slot} thinking`)), 1, 0));
-		c.addChild(new Text(theme.fg("dim", "Pick the reasoning budget for this sub-agent slot."), 1, 0));
-		const list = new SelectList(items, items.length, {
-			selectedPrefix: (t) => theme.fg("accent", t),
-			selectedText: (t) => theme.fg("accent", t),
-			description: (t) => theme.fg("muted", t),
-			scrollInfo: (t) => theme.fg("dim", t),
-			noMatch: (t) => theme.fg("dim", t),
-		});
+		c.addChild(new Text(theme.fg("dim", `Supported by ${model.provider}/${model.id}.`), 1, 0));
+		const list = createSelectList(items, items.length, theme);
 		list.setSelectedIndex(initialIndex);
 		list.onSelect = (item) => done(item.value);
 		list.onCancel = () => done(null);
 		c.addChild(list);
+		c.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc cancel"), 1, 0));
+		c.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		return widget(c, list, tui);
+	});
+	return isThinkingLevel(choice) && supported.includes(choice) ? choice : null;
+}
+
+function pickerCurrentThinking(model: Model<Api>, current: ThinkingLevel): ThinkingLevel {
+	if (supportsThinkingLevel(model, current, () => supportsXhigh(model))) return current;
+	if (current === "max") {
+		const resolved = resolveThinkingLevel(model, current, () => supportsXhigh(model));
+		if (resolved.ok) return resolved.effective;
+	}
+	return current;
+}
+
+async function selectNoThinkingLevel(
+	ctx: ExtensionCommandContext,
+	slot: string,
+	model: Model<Api>,
+): Promise<typeof BACK_CHOICE | null> {
+	return ctx.ui.custom<typeof BACK_CHOICE | null>((tui, theme, keybindings, done) => {
+		const c = new Container();
+		c.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		c.addChild(new Text(theme.fg("accent", theme.bold(`pi-crew · ${slot} thinking`)), 1, 0));
+		c.addChild(
+			new Text(theme.fg("warning", `${model.provider}/${model.id} advertises no supported thinking levels.`), 1, 0),
+		);
+		c.addChild(
+			new Text(theme.fg("dim", "Choose Back to select another model, or Cancel to exit without saving."), 1, 0),
+		);
+		const backKeys = [...keybindings.getKeys("tui.select.confirm"), Key.left, Key.backspace].join("/");
+		const cancelKeys = keybindings.getKeys("tui.select.cancel").join("/");
+		c.addChild(new Text(theme.fg("dim", `${backKeys} back · ${cancelKeys} cancel`), 1, 0));
 		c.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 		return {
-			render: (w) => c.render(w),
+			render: (width) => c.render(width),
 			invalidate: () => c.invalidate(),
 			handleInput: (data) => {
-				list.handleInput(data);
+				if (keybindings.matches(data, "tui.select.cancel")) done(null);
+				else if (
+					keybindings.matches(data, "tui.select.confirm") ||
+					matchesKey(data, Key.left) ||
+					matchesKey(data, Key.backspace)
+				) {
+					done(BACK_CHOICE);
+				}
 				tui.requestRender();
 			},
 		};
 	});
-	return isThinkingLevel(choice) ? choice : null;
+}
+
+function createSelectList(items: SelectItem[], height: number, theme: Theme) {
+	return new SelectList(items, height, {
+		selectedPrefix: (text) => theme.fg("accent", text),
+		selectedText: (text) => theme.fg("accent", text),
+		description: (text) => theme.fg("muted", text),
+		scrollInfo: (text) => theme.fg("dim", text),
+		noMatch: (text) => theme.fg("warning", text),
+	});
+}
+
+function widget(c: Container, list: SelectList, tui: { requestRender(): void }) {
+	return {
+		render: (width: number) => c.render(width),
+		invalidate: () => c.invalidate(),
+		handleInput: (data: string) => {
+			list.handleInput(data);
+			tui.requestRender();
+		},
+	};
 }
 
 function isThinkingLevel(value: string | null): value is ThinkingLevel {

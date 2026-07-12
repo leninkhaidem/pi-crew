@@ -70,6 +70,16 @@ describe("formatCompletionMessage", () => {
 		const msg = formatCompletionMessage(stateOf({ status: "aborted", errorMessage: "user cancelled", exitCode: -1 }));
 		expect(msg).toContain("✗ subagent auth-search (explore) #abc12345 aborted: user cancelled");
 	});
+
+	it("projects canonical adjustment warnings in single completion text", () => {
+		const msg = formatCompletionMessage(
+			stateOf({ thinking: "high", thinkingAdjustment: { requested: "max", effective: "high" } }),
+		);
+		expect(msg).toContain(
+			'Warning: requested thinking level "max" is unsupported by the selected model; using "high" instead.',
+		);
+		expect(msg).toContain("Found 12 files in api/auth.");
+	});
 });
 
 describe("formatBatchedMessage", () => {
@@ -84,5 +94,18 @@ describe("formatBatchedMessage", () => {
 		expect(msg).toContain("✓ auth-search (general-purpose) #bbbb2222 done (anthropic/claude-haiku-4-5");
 		expect(msg).toContain(alpha);
 		expect(msg).toContain(beta);
+	});
+
+	it("keeps warnings item-specific in mixed batches", () => {
+		const adjusted = stateOf({
+			agentId: "adjusted",
+			thinking: "high",
+			thinkingAdjustment: { requested: "max", effective: "high" },
+		});
+		const plain = stateOf({ agentId: "plain", thinking: "high" });
+		const msg = formatBatchedMessage([adjusted, plain]);
+		expect(msg.match(/Warning: requested thinking level/g)).toHaveLength(1);
+		expect(msg.indexOf("#adjusted")).toBeLessThan(msg.indexOf("Warning:"));
+		expect(msg).toContain("#plain");
 	});
 });

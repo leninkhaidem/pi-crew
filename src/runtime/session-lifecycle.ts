@@ -55,6 +55,7 @@ export async function dispatchSession(
 		model: plan.model.modelId,
 		provider: plan.model.provider,
 		thinking,
+		...(plan.thinkingAdjustment ? { thinkingAdjustment: plan.thinkingAdjustment } : {}),
 		executionMode: "session",
 		tools: plan.agent.tools,
 		maxTurns: plan.options.maxTurns ?? null,
@@ -174,7 +175,9 @@ export async function dispatchSession(
 			extensionsOverride: withoutPiCrewOrchestrationExtensions,
 		});
 		await loader.reload();
-		const sessionOptions: Parameters<typeof createAgentSession>[0] = {
+		// @mariozechner 0.70.2 declarations predate `max`; runtime-compatible
+		// versions accept it. Keep the compatibility cast at this SDK boundary.
+		const sessionOptions = {
 			cwd,
 			agentDir: env.agentDir,
 			modelRegistry: env.ctx.modelRegistry,
@@ -183,7 +186,7 @@ export async function dispatchSession(
 			resourceLoader: loader,
 			sessionManager: SessionManager.inMemory(cwd),
 			settingsManager: SettingsManager.create(cwd, env.agentDir),
-		};
+		} as Parameters<typeof createAgentSession>[0];
 		const created = await createAgentSession(sessionOptions);
 		session = created.session;
 		suppressPiCrewOrchestrationTools(session);

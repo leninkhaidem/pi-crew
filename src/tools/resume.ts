@@ -78,6 +78,7 @@ function successResult(state: SubagentState) {
 			provider: state.provider,
 			model: state.model,
 			thinking: state.thinking,
+			...(state.thinkingAdjustment ? { thinkingAdjustment: state.thinkingAdjustment } : {}),
 			turns: state.turns,
 			finalOutput: state.finalOutput,
 			errorMessage: state.errorMessage,

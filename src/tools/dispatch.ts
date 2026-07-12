@@ -5,6 +5,7 @@ import { discoverAgents } from "../agents/discovery.js";
 import { dispatch as runDispatch } from "../runtime/lifecycle.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import { formatParentSummary } from "../summary.js";
+import { formatThinkingAdjustment } from "../thinking.js";
 import type { SubagentState } from "../types.js";
 import { renderDispatchCall } from "../ui/render-call.js";
 import { renderDispatchResult } from "../ui/render-result.js";
@@ -96,6 +97,7 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 					{
 						agent,
 						model: slot,
+						thinkingAdjustment: slotResolution.thinkingAdjustment,
 						options: {
 							agent: params.agent,
 							alias: params.alias.trim(),
@@ -122,12 +124,14 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 				}
 			}
 			void handle.donePromise.finally(() => rt.concurrency.active.release());
+			const warning = formatThinkingAdjustment(handle.state.thinkingAdjustment);
 			return {
 				content: [
 					{
 						type: "text" as const,
 						text: [
 							`Started ${handle.state.alias} #${handle.agentId} (${agent.name}, ${handle.state.provider}/${handle.state.model}).`,
+							...(warning ? [warning] : []),
 							"Completion will be injected automatically.",
 							"Do not poll or sleep for this result unless the user asks for progress or recovery.",
 						].join("\n"),
@@ -142,6 +146,7 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 					provider: handle.state.provider,
 					model: handle.state.model,
 					thinking: handle.state.thinking,
+					...(handle.state.thinkingAdjustment ? { thinkingAdjustment: handle.state.thinkingAdjustment } : {}),
 					turns: handle.state.turns,
 					paths: handle.state.paths,
 				},
@@ -174,6 +179,7 @@ function stateResult(state: SubagentState) {
 			provider: state.provider,
 			model: state.model,
 			thinking: state.thinking,
+			...(state.thinkingAdjustment ? { thinkingAdjustment: state.thinkingAdjustment } : {}),
 			turns: state.turns,
 			finalOutput: state.finalOutput,
 			errorMessage: state.errorMessage,

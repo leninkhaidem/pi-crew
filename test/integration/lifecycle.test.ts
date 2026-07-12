@@ -137,6 +137,39 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 		}
 	}, 20_000);
 
+	it("keeps the low-level dispatch boundary model-agnostic and forwards already-effective thinking", async () => {
+		const mock = prepareMockPi({
+			events: [{ type: "agent_end", messages: [{ role: "assistant", content: [{ type: "text", text: "ok" }] }] }],
+			exitCode: 0,
+			delayMs: 5,
+		});
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "example", modelId: "reasoner", thinking: "high" },
+					thinkingAdjustment: { requested: "max", effective: "high" },
+					options: { agent: "explore", alias: "effective", task: "already resolved" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-effective",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+			const final = await handle.donePromise;
+			expect(final.thinking).toBe("high");
+			expect(final.thinkingAdjustment).toEqual({ requested: "max", effective: "high" });
+			const state = JSON.parse(readFileSync(final.paths.state, "utf-8")) as Record<string, unknown>;
+			expect(state.thinking).toBe("high");
+			expect(state.thinkingAdjustment).toEqual({ requested: "max", effective: "high" });
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
 	it("hard-aborts subprocess mode after maxTurns plus grace", async () => {
 		const assistantTurn = (text: string) => ({
 			type: "message_end",

@@ -1,8 +1,16 @@
+import { supportsThinkingLevel } from "./thinking.js";
+
 export interface SystemPromptArgs {
 	agents: Array<{ name: string; description: string; source: string }>;
 	configuredSlots: Set<string>;
 	stateDirRoot: string;
-	models?: Array<{ provider: string; id: string; name?: string; reasoning?: boolean }>;
+	models?: Array<{
+		provider: string;
+		id: string;
+		name?: string;
+		reasoning?: boolean;
+		thinkingLevelMap?: unknown;
+	}>;
 	currentModel?: { provider: string; id: string } | null;
 }
 
@@ -42,7 +50,7 @@ export function buildSystemPromptBlock(args: SystemPromptArgs): string {
 		"  - `subagent_dispatch` and `subagent_run` accept optional `provider`, `model`, and `thinking` overrides.",
 		"  - `subagent_resume` includes these params for future use but they are not yet applied.",
 		"  - If `model` is supplied without `provider`, provider is inferred from the configured slot or current parent model when possible.",
-		"  - Valid thinking levels: off, minimal, low, medium, high, xhigh. Non-reasoning models force thinking off.",
+		"  - Valid thinking levels: off, minimal, low, medium, high, xhigh, max. Unsupported max uses the nearest supported lower level and reports requested/effective values; non-reasoning models force thinking off.",
 		...formatModelLines(args),
 		"",
 		"Tracking:",
@@ -80,22 +88,55 @@ export function buildSystemPromptBlock(args: SystemPromptArgs): string {
 }
 
 function formatModelLines(args: SystemPromptArgs): string[] {
-	const models = [...(args.models ?? [])].sort((a, b) => {
-		const providerCmp = a.provider.localeCompare(b.provider);
-		return providerCmp !== 0 ? providerCmp : a.id.localeCompare(b.id);
-	});
+	const byId = new Map<string, NonNullable<SystemPromptArgs["models"]>[number]>();
+	for (const model of args.models ?? []) {
+		const key = modelKey(model);
+		if (!byId.has(key)) byId.set(key, model);
+	}
+	const all = [...byId.values()];
+	const current = all.find((model) => isSameModel(model, args.currentModel));
+	const remaining = all.filter((model) => model !== current);
+	const maxCapable = remaining.filter(isMaxCapable).sort(compareModels);
+	const others = remaining.filter((model) => !isMaxCapable(model)).sort(compareModels);
+	const models = [...(current ? [current] : []), ...maxCapable, ...others];
 	const lines = ["  - Available authenticated models:"];
 	if (models.length === 0) {
 		lines.push("    (none reported; use /model or /login in Pi to configure models)");
 		return lines;
 	}
 	const maxModels = 40;
-	for (const model of models.slice(0, maxModels)) {
-		const current =
-			args.currentModel?.provider === model.provider && args.currentModel.id === model.id ? " current parent" : "";
+	const visible = models.slice(0, maxModels);
+	for (const model of visible) {
+		const currentLabel = isSameModel(model, args.currentModel) ? " current parent" : "";
+		const maxLabel = isMaxCapable(model) ? " max-capable" : "";
 		const reasoning = model.reasoning ? "reasoning" : "non-reasoning";
-		lines.push(`    - provider: ${model.provider}, model: ${model.id} — ${reasoning}${current}`);
+		lines.push(`    - provider: ${model.provider}, model: ${model.id} — ${reasoning}${maxLabel}${currentLabel}`);
 	}
-	if (models.length > maxModels) lines.push(`    - … ${models.length - maxModels} more models omitted`);
+	if (models.length > maxModels) {
+		const omitted = models.slice(maxModels);
+		const omittedMax = omitted.filter(isMaxCapable).length;
+		const maxSuffix = omittedMax > 0 ? ` (${omittedMax} max-capable)` : "";
+		lines.push(`    - … ${omitted.length} more models omitted${maxSuffix}`);
+	}
 	return lines;
+}
+
+function compareModels(a: { provider: string; id: string }, b: { provider: string; id: string }): number {
+	const providerCmp = a.provider.localeCompare(b.provider);
+	return providerCmp !== 0 ? providerCmp : a.id.localeCompare(b.id);
+}
+
+function modelKey(model: { provider: string; id: string }): string {
+	return `${model.provider}\u0000${model.id}`;
+}
+
+function isSameModel(
+	model: { provider: string; id: string },
+	other: { provider: string; id: string } | null | undefined,
+): boolean {
+	return Boolean(other && model.provider === other.provider && model.id === other.id);
+}
+
+function isMaxCapable(model: { reasoning?: boolean; thinkingLevelMap?: unknown }): boolean {
+	return supportsThinkingLevel(model as { reasoning: boolean; thinkingLevelMap?: unknown }, "max", () => false);
 }

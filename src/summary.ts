@@ -1,3 +1,4 @@
+import { formatThinkingAdjustment } from "./thinking.js";
 import type { SubagentState } from "./types.js";
 
 export interface SummaryPreview {
@@ -36,6 +37,8 @@ function formatTextSummary(state: SubagentState, options: ParentSummaryOptions):
 		`Summary: ${summary.text}`,
 	];
 	if (summary.truncated) lines.push(`Summary truncated (${summary.omitted} chars omitted). Use Trace for full output.`);
+	const warning = formatThinkingAdjustment(state.thinkingAdjustment);
+	if (warning) lines.push(warning);
 	lines.push(`Trace: ${state.paths.output}`);
 	lines.push(`State: ${state.paths.state}`);
 	return lines.join("\n");
@@ -52,6 +55,8 @@ function formatXmlSummary(state: SubagentState, options: ParentSummaryOptions): 
 		`<summary>${escapeXml(summary.text)}</summary>`,
 	];
 	if (summary.truncated) lines.push(`<truncated omitted-chars="${summary.omitted}">true</truncated>`);
+	const warning = formatThinkingAdjustment(state.thinkingAdjustment);
+	if (warning) lines.push(`<thinking-warning>${escapeXml(warning)}</thinking-warning>`);
 	if (state.errorMessage) lines.push(`<error>${escapeXml(state.errorMessage)}</error>`);
 	lines.push(`<usage turns="${state.turns}" cost="${state.usage.cost.toFixed(4)}" />`);
 	lines.push(`<trace-file>${escapeXml(state.paths.output)}</trace-file>`);

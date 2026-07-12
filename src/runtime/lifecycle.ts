@@ -12,6 +12,7 @@ import {
 	type ExecutionMode,
 	type SubagentState,
 	type SubagentUsage,
+	type ThinkingAdjustment,
 	defaultThinkingForAgent,
 } from "../types.js";
 import { describeActivity } from "./activity.js";
@@ -49,6 +50,8 @@ export interface DispatchPlan {
 	agent: AgentConfig;
 	model: AgentSlot;
 	options: DispatchOptions;
+	/** Already-resolved provenance; this low-level API performs no capability lookup. */
+	thinkingAdjustment?: ThinkingAdjustment;
 }
 
 export interface DispatchHandle {
@@ -100,6 +103,7 @@ export async function dispatch(
 		model: plan.model.modelId,
 		provider: plan.model.provider,
 		thinking,
+		...(plan.thinkingAdjustment ? { thinkingAdjustment: plan.thinkingAdjustment } : {}),
 		executionMode: actualExecutionMode,
 		tools: plan.agent.tools,
 		maxTurns: plan.options.maxTurns ?? null,

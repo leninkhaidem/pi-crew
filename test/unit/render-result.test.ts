@@ -38,4 +38,28 @@ describe("renderDispatchResult", () => {
 		expect(rendered).not.toContain("LONG_START");
 		expect(lines.every((line) => visibleWidth(line) <= 100)).toBe(true);
 	});
+
+	it("renders the canonical adjustment warning in compact and expanded results", () => {
+		const result = {
+			content: [{ type: "text" as const, text: "RESULT_OUTPUT" }],
+			details: {
+				agentId: "adjusted",
+				alias: "adjusted-agent",
+				status: "done",
+				provider: "example",
+				model: "reasoner",
+				thinking: "high",
+				thinkingAdjustment: { requested: "max" as const, effective: "high" as const },
+			},
+		};
+		for (const expanded of [false, true]) {
+			const rendered = renderDispatchResult(result, { expanded } as never, theme as never)
+				.render(140)
+				.join("\n");
+			expect(rendered).toContain(
+				'Warning: requested thinking level "max" is unsupported by the selected model; using "high" instead.',
+			);
+			if (expanded) expect(rendered).toContain("RESULT_OUTPUT");
+		}
+	});
 });

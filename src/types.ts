@@ -5,6 +5,10 @@
  * subscribers.
  */
 
+import { CAPABILITY_THINKING_LEVELS, type CapabilityThinkingLevel, type ThinkingAdjustment } from "./thinking.js";
+
+export type { ThinkingAdjustment } from "./thinking.js";
+
 // ─────────────────────── Sub-agent state (on disk) ───────────────────────
 
 export type SubagentStatus = "starting" | "running" | "done" | "failed" | "aborted" | "orphaned" | "detached";
@@ -30,8 +34,8 @@ export interface SubagentPaths {
 	prompt: string;
 }
 
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
-export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export const THINKING_LEVELS = CAPABILITY_THINKING_LEVELS;
+export type ThinkingLevel = CapabilityThinkingLevel;
 
 export const EXECUTION_MODES = ["session", "subprocess"] as const;
 export type ExecutionMode = (typeof EXECUTION_MODES)[number];
@@ -60,6 +64,7 @@ export interface SubagentState {
 	model: string;
 	provider: string;
 	thinking: ThinkingLevel;
+	thinkingAdjustment?: ThinkingAdjustment;
 	executionMode?: ExecutionMode;
 	tools: string[] | null;
 	maxTurns: number | null;

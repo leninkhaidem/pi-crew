@@ -84,7 +84,18 @@ describe("subagent_status", () => {
 
 	it("defaults to an uncapped current-session active listing without terminal states", async () => {
 		for (let index = 0; index < 12; index++) {
-			await writeState(stateOf(tmp, { agentId: `run${index.toString().padStart(2, "0")}`, status: "running" }));
+			await writeState(
+				stateOf(tmp, {
+					agentId: `run${index.toString().padStart(2, "0")}`,
+					status: "running",
+					...(index === 0
+						? {
+								thinking: "high" as const,
+								thinkingAdjustment: { requested: "max" as const, effective: "high" as const },
+							}
+						: {}),
+				}),
+			);
 		}
 		await writeState(stateOf(tmp, { agentId: "starting", status: "starting" }));
 		for (const status of ["done", "failed", "aborted", "orphaned", "detached"] as const) {
@@ -102,6 +113,14 @@ describe("subagent_status", () => {
 			expect.arrayContaining(["done", "failed", "aborted", "orphaned", "detached", "other-session"]),
 		);
 		expect(result.content[0]?.text).toContain("run11");
+		expect(result.content[0]?.text).toContain('requested thinking level "max"');
+		expect(
+			(states.find((state) => state.agentId === "run00") as unknown as { thinkingAdjustment?: unknown })
+				.thinkingAdjustment,
+		).toEqual({
+			requested: "max",
+			effective: "high",
+		});
 	});
 
 	it("returns stopped triage entries with priority sorting, default cap, omission metadata, and compact fields", async () => {
@@ -123,6 +142,12 @@ describe("subagent_status", () => {
 					lastUpdate: time,
 					task: longTask,
 					errorMessage: `error for ${agentId} ${"y".repeat(180)}`,
+					...(agentId === "failed-new"
+						? {
+								thinking: "high" as const,
+								thinkingAdjustment: { requested: "max" as const, effective: "high" as const },
+							}
+						: {}),
 				}),
 			);
 		}
@@ -153,15 +178,18 @@ describe("subagent_status", () => {
 		]);
 		expect(details.states.map((state) => state.status)).not.toContain("done");
 		for (const state of details.states) {
-			expect(Object.keys(state).sort()).toEqual([
-				"agent",
-				"agentId",
-				"alias",
-				"errorMessagePreview",
-				"finishedAt",
-				"status",
-				"taskPreview",
-			]);
+			expect(Object.keys(state).sort()).toEqual(
+				[
+					"agent",
+					"agentId",
+					"alias",
+					"errorMessagePreview",
+					"finishedAt",
+					"status",
+					"taskPreview",
+					...(state.agentId === "failed-new" ? ["thinkingAdjustment"] : []),
+				].sort(),
+			);
 			expect(`${state.taskPreview}`).toHaveLength(120);
 			expect(`${state.taskPreview}`).toMatch(/…$/);
 			expect(`${state.errorMessagePreview}`).toHaveLength(120);
@@ -171,6 +199,10 @@ describe("subagent_status", () => {
 		expect(result.content[0]?.text).not.toContain("last secret text");
 		expect(result.content[0]?.text).not.toContain("successful done");
 		expect(result.content[0]?.text).not.toContain("detached-newest");
+		expect(result.content[0]?.text).toContain(
+			'Warning: requested thinking level "max" is unsupported by the selected model; using "high" instead.',
+		);
+		expect(details.states[0]?.thinkingAdjustment).toEqual({ requested: "max", effective: "high" });
 	});
 
 	it("clamps valid stopped limits above the maximum to ten", async () => {
@@ -214,13 +246,27 @@ describe("subagent_status", () => {
 	});
 
 	it("keeps exact agentId lookup across retained sessions without enabling broad listings", async () => {
-		await writeState(stateOf(tmp, { agentId: "done-id", sessionId: "old", status: "done", finalOutput: "finished" }));
+		await writeState(
+			stateOf(tmp, {
+				agentId: "done-id",
+				sessionId: "old",
+				status: "done",
+				finalOutput: "finished",
+				thinking: "high",
+				thinkingAdjustment: { requested: "max", effective: "high" },
+			}),
+		);
 
 		const result = await tool.execute("call", { agentId: "done-id" }, undefined, undefined, {});
 		const states = result.details.states as Array<{ agentId: string; status: string; paths: unknown; usage: unknown }>;
 
 		expect(result.details.count).toBe(1);
-		expect(states[0]).toMatchObject({ agentId: "done-id", status: "done" });
+		expect(states[0]).toMatchObject({
+			agentId: "done-id",
+			status: "done",
+			thinkingAdjustment: { requested: "max", effective: "high" },
+		});
+		expect(result.content[0]?.text).toContain('requested thinking level "max"');
 		expect(states[0]?.paths).toBeDefined();
 		expect(states[0]?.usage).toBeDefined();
 	});
