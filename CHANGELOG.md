@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.7.0 — 2026-07-10
+
+### Added
+
+- **Model-aware maximum thinking effort.** Agent configuration and per-call overrides now accept `max` when the selected model explicitly advertises support through its reasoning metadata.
+- **Thinking adjustment visibility.** When requested thinking differs from the effective level, launches, status views, completion notifications, widgets, overlays, persisted state, and structured tool details now report the adjustment.
+- **Public thinking capability types.** The package root now exports the supported thinking-level list and associated thinking-level and adjustment types for integrations.
+
+### Changed
+
+- **Capability-aware thinking configuration.** `/subagent-config` now shows only thinking levels supported by the selected model, preserves effective fallback visibility for stale `max` settings, and allows operators to return or cancel when a model advertises no usable level.
+- **Safe maximum-effort fallback.** Unsupported `max` requests now fall back to the nearest advertised lower level with a warning, fail before dispatch when no fallback exists, and never forward `max` when older Pi metadata cannot prove support.
+- **Clearer model guidance.** Authenticated-model guidance now identifies maximum-effort-capable models while preserving deterministic ordering and output bounds.
+- **Richer background and batch details.** Background, parallel, and chained results now retain effective thinking and item-specific adjustment provenance in compact and expanded views.
+
 ## v0.6.3 — 2026-06-29
 
 ### Fixed
