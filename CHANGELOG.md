@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.7.1 — 2026-07-14
+
+### Fixed
+
+- **Resumed-agent backgrounding.** Pressing Ctrl+B during `subagent_resume` now returns control to the parent while the resumed work continues and delivers its final result automatically.
+- **Reliable resumed completion delivery.** Rejected overlapping resume attempts no longer suppress the completion notification from an already-backgrounded resumed agent.
+
 ## v0.7.0 — 2026-07-10
 
 ### Added

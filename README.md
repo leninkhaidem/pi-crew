@@ -34,6 +34,7 @@ After install:
 | `steer_subagent` | Send a steering message to a running session-mode sub-agent. |
 | `subagent_dispatch` | Background dispatch. Returns agentId. |
 | `subagent_run` | Blocking single / parallel / chain modes. |
+| `subagent_resume` | Continue a session-mode sub-agent; press Ctrl+B to move a pending resumed turn to the background and receive its completion automatically. |
 | `subagent_status` | Default uncapped current active list (`starting`/`running`); `scope: 'stopped'` returns a capped problematic triage list; `agentId` does exact lookup. |
 | `subagent_kill` | Abort a running sub-agent. |
 
