@@ -382,12 +382,11 @@ export async function dispatchSession(
 		return finalState;
 	};
 
-	const resume = async (task: string): Promise<SubagentState> => {
+	const resume = (task: string): Promise<SubagentState> => {
 		if (!session) throw new Error("session not available");
 		if (state.status === "running" || state.status === "starting")
 			throw new Error(`sub-agent #${agentId} is already running`);
-		await markRunning(task);
-		return runPrompt(task);
+		return markRunning(task).then(() => runPrompt(task));
 	};
 
 	const dispose = async () => {

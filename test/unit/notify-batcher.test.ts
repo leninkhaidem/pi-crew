@@ -118,6 +118,32 @@ describe("createCompletionDispatcher", () => {
 		expect(dispatcher.wasHandled("abc12345")).toBe(true);
 	});
 
+	it("rearms consumed and delivered state when an agent ID is reused", () => {
+		const sendMessage = vi.fn();
+		const dispatcher = createCompletionDispatcher({ sendMessage } as never);
+
+		const initialGeneration = dispatcher.generation("abc12345");
+		dispatcher.push(stateOf({ finalOutput: "Initial turn complete." }), initialGeneration);
+		vi.runAllTimers();
+		expect(dispatcher.wasHandled("abc12345")).toBe(true);
+
+		dispatcher.rearm("abc12345");
+		expect(dispatcher.generation("abc12345")).toBe(initialGeneration + 1);
+		expect(dispatcher.wasHandled("abc12345")).toBe(false);
+		dispatcher.push(stateOf({ finalOutput: "Stale initial completion." }), initialGeneration);
+		vi.runAllTimers();
+		expect(sendMessage).toHaveBeenCalledOnce();
+		dispatcher.consume("abc12345");
+		expect(dispatcher.wasHandled("abc12345")).toBe(true);
+
+		dispatcher.rearm("abc12345");
+		dispatcher.push(stateOf({ finalOutput: "Resumed turn complete." }), dispatcher.generation("abc12345"));
+		vi.runAllTimers();
+
+		expect(sendMessage).toHaveBeenCalledTimes(2);
+		expect(dispatcher.wasHandled("abc12345")).toBe(true);
+	});
+
 	it("preserves structured adjustment provenance in injected completion details", () => {
 		const sendMessage = vi.fn();
 		const dispatcher = createCompletionDispatcher({ sendMessage } as never);

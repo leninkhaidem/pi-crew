@@ -15,6 +15,7 @@ export function registerResumeTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 			"Resume a session-mode sub-agent with a new prompt.",
 			"The agent continues its existing conversation with the new task appended.",
 			"Only works for in-memory session-mode agents started in this parent session.",
+			"If backgrounded with Ctrl+B, completion is injected automatically; do not poll or sleep.",
 			"Args: { agent_id, prompt, provider?, model?, thinking? }.",
 		].join(" "),
 		parameters: Type.Object({
@@ -26,15 +27,30 @@ export function registerResumeTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 			if (!rt.concurrency.active.tryAcquire()) {
 				return activeLimitResult(rt.concurrency.active.current());
 			}
+			const scope = rt.detach.createScope();
+			let releaseOnSettlement = false;
 			try {
-				rt.consumeCompletion(params.agent_id);
-				const resumed = await rt.resumeHandle(params.agent_id, params.prompt, signal).catch(() => null);
-				if (!resumed) {
-					return notFoundResult(params.agent_id);
+				const acceptedResume = rt.resumeHandle(params.agent_id, params.prompt, signal);
+				if (!acceptedResume) return notFoundResult(params.agent_id);
+				const resumePromise = acceptedResume.catch(() => null);
+				const outcome = await Promise.race([
+					resumePromise.then((state) => ({ kind: "settled" as const, state })),
+					scope.detached.then(() => ({ kind: "backgrounded" as const })),
+				]);
+				if (outcome.kind === "backgrounded") {
+					releaseOnSettlement = true;
+					void resumePromise.then(
+						() => rt.concurrency.active.release(),
+						() => rt.concurrency.active.release(),
+					);
+					return backgroundedResult(params.agent_id);
 				}
-				return successResult(resumed);
+				if (!outcome.state) return notFoundResult(params.agent_id);
+				rt.consumeCompletion(params.agent_id);
+				return successResult(outcome.state);
 			} finally {
-				rt.concurrency.active.release();
+				scope.dispose();
+				if (!releaseOnSettlement) rt.concurrency.active.release();
 			}
 		},
 		renderResult(result, options, theme, _context) {
@@ -64,6 +80,22 @@ function notFoundResult(agentId: string) {
 			},
 		],
 		details: { error: "resume_unavailable", agentId } as Record<string, unknown>,
+	};
+}
+
+function backgroundedResult(agentId: string) {
+	return {
+		content: [
+			{
+				type: "text" as const,
+				text: [
+					`Sub-agent #${agentId} moved to background.`,
+					"Completion will be injected automatically.",
+					"Do not poll or sleep for this result unless the user asks for progress or recovery.",
+				].join("\n"),
+			},
+		],
+		details: { agentId, status: "backgrounded" } as Record<string, unknown>,
 	};
 }
 
