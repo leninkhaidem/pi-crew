@@ -31,7 +31,7 @@ import { registerResumeTool } from "./tools/resume.js";
 import { registerRunTool } from "./tools/run.js";
 import { registerStatusTool } from "./tools/status.js";
 import { registerSteerTool } from "./tools/steer.js";
-import type { PiCrewConfig } from "./types.js";
+import type { PiCrewConfig, SubagentState } from "./types.js";
 import { type FooterController, mountFooter } from "./ui/footer.js";
 import { type InterruptController, mountInterruptHandler } from "./ui/interrupt.js";
 import { type WatcherHandle, mountStateWatcher } from "./ui/state-watcher.js";
@@ -128,6 +128,7 @@ export default function (pi: ExtensionAPI) {
 					}
 				},
 				onEnd: (state) => {
+					const completionGeneration = dispatcher.generation(state.agentId);
 					emitter.end({
 						agentId: state.agentId,
 						status: state.status,
@@ -138,7 +139,7 @@ export default function (pi: ExtensionAPI) {
 						errorMessage: state.errorMessage,
 					});
 					void getConfig().then((c) => {
-						if (c.global.notifyOnCompletion) dispatcher.push(state);
+						if (c.global.notifyOnCompletion) dispatcher.push(state, completionGeneration);
 						if (c.tmux.killOnComplete === "after-grace") {
 							setTimeout(() => {
 								killTmuxWindow(state, c.tmux);
@@ -170,10 +171,16 @@ export default function (pi: ExtensionAPI) {
 			await handle.steer(message);
 			return "ok";
 		},
-		resumeHandle: async (agentId, task, signal) => {
+		resumeHandle: (agentId, task, signal) => {
 			const handle = handles.get(agentId);
 			if (!handle?.resume) return null;
-			const resumePromise = handle.resume(task, signal);
+			let resumePromise: Promise<SubagentState>;
+			try {
+				resumePromise = handle.resume(task, signal);
+			} catch {
+				return null;
+			}
+			dispatcher.rearm(agentId);
 			const resumedHandle: DispatchHandle = { ...handle, donePromise: resumePromise };
 			handles.set(agentId, resumedHandle);
 			parentAbortTracker.track(signal, resumedHandle);

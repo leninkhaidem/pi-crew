@@ -15,7 +15,7 @@ export interface ExtensionRuntime {
 	trackParentAbort(signal: AbortSignal | undefined, handle: DispatchHandle): void;
 	abortActiveHandle(agentId: string, reason?: string): Promise<boolean>;
 	steerHandle(agentId: string, message: string): Promise<"ok" | "not_found" | "unsupported">;
-	resumeHandle(agentId: string, task: string, signal?: AbortSignal): Promise<SubagentState | null>;
+	resumeHandle(agentId: string, task: string, signal?: AbortSignal): Promise<SubagentState> | null;
 	consumeCompletion(agentId: string): void;
 	completionHandled(agentId: string): boolean;
 	getCurrentBatchId(ctx: ExtensionContext): string | null;

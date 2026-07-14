@@ -510,6 +510,50 @@ describe("dispatchSession", () => {
 		expect(final.errorMessage).toBe("maxTurns exceeded (1)");
 	});
 
+	it("rejects an overlapping resume synchronously at the admission boundary", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "initial" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		await handle.donePromise;
+
+		let settleResume!: () => void;
+		fakeSession.prompt = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					settleResume = resolve;
+				}),
+		);
+		const accepted = handle.resume?.("accepted resume");
+		await vi.waitFor(() => expect(fakeSession.prompt).toHaveBeenCalledTimes(1));
+		let synchronousError: unknown;
+		let overlap: Promise<unknown> | undefined;
+		try {
+			overlap = handle.resume?.("overlapping resume");
+		} catch (error) {
+			synchronousError = error;
+		}
+		void overlap?.catch(() => undefined);
+
+		settleResume();
+		await accepted;
+		expect(synchronousError).toMatchObject({ message: expect.stringContaining("already running") });
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(1);
+	});
+
 	it("binds extensions so extension-provided skills/resources are inherited by session-mode sub-agents", async () => {
 		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
 

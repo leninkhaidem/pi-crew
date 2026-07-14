@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createDetachController } from "../../src/runtime/detach.js";
 import { registerResumeTool } from "../../src/tools/resume.js";
 import type { SubagentState } from "../../src/types.js";
 
@@ -11,6 +12,18 @@ type ToolExecute = (
 	onUpdate?: unknown,
 	ctx?: unknown,
 ) => Promise<unknown>;
+
+function deferred<T>() {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
+
+const drain = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 function stateOf(overrides: Partial<SubagentState> = {}): SubagentState {
 	return {
@@ -55,13 +68,14 @@ function stateOf(overrides: Partial<SubagentState> = {}): SubagentState {
 function createRuntime(overrides: { tryAcquire?: boolean; resumeResult?: SubagentState | null } = {}) {
 	const { tryAcquire = true, resumeResult = stateOf() } = overrides;
 	const release = vi.fn();
-	const resumeHandle = vi.fn<(id: string, task: string, signal?: AbortSignal) => Promise<SubagentState | null>>();
+	const resumeHandle = vi.fn<(id: string, task: string, signal?: AbortSignal) => Promise<SubagentState> | null>();
 	if (resumeResult === null) {
-		resumeHandle.mockResolvedValue(null);
+		resumeHandle.mockReturnValue(null);
 	} else {
 		resumeHandle.mockResolvedValue(resumeResult);
 	}
 	const consumeCompletion = vi.fn();
+	const detach = createDetachController();
 	return {
 		rt: {
 			concurrency: {
@@ -73,10 +87,12 @@ function createRuntime(overrides: { tryAcquire?: boolean; resumeResult?: Subagen
 			},
 			consumeCompletion,
 			resumeHandle,
+			detach,
 		},
 		release,
 		consumeCompletion,
 		resumeHandle,
+		detach,
 	};
 }
 
@@ -90,8 +106,36 @@ function registerAndGetTool(rt: ReturnType<typeof createRuntime>["rt"]) {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("subagent_resume tool", () => {
+	it("registers a detach scope while resume is pending and returns promptly when backgrounded", async () => {
+		const pending = deferred<SubagentState>();
+		const { rt, release, consumeCompletion, detach } = createRuntime();
+		rt.resumeHandle.mockReturnValue(pending.promise);
+		const tool = registerAndGetTool(rt);
+
+		const toolPromise = tool.execute("call-detach", {
+			agent_id: "resume-001",
+			prompt: "continue in background",
+		});
+		await Promise.resolve();
+
+		expect(detach.hasActiveScopes()).toBe(true);
+		detach.detachAll();
+		const result = (await toolPromise) as { content: Array<{ text: string }>; details: Record<string, unknown> };
+		expect(result.details.status).toBe("backgrounded");
+		expect(result.content[0]?.text).toContain("moved to background");
+		expect(result.content[0]?.text).toContain("Completion will be injected automatically");
+		expect(consumeCompletion).not.toHaveBeenCalled();
+		expect(release).not.toHaveBeenCalled();
+
+		pending.resolve(stateOf());
+		await drain();
+		expect(release).toHaveBeenCalledOnce();
+		await drain();
+		expect(release).toHaveBeenCalledOnce();
+	});
+
 	it("returns active-limit-reached error when concurrency limit is hit", async () => {
-		const { rt } = createRuntime({ tryAcquire: false });
+		const { rt, detach } = createRuntime({ tryAcquire: false });
 		const tool = registerAndGetTool(rt);
 
 		const result = (await tool.execute("call-1", {
@@ -102,10 +146,11 @@ describe("subagent_resume tool", () => {
 		expect(result.details.error).toBe("max_active_reached");
 		expect(result.content[0]?.text).toContain("Active sub-agent limit reached");
 		expect(result.content[0]?.text).toContain("3");
+		expect(detach.hasActiveScopes()).toBe(false);
 	});
 
-	it("returns resume_unavailable when agent not found or not session-mode", async () => {
-		const { rt, release, consumeCompletion } = createRuntime({ resumeResult: null });
+	it("does not consume completion state when resume admission is unavailable", async () => {
+		const { rt, release, consumeCompletion, detach } = createRuntime({ resumeResult: null });
 		const tool = registerAndGetTool(rt);
 
 		const result = (await tool.execute("call-2", {
@@ -116,7 +161,8 @@ describe("subagent_resume tool", () => {
 		expect(result.details.error).toBe("resume_unavailable");
 		expect(result.details.agentId).toBe("no-such-agent");
 		expect(result.content[0]?.text).toContain("Cannot resume");
-		expect(consumeCompletion).toHaveBeenCalledWith("no-such-agent");
+		expect(consumeCompletion).not.toHaveBeenCalled();
+		expect(detach.hasActiveScopes()).toBe(false);
 		expect(release).toHaveBeenCalledOnce();
 	});
 
@@ -125,7 +171,9 @@ describe("subagent_resume tool", () => {
 			thinking: "high",
 			thinkingAdjustment: { requested: "max", effective: "high" },
 		});
-		const { rt, release, consumeCompletion, resumeHandle } = createRuntime({ resumeResult: state });
+		const { rt, release, consumeCompletion, resumeHandle, detach } = createRuntime({
+			resumeResult: state,
+		});
 		const tool = registerAndGetTool(rt);
 
 		const result = (await tool.execute("call-3", {
@@ -147,11 +195,12 @@ describe("subagent_resume tool", () => {
 		expect(result.content[0]?.text).toContain('requested thinking level "max"');
 		expect(consumeCompletion).toHaveBeenCalledWith("resume-001");
 		expect(resumeHandle).toHaveBeenCalledWith("resume-001", "follow-up task", undefined);
+		expect(detach.hasActiveScopes()).toBe(false);
 		expect(release).toHaveBeenCalledOnce();
 	});
 
-	it("returns not-found result when resumeHandle throws (catch path)", async () => {
-		const { rt, release } = createRuntime();
+	it("does not consume completion state when an admitted resume later rejects", async () => {
+		const { rt, release, consumeCompletion, detach } = createRuntime();
 		// Override resumeHandle to reject
 		rt.resumeHandle.mockRejectedValue(new Error("session expired"));
 		const tool = registerAndGetTool(rt);
@@ -164,6 +213,8 @@ describe("subagent_resume tool", () => {
 		expect(result.details.error).toBe("resume_unavailable");
 		expect(result.details.agentId).toBe("broken-agent");
 		expect(result.content[0]?.text).toContain("Cannot resume");
+		expect(consumeCompletion).not.toHaveBeenCalled();
+		expect(detach.hasActiveScopes()).toBe(false);
 		expect(release).toHaveBeenCalledOnce();
 	});
 });

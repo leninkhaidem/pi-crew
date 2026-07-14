@@ -5,8 +5,10 @@ import { formatBatchedMessage, formatCompletionMessage } from "./message.js";
 const BATCH_WINDOW_MS = 2000;
 
 export interface CompletionDispatcher {
-	push(state: SubagentState): void;
+	push(state: SubagentState, generation?: number): void;
 	consume(agentId: string): void;
+	rearm(agentId: string): void;
+	generation(agentId: string): number;
 	wasHandled(agentId: string): boolean;
 	flush(): void;
 }
@@ -16,6 +18,7 @@ export function createCompletionDispatcher(pi: ExtensionAPI): CompletionDispatch
 	let timer: NodeJS.Timeout | null = null;
 	const consumed = new Set<string>();
 	const delivered = new Set<string>();
+	const generations = new Map<string, number>();
 
 	const flushNow = () => {
 		if (queue.length === 0) return;
@@ -36,8 +39,8 @@ export function createCompletionDispatcher(pi: ExtensionAPI): CompletionDispatch
 	};
 
 	return {
-		push(state) {
-			if (consumed.has(state.agentId)) return;
+		push(state, generation = generations.get(state.agentId) ?? 0) {
+			if (generation !== (generations.get(state.agentId) ?? 0) || consumed.has(state.agentId)) return;
 			queue.push(state);
 			if (timer) return;
 			timer = setTimeout(flushNow, BATCH_WINDOW_MS);
@@ -49,6 +52,19 @@ export function createCompletionDispatcher(pi: ExtensionAPI): CompletionDispatch
 				clearTimeout(timer);
 				timer = null;
 			}
+		},
+		rearm(agentId) {
+			generations.set(agentId, (generations.get(agentId) ?? 0) + 1);
+			consumed.delete(agentId);
+			delivered.delete(agentId);
+			queue = queue.filter((state) => state.agentId !== agentId);
+			if (queue.length === 0 && timer) {
+				clearTimeout(timer);
+				timer = null;
+			}
+		},
+		generation(agentId) {
+			return generations.get(agentId) ?? 0;
 		},
 		wasHandled(agentId) {
 			return consumed.has(agentId) || delivered.has(agentId);
