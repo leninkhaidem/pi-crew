@@ -338,6 +338,183 @@ describe("dispatch (with mock pi) — walking skeleton", () => {
 		}
 	}, 20_000);
 
+	it("preserves subprocess output after successful overflow compaction without retry", async () => {
+		const mock = prepareMockPi({
+			events: [
+				{ type: "agent_start" },
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "Completed before compaction." }],
+						usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, totalTokens: 14, cost: { total: 0 } },
+						stopReason: "stop",
+					},
+				},
+				{
+					type: "agent_end",
+					messages: [{ role: "assistant", content: [{ type: "text", text: "Completed before compaction." }] }],
+				},
+				{ type: "compaction_start", reason: "overflow" },
+				{ type: "compaction_end", reason: "overflow", aborted: false, willRetry: false },
+			],
+			exitCode: 0,
+			delayMs: 5,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
+					options: { agent: "explore", alias: "explore-test", task: "recover" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-overflow-no-retry-success",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+			const final = await handle.donePromise;
+
+			expect(final.status).toBe("done");
+			expect(final.stopReason).toBe("stop");
+			expect(final.stopReason).not.toBe("context_overflow_recovery_failed");
+			expect(final.finalOutput).toBe("Completed before compaction.");
+			expect(final.errorMessage).toBeNull();
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
+	it("does not reuse stale completed subprocess output after a later overflow failure", async () => {
+		const mock = prepareMockPi({
+			events: [
+				{ type: "agent_start" },
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "Earlier completed subprocess output." }],
+						usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, totalTokens: 14, cost: { total: 0 } },
+						stopReason: "stop",
+					},
+				},
+				{
+					type: "agent_end",
+					messages: [{ role: "assistant", content: [{ type: "text", text: "Earlier completed subprocess output." }] }],
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						stopReason: "error",
+						errorMessage: "Your input exceeds the context window of this model",
+					},
+				},
+				{
+					type: "agent_end",
+					messages: [
+						{ role: "assistant", content: [{ type: "text", text: "Earlier completed subprocess output." }] },
+						{
+							role: "assistant",
+							stopReason: "error",
+							errorMessage: "Your input exceeds the context window of this model",
+						},
+					],
+				},
+				{ type: "compaction_start", reason: "overflow" },
+				{ type: "compaction_end", reason: "overflow", aborted: false, willRetry: false },
+			],
+			exitCode: 0,
+			delayMs: 5,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
+					options: { agent: "explore", alias: "explore-test", task: "recover" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-overflow-stale-failure",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+			const final = await handle.donePromise;
+
+			expect(final.status).toBe("failed");
+			expect(final.stopReason).toBe("context_overflow_recovery_failed");
+			expect(final.errorMessage).toContain("did not retry");
+			expect(final.finalOutput).toBeNull();
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
+	it("does not treat terminal overflow error text as completed in subprocess mode", async () => {
+		const mock = prepareMockPi({
+			events: [
+				{ type: "agent_start" },
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						stopReason: "error",
+						errorMessage: "Your input exceeds the context window of this model",
+						content: [{ type: "text", text: "Partial overflow error text." }],
+					},
+				},
+				{
+					type: "agent_end",
+					messages: [
+						{
+							role: "assistant",
+							stopReason: "error",
+							errorMessage: "Your input exceeds the context window of this model",
+							content: [{ type: "text", text: "Partial overflow error text." }],
+						},
+					],
+				},
+				{ type: "compaction_start", reason: "overflow" },
+				{ type: "compaction_end", reason: "overflow", aborted: false, willRetry: false },
+			],
+			exitCode: 0,
+			delayMs: 5,
+		});
+
+		try {
+			const handle = await dispatch(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "mock-haiku", thinking: "low" },
+					options: { agent: "explore", alias: "explore-test", task: "recover" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "sess-overflow-terminal-error-text",
+					parentAgentId: null,
+					binary: mock.binary,
+				},
+			);
+			const final = await handle.donePromise;
+
+			expect(final.status).toBe("failed");
+			expect(final.stopReason).toBe("context_overflow_recovery_failed");
+			expect(final.errorMessage).toContain("did not retry");
+			expect(final.finalOutput).toBeNull();
+		} finally {
+			mock.cleanup();
+		}
+	}, 20_000);
+
 	it("fails subprocess overflow recovery when the child exits while recovery is pending", async () => {
 		const mock = prepareMockPi({
 			events: [{ type: "agent_start" }, { type: "compaction_start", reason: "overflow" }],

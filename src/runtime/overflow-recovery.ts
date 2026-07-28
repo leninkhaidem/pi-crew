@@ -12,6 +12,7 @@ export class OverflowRecoveryTracker {
 	private state: RecoveryState = "idle";
 	private phase: RecoveryPhase = "none";
 	private failureMessage: string | null = null;
+	private latestAssistantCompletedWithOutput = false;
 	private waiters = new Set<() => void>();
 
 	observeEvent(event: unknown): void {
@@ -34,9 +35,14 @@ export class OverflowRecoveryTracker {
 			return;
 		}
 
-		if (type === "agent_end" && this.isPending()) {
-			const text = extractLastAssistantText(arrayField(ev, "messages"));
-			if (text) this.markRecovered();
+		if (type === "agent_end") {
+			const terminalAssistant = extractTerminalAssistantMessage(arrayField(ev, "messages"));
+			if (!terminalAssistant) return;
+			const stopReason = stringField(terminalAssistant, "stopReason");
+			const completedText =
+				stopReason === undefined || stopReason === "stop" ? extractFirstText(terminalAssistant.content) : null;
+			this.latestAssistantCompletedWithOutput = Boolean(completedText);
+			if (completedText && this.isPending()) this.markRecovered();
 		}
 	}
 
@@ -97,18 +103,32 @@ export class OverflowRecoveryTracker {
 			return;
 		}
 
-		if (!booleanField(event, "willRetry")) {
-			const detail = stringField(event, "errorMessage") || "compaction completed without scheduling a retry.";
-			this.markUnrecovered(`Context overflow recovery did not retry: ${detail}`);
+		const errorMessage = stringField(event, "errorMessage");
+		if (errorMessage) {
+			this.markUnrecovered(`Context overflow recovery compaction failed: ${errorMessage}`);
 			return;
 		}
 
+		if (!booleanField(event, "willRetry")) {
+			if (this.latestAssistantCompletedWithOutput) {
+				if (this.isPending()) this.markRecovered();
+				return;
+			}
+			this.markUnrecovered("Context overflow recovery did not retry: compaction completed without scheduling a retry.");
+			return;
+		}
+
+		this.latestAssistantCompletedWithOutput = false;
 		this.markPending("retrying");
 	}
 
 	private observeAssistantMessage(message: unknown): void {
 		const msg = asRecord(message);
 		if (!msg || stringField(msg, "role") !== "assistant") return;
+
+		const stopReason = stringField(msg, "stopReason");
+		const completedText = stopReason === "stop" ? extractFirstText(msg.content) : null;
+		this.latestAssistantCompletedWithOutput = Boolean(completedText);
 
 		if (isContextOverflowAssistantMessage(msg)) {
 			this.markPending("overflow_detected");
@@ -117,8 +137,7 @@ export class OverflowRecoveryTracker {
 
 		if (!this.isPending()) return;
 
-		const stopReason = stringField(msg, "stopReason");
-		if (stopReason === "stop" && extractFirstText(msg.content)) {
+		if (completedText) {
 			this.markRecovered();
 		} else if (stopReason === "aborted") {
 			this.markUnrecovered("Context overflow recovery retry was aborted.");
@@ -178,7 +197,8 @@ export function overflowRecoveryActivity(event: unknown): string | null {
 	if (!ev || !isOverflowRecoveryEvent(ev)) return null;
 	if (ev.type === "compaction_start") return "recovering context overflow…";
 	if (booleanField(ev, "aborted")) return "context overflow recovery aborted";
-	if (!booleanField(ev, "willRetry")) return "context overflow recovery failed";
+	if (stringField(ev, "errorMessage")) return "context overflow recovery failed";
+	if (!booleanField(ev, "willRetry")) return "context overflow compaction completed";
 	return "retrying after context compaction…";
 }
 
@@ -215,13 +235,10 @@ function extractFirstText(content: unknown): string | null {
 	return null;
 }
 
-function extractLastAssistantText(messages: unknown[]): string | null {
+function extractTerminalAssistantMessage(messages: unknown[]): Record<string, unknown> | null {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = asRecord(messages[i]);
-		if (msg?.role === "assistant") {
-			const text = extractFirstText(msg.content);
-			if (text) return text;
-		}
+		if (msg?.role === "assistant") return msg;
 	}
 	return null;
 }
