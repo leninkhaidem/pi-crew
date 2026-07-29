@@ -178,6 +178,58 @@ describe("dispatchSession", () => {
 		expect(final.errorMessage).toBeNull();
 	});
 
+	it("preserves terminal length output after overflow retry in session mode", async () => {
+		vi.useFakeTimers();
+		const { OVERFLOW_RECOVERY_TIMEOUT_MS } = await import("../../src/runtime/overflow-recovery.js");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		fakeSession.messages = [];
+		fakeSession.prompt = vi.fn(async () => {
+			subscriber?.({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					stopReason: "error",
+					errorMessage: "Your input exceeds the context window of this model",
+				},
+			});
+			subscriber?.({ type: "agent_end", messages: [] });
+			subscriber?.({ type: "compaction_start", reason: "overflow" });
+			subscriber?.({ type: "compaction_end", reason: "overflow", aborted: false, willRetry: true });
+			const terminal = {
+				role: "assistant",
+				stopReason: "length",
+				content: [{ type: "text", text: "retry reached its output limit" }],
+			};
+			fakeSession.messages = [terminal];
+			subscriber?.({ type: "message_end", message: terminal });
+			subscriber?.({ type: "agent_end", messages: [terminal] });
+		});
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "recover" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess-length-recovery",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		await vi.advanceTimersByTimeAsync(OVERFLOW_RECOVERY_TIMEOUT_MS);
+		const final = await handle.donePromise;
+
+		expect(final.status).toBe("done");
+		expect(final.stopReason).toBe("length");
+		expect(final.finalOutput).toBe("retry reached its output limit");
+		expect(final.errorMessage).toBeNull();
+	});
+
 	it("recovers session-mode overflow when only the retry agent_end carries success output", async () => {
 		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
 		fakeSession.messages = [];
@@ -228,6 +280,273 @@ describe("dispatchSession", () => {
 		expect(final.errorMessage).toBeNull();
 	});
 
+	it("preserves completed output after successful overflow compaction without retry", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		fakeSession.messages = [{ role: "assistant", content: [{ type: "text", text: "completed before compaction" }] }];
+		fakeSession.prompt = vi.fn(async () => {
+			subscriber?.({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					stopReason: "stop",
+					content: [{ type: "text", text: "completed before compaction" }],
+					usage: { input: 2, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 5, cost: { total: 0 } },
+				},
+			});
+			subscriber?.({ type: "turn_end", message: { role: "assistant", stopReason: "stop" } });
+			subscriber?.({
+				type: "agent_end",
+				messages: [{ role: "assistant", content: [{ type: "text", text: "completed before compaction" }] }],
+			});
+			subscriber?.({ type: "compaction_start", reason: "overflow" });
+			subscriber?.({ type: "compaction_end", reason: "overflow", aborted: false, willRetry: false });
+		});
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "recover" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		const final = await handle.donePromise;
+
+		expect(final.status).toBe("done");
+		expect(final.stopReason).toBe("stop");
+		expect(final.stopReason).not.toBe("context_overflow_recovery_failed");
+		expect(final.finalOutput).toBe("completed before compaction");
+		expect(final.errorMessage).toBeNull();
+	});
+
+	it("does not reuse stale completed output after a later overflow failure", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		fakeSession.messages = [{ role: "assistant", content: [{ type: "text", text: "earlier completed output" }] }];
+		fakeSession.prompt = vi.fn(async () => {
+			subscriber?.({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					stopReason: "stop",
+					content: [{ type: "text", text: "earlier completed output" }],
+					usage: { input: 2, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 5, cost: { total: 0 } },
+				},
+			});
+			subscriber?.({
+				type: "agent_end",
+				messages: [{ role: "assistant", content: [{ type: "text", text: "earlier completed output" }] }],
+			});
+			subscriber?.({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					stopReason: "error",
+					errorMessage: "Your input exceeds the context window of this model",
+				},
+			});
+			subscriber?.({
+				type: "agent_end",
+				messages: [
+					{ role: "assistant", content: [{ type: "text", text: "earlier completed output" }] },
+					{
+						role: "assistant",
+						stopReason: "error",
+						errorMessage: "Your input exceeds the context window of this model",
+					},
+				],
+			});
+			subscriber?.({ type: "compaction_start", reason: "overflow" });
+			subscriber?.({ type: "compaction_end", reason: "overflow", aborted: false, willRetry: false });
+		});
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "recover" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess-stale-overflow",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		const final = await handle.donePromise;
+
+		expect(final.status).toBe("failed");
+		expect(final.stopReason).toBe("context_overflow_recovery_failed");
+		expect(final.errorMessage).toContain("did not retry");
+		expect(final.finalOutput).toBeNull();
+	});
+
+	it("does not treat terminal overflow error text as completed in session mode", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		fakeSession.messages = [];
+		fakeSession.prompt = vi.fn(async () => {
+			subscriber?.({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					stopReason: "error",
+					errorMessage: "Your input exceeds the context window of this model",
+					content: [{ type: "text", text: "Partial overflow error text" }],
+				},
+			});
+			subscriber?.({
+				type: "agent_end",
+				messages: [
+					{
+						role: "assistant",
+						stopReason: "error",
+						errorMessage: "Your input exceeds the context window of this model",
+						content: [{ type: "text", text: "Partial overflow error text" }],
+					},
+				],
+			});
+			subscriber?.({ type: "compaction_start", reason: "overflow" });
+			subscriber?.({ type: "compaction_end", reason: "overflow", aborted: false, willRetry: false });
+		});
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "recover" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess-terminal-overflow-error-text",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		const final = await handle.donePromise;
+
+		expect(final.status).toBe("failed");
+		expect(final.stopReason).toBe("context_overflow_recovery_failed");
+		expect(final.errorMessage).toContain("did not retry");
+		expect(final.finalOutput).toBeNull();
+	});
+
+	it("reports successful overflow compaction without retry neutrally", async () => {
+		const activityUpdates: string[] = [];
+		let resolvePrompt!: () => void;
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		fakeSession.messages = [{ role: "assistant", content: [{ type: "text", text: "completed before compaction" }] }];
+		fakeSession.prompt = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					resolvePrompt = resolve;
+					subscriber?.({
+						type: "message_end",
+						message: {
+							role: "assistant",
+							stopReason: "stop",
+							content: [{ type: "text", text: "completed before compaction" }],
+							usage: { input: 2, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 5, cost: { total: 0 } },
+						},
+					});
+					subscriber?.({
+						type: "agent_end",
+						messages: [{ role: "assistant", content: [{ type: "text", text: "completed before compaction" }] }],
+					});
+					subscriber?.({ type: "compaction_start", reason: "overflow" });
+					setTimeout(() => {
+						subscriber?.({ type: "compaction_end", reason: "overflow", aborted: false, willRetry: false });
+					}, 120);
+				}),
+		);
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "recover" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess-neutral-overflow",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+			{
+				onStateUpdate: (next) => {
+					if (next.activity) activityUpdates.push(next.activity);
+				},
+			},
+		);
+
+		await vi.waitFor(() => expect(activityUpdates).toContain("recovering context overflow…"), { timeout: 1_000 });
+		await vi.waitFor(() => expect(activityUpdates).toContain("context overflow compaction completed"), {
+			timeout: 1_000,
+		});
+		expect(activityUpdates).not.toContain("context overflow recovery failed");
+		resolvePrompt();
+		const final = await handle.donePromise;
+
+		expect(final.status).toBe("done");
+		expect(final.stopReason).toBe("stop");
+		expect(final.finalOutput).toBe("completed before compaction");
+		expect(final.errorMessage).toBeNull();
+	});
+
+	it("preserves canonical overflow recovery error from compaction", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const canonicalError = "Context overflow recovery failed after 3 attempts: token budget exhausted.";
+		fakeSession.messages = [];
+		fakeSession.prompt = vi.fn(async () => {
+			subscriber?.({ type: "compaction_start", reason: "overflow" });
+			subscriber?.({
+				type: "compaction_end",
+				reason: "overflow",
+				aborted: false,
+				willRetry: false,
+				errorMessage: canonicalError,
+			});
+		});
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "recover" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess-canonical-overflow-error",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		const final = await handle.donePromise;
+
+		expect(final.status).toBe("failed");
+		expect(final.stopReason).toBe("context_overflow_recovery_failed");
+		expect(final.errorMessage).toBe(canonicalError);
+		expect(final.finalOutput).toBeNull();
+	});
+
 	it.each([
 		[
 			"compaction failure",
@@ -264,6 +583,9 @@ describe("dispatchSession", () => {
 		expect(final.status).toBe("failed");
 		expect(final.stopReason).toBe("context_overflow_recovery_failed");
 		expect(final.errorMessage).toContain("Context overflow recovery failed");
+		if (_name === "compaction failure") {
+			expect(final.errorMessage).toBe("Context overflow recovery failed: Compaction failed: compact failed");
+		}
 		expect(final.finalOutput).toBeNull();
 	});
 
