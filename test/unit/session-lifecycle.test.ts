@@ -178,6 +178,58 @@ describe("dispatchSession", () => {
 		expect(final.errorMessage).toBeNull();
 	});
 
+	it("preserves terminal length output after overflow retry in session mode", async () => {
+		vi.useFakeTimers();
+		const { OVERFLOW_RECOVERY_TIMEOUT_MS } = await import("../../src/runtime/overflow-recovery.js");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		fakeSession.messages = [];
+		fakeSession.prompt = vi.fn(async () => {
+			subscriber?.({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					stopReason: "error",
+					errorMessage: "Your input exceeds the context window of this model",
+				},
+			});
+			subscriber?.({ type: "agent_end", messages: [] });
+			subscriber?.({ type: "compaction_start", reason: "overflow" });
+			subscriber?.({ type: "compaction_end", reason: "overflow", aborted: false, willRetry: true });
+			const terminal = {
+				role: "assistant",
+				stopReason: "length",
+				content: [{ type: "text", text: "retry reached its output limit" }],
+			};
+			fakeSession.messages = [terminal];
+			subscriber?.({ type: "message_end", message: terminal });
+			subscriber?.({ type: "agent_end", messages: [terminal] });
+		});
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "recover" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess-length-recovery",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		await vi.advanceTimersByTimeAsync(OVERFLOW_RECOVERY_TIMEOUT_MS);
+		const final = await handle.donePromise;
+
+		expect(final.status).toBe("done");
+		expect(final.stopReason).toBe("length");
+		expect(final.finalOutput).toBe("retry reached its output limit");
+		expect(final.errorMessage).toBeNull();
+	});
+
 	it("recovers session-mode overflow when only the retry agent_end carries success output", async () => {
 		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
 		fakeSession.messages = [];
@@ -456,6 +508,45 @@ describe("dispatchSession", () => {
 		expect(final.errorMessage).toBeNull();
 	});
 
+	it("preserves canonical overflow recovery error from compaction", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const canonicalError = "Context overflow recovery failed after 3 attempts: token budget exhausted.";
+		fakeSession.messages = [];
+		fakeSession.prompt = vi.fn(async () => {
+			subscriber?.({ type: "compaction_start", reason: "overflow" });
+			subscriber?.({
+				type: "compaction_end",
+				reason: "overflow",
+				aborted: false,
+				willRetry: false,
+				errorMessage: canonicalError,
+			});
+		});
+
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "general-test", task: "recover" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "sess-canonical-overflow-error",
+				parentAgentId: null,
+				ctx: {
+					modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })) },
+				} as never,
+			},
+		);
+		const final = await handle.donePromise;
+
+		expect(final.status).toBe("failed");
+		expect(final.stopReason).toBe("context_overflow_recovery_failed");
+		expect(final.errorMessage).toBe(canonicalError);
+		expect(final.finalOutput).toBeNull();
+	});
+
 	it.each([
 		[
 			"compaction failure",
@@ -492,6 +583,9 @@ describe("dispatchSession", () => {
 		expect(final.status).toBe("failed");
 		expect(final.stopReason).toBe("context_overflow_recovery_failed");
 		expect(final.errorMessage).toContain("Context overflow recovery failed");
+		if (_name === "compaction failure") {
+			expect(final.errorMessage).toBe("Context overflow recovery failed: Compaction failed: compact failed");
+		}
 		expect(final.finalOutput).toBeNull();
 	});
 

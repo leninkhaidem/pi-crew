@@ -39,8 +39,9 @@ export class OverflowRecoveryTracker {
 			const terminalAssistant = extractTerminalAssistantMessage(arrayField(ev, "messages"));
 			if (!terminalAssistant) return;
 			const stopReason = stringField(terminalAssistant, "stopReason");
-			const completedText =
-				stopReason === undefined || stopReason === "stop" ? extractFirstText(terminalAssistant.content) : null;
+			const isFailure =
+				stopReason === "error" || stopReason === "aborted" || isContextOverflowAssistantMessage(terminalAssistant);
+			const completedText = isFailure ? null : extractFirstText(terminalAssistant.content);
 			this.latestAssistantCompletedWithOutput = Boolean(completedText);
 			if (completedText && this.isPending()) this.markRecovered();
 		}
@@ -105,7 +106,9 @@ export class OverflowRecoveryTracker {
 
 		const errorMessage = stringField(event, "errorMessage");
 		if (errorMessage) {
-			this.markUnrecovered(`Context overflow recovery compaction failed: ${errorMessage}`);
+			this.markUnrecovered(
+				errorMessage.startsWith(CONTEXT_OVERFLOW_RECOVERY_FAILED) ? errorMessage : `Compaction failed: ${errorMessage}`,
+			);
 			return;
 		}
 
