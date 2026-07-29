@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.7.2 — 2026-07-28
+
+### Fixed
+
+- **Successful overflow compaction completion.** Completed sub-agent output is now preserved when Pi compacts over-window context without scheduling a duplicate retry.
+- **Accurate overflow recovery state.** Recovery now follows only the latest terminal assistant outcome, so stale output cannot mask a later genuine overflow failure.
+- **Length-limited retry output.** Useful output that reaches the model's response limit now completes recovery instead of timing out or being misreported as a subprocess failure.
+- **Clearer overflow diagnostics.** Successful no-retry compaction uses neutral activity text, while canonical recovery failures remain concise and retain their original meaning.
+
 ## v0.7.1 — 2026-07-14
 
 ### Fixed
