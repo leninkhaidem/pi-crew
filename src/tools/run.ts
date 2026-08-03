@@ -56,8 +56,8 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 
 			const single =
 				params.agent && params.task ? { agent: params.agent, alias: params.alias, task: params.task } : null;
-			const tasks = params.tasks;
-			const chain = params.chain;
+			const tasks = params.tasks?.length ? params.tasks : null;
+			const chain = params.chain?.length ? params.chain : null;
 
 			if ([single, tasks, chain].filter(Boolean).length !== 1) {
 				return {
