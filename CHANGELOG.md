@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.7.3 — 2026-08-04
+
+### Fixed
+
+- **Reliable `subagent_run` mode selection.** Valid single-agent and batch calls now ignore empty placeholder arrays for unused modes instead of being rejected as ambiguous.
+
 ## v0.7.2 — 2026-07-28
 
 ### Fixed
