@@ -60,7 +60,7 @@ export function buildSystemPromptBlock(args: SystemPromptArgs): string {
 		"  - `subagent_resume` — continue a session-mode sub-agent with a new prompt (resumes its conversation).",
 		"  - `steer_subagent` — redirect a running session-mode sub-agent.",
 		"  - `subagent_status` — not a wait/poll primitive; use for explicit progress checks, stale-job triage, kill/resume/steer decisions, or debugging.",
-		"    Default shows current starting/running sub-agents; use scope:'stopped' for recent failed/orphaned/aborted/detached triage, or agentId for exact lookup.",
+		"    Default shows current starting/running sub-agents; use scope:'stopped' for recent failed/orphaned/aborted/detached triage, or agentId for exact lookup. limit is only valid when scope:'stopped' is supplied explicitly.",
 		"  - `subagent_kill` — abort if you change your mind.",
 		"",
 		"State directory:",

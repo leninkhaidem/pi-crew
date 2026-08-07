@@ -16,9 +16,52 @@ const DEFAULT_STOPPED_LIMIT = 5;
 const MAX_STOPPED_LIMIT = 10;
 const PREVIEW_LENGTH = 120;
 
-const ScopeSchema = Type.Union([Type.Literal("active"), Type.Literal("stopped")], {
-	default: "active",
-	description: "Listing view. Defaults to active current-session sub-agents.",
+const ActiveScopeSchema = Type.Literal("active", {
+	description: "Listing view for current-session active sub-agents (starting/running).",
+});
+
+const StoppedScopeSchema = Type.Literal("stopped", {
+	description: "Listing view for recent problematic stopped sub-agents (failed/orphaned/aborted/detached).",
+});
+
+const StatusToolParametersSchema = Type.Object(
+	{
+		agentId: Type.Optional(
+			Type.String({
+				description:
+					"Exact sub-agent ID to inspect across retained sessions. Compatible with scope:'active' or scope:'stopped', but invalid with limit.",
+			}),
+		),
+		scope: Type.Optional(
+			Type.Union([ActiveScopeSchema, StoppedScopeSchema], {
+				description:
+					"Optional view selector. Default is 'active'; use explicit scope:'stopped' to enable limit. limit is invalid for active scope or with agentId.",
+			}),
+		),
+		limit: Type.Optional(
+			Type.Integer({
+				minimum: 1,
+				description:
+					"Positive integer only when explicit scope:'stopped' is present and agentId is omitted. Values above 10 are bounded to 10.",
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
+
+Object.assign(StatusToolParametersSchema, {
+	allOf: [
+		{
+			anyOf: [
+				{ not: { required: ["limit"] } },
+				{
+					required: ["scope", "limit"],
+					properties: { scope: { const: "stopped" } },
+					not: { required: ["agentId"] },
+				},
+			],
+		},
+	],
 });
 
 interface StatusToolParams {
@@ -45,22 +88,10 @@ export function registerStatusTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 			"Do not use for routine polling or wait loops after background dispatch/detach; completion notifications are injected automatically.",
 			"Use for explicit progress checks, stale-job triage, kill/resume/steer decisions, or debugging.",
 			"Default args {} return all current active agents (starting/running), uncapped.",
-			"Args: { agentId } for exact lookup, or { scope?: 'active'|'stopped', limit? }.",
-			"scope:'stopped' returns recent problematic stopped agents only (failed/orphaned/aborted/detached), capped to 5 by default and 10 at most.",
+			"Args: { agentId } for exact lookup; {} or { scope:'active' } for active listing; { scope: 'stopped', limit? } for recent problematic stopped-agent triage.",
+			"limit requires explicit scope:'stopped', is invalid with agentId, defaults to 5, and is bounded to 10.",
 		].join(" "),
-		parameters: Type.Object(
-			{
-				agentId: Type.Optional(Type.String({ description: "Exact sub-agent ID to inspect across retained sessions." })),
-				scope: Type.Optional(ScopeSchema),
-				limit: Type.Optional(
-					Type.Integer({
-						minimum: 1,
-						description: "Positive integer requested for scope:'stopped'. Values above 10 are bounded to 10.",
-					}),
-				),
-			},
-			{ additionalProperties: false },
-		),
+		parameters: StatusToolParametersSchema,
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const request = parseStatusParams(params as StatusToolParams);
 			const sessionId = rt.resolveSessionId(ctx);
