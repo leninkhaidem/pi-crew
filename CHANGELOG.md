@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.7.4 — 2026-08-06
+
+### Fixed
+
+- **Unambiguous `subagent_status` limits.** Tool schemas and agent guidance now make `limit` valid only with an explicit `scope: "stopped"`, preventing repeated invalid status calls while preserving exact-ID and active-status behavior across providers.
+
 ## v0.7.3 — 2026-08-04
 
 ### Fixed
