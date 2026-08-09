@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig } from "../../src/types.js";
+import type { AgentConfig, SubagentState } from "../../src/types.js";
 
 let tmp: string;
 let activeToolNames: string[];
@@ -16,6 +16,9 @@ let childModelRuntime: {
 	removeRuntimeApiKey: ReturnType<typeof vi.fn>;
 };
 let setActiveToolsByNameMock: ReturnType<typeof vi.fn>;
+let writeStateInterceptor:
+	| ((state: SubagentState, write: (state: SubagentState) => Promise<void>) => Promise<void>)
+	| undefined;
 let fakeSession: {
 	messages: unknown[];
 	subscribe: ReturnType<typeof vi.fn>;
@@ -47,6 +50,23 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 		return { session: fakeSession };
 	}),
 }));
+
+vi.mock("../../src/state/store.js", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../src/state/store.js")>();
+	return {
+		...actual,
+		writeState: (state: SubagentState) =>
+			writeStateInterceptor ? writeStateInterceptor(state, actual.writeState) : actual.writeState(state),
+	};
+});
+
+function deferred<T>() {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	const promise = new Promise<T>((res) => {
+		resolve = res;
+	});
+	return { promise, resolve };
+}
 
 const fakeAgent: AgentConfig = {
 	name: "general-purpose",
@@ -85,6 +105,7 @@ describe("dispatchSession", () => {
 		createdResourceLoaderOptions = undefined;
 		createdSessionOptions = undefined;
 		createdServiceOptions = undefined;
+		writeStateInterceptor = undefined;
 		childModelRuntime = {
 			getModel: vi.fn((provider: string, id: string) => ({ provider, id, reasoning: true })),
 			getAvailable: vi.fn(async (provider: string) => [{ provider, id: "model", reasoning: true }]),
@@ -848,6 +869,39 @@ describe("dispatchSession", () => {
 		expect(final.errorMessage).toBe("maxTurns exceeded (1)");
 	});
 
+	it("reserves resume admission before an asynchronous preflight can admit overlap", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const ctx = {
+			scopedModels: [],
+			modelRegistry: { getProviderAuthStatus: () => ({ configured: true, source: "stored" }) },
+		} as never;
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "preflight-overlap", task: "initial" },
+			},
+			{ agentDir: tmp, cwd: tmp, sessionId: "preflight-overlap", parentAgentId: null, ctx },
+		);
+		await handle.donePromise;
+
+		const preflight = deferred<Array<{ provider: string; id: string; reasoning: boolean }>>();
+		childModelRuntime.getAvailable.mockImplementationOnce(() => preflight.promise);
+		const accepted = handle.resume?.("accepted resume", undefined, ctx);
+		await vi.waitFor(() => expect(childModelRuntime.getAvailable).toHaveBeenCalledTimes(2));
+
+		let overlapError: unknown;
+		try {
+			handle.resume?.("overlapping resume", undefined, ctx);
+		} catch (error) {
+			overlapError = error;
+		}
+		expect(overlapError).toMatchObject({ message: expect.stringContaining("already running") });
+		preflight.resolve([{ provider: "mock", id: "model", reasoning: true }]);
+		await accepted;
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(2);
+	});
+
 	it("rejects an overlapping resume synchronously at the admission boundary", async () => {
 		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
 		const handle = await dispatchSession(
@@ -1171,6 +1225,50 @@ describe("dispatchSession", () => {
 		expect(fakeSession.prompt).toHaveBeenCalledTimes(1);
 	});
 
+	it("removes a possibly committed runtime key after synchronization reports failure", async () => {
+		const ledger: string[] = [];
+		let source: string | undefined = "stored";
+		const ctx = {
+			scopedModels: [],
+			modelRegistry: {
+				getProviderAuthStatus: () => ({ configured: true, source }),
+				getApiKeyForProvider: vi.fn(async () => "RUNTIME_SENTINEL"),
+			},
+		} as never;
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "partial-key-sync", task: "initial" },
+			},
+			{ agentDir: tmp, cwd: tmp, sessionId: "partial-key-sync", parentAgentId: null, ctx },
+		);
+		await handle.donePromise;
+
+		source = "runtime";
+		childModelRuntime.setRuntimeApiKey.mockImplementationOnce(async () => {
+			ledger.push("set:committed");
+			throw new Error("synchronization failed after commit");
+		});
+		await expect(handle.resume?.("failed rotation", undefined, ctx)).rejects.toThrow(
+			"Runtime authentication reconciliation failed",
+		);
+
+		source = "stored";
+		childModelRuntime.removeRuntimeApiKey.mockImplementationOnce(async () => {
+			ledger.push("remove");
+		});
+		childModelRuntime.getAvailable.mockImplementationOnce(async (provider: string) => {
+			ledger.push("available");
+			return [{ provider, id: "model", reasoning: true }];
+		});
+		await handle.resume?.("non-runtime retry", undefined, ctx);
+
+		expect(ledger).toEqual(["set:committed", "remove", "available"]);
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(2);
+	});
+
 	it("rotates runtime auth on every resume and blocks prompt when child auth becomes unavailable", async () => {
 		let key = "RUNTIME_ONE";
 		const getApiKeyForProvider = vi.fn(async () => key);
@@ -1199,6 +1297,60 @@ describe("dispatchSession", () => {
 		});
 		expect(getApiKeyForProvider).toHaveBeenCalledTimes(2);
 		expect(fakeSession.prompt).toHaveBeenCalledTimes(1);
+	});
+
+	it("finalizes cancellation after resume running-state persistence resolves post-abort", async () => {
+		const ledger: string[] = [];
+		const ctx = {
+			scopedModels: [],
+			modelRegistry: { getProviderAuthStatus: () => ({ configured: true, source: "stored" }) },
+		} as never;
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-resume-write", task: "initial" },
+			},
+			{ agentDir: tmp, cwd: tmp, sessionId: "cancel-resume-write", parentAgentId: null, ctx },
+			{
+				onStateUpdate: (next) => ledger.push(`update:${next.status}`),
+				onEnd: (next) => ledger.push(`end:${next.status}`),
+			},
+		);
+		await handle.donePromise;
+		ledger.length = 0;
+
+		const runningWrite = deferred<void>();
+		writeStateInterceptor = async (next, write) => {
+			if (next.task === "cancel during persistence" && next.status === "running") {
+				ledger.push("write:running:start");
+				await runningWrite.promise;
+				await write(next);
+				ledger.push("write:running:end");
+				return;
+			}
+			if (next.task === "cancel during persistence" && next.status === "aborted") {
+				ledger.push("write:aborted");
+			}
+			await write(next);
+		};
+		const controller = new AbortController();
+		const resumed = handle.resume?.("cancel during persistence", controller.signal, ctx);
+		await vi.waitFor(() => expect(ledger).toContain("write:running:start"));
+		controller.abort();
+		ledger.push("abort");
+		runningWrite.resolve();
+
+		const result = await resumed;
+		expect(result?.status).toBe("aborted");
+		expect(result?.errorMessage).toBe("Interrupted before sub-agent resume.");
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(1);
+		expect(JSON.parse(readFileSync(result!.paths.state, "utf-8"))).toMatchObject({
+			status: "aborted",
+			task: "cancel during persistence",
+		});
+		expect(ledger).toEqual(["write:running:start", "abort", "write:running:end", "write:aborted", "end:aborted"]);
 	});
 
 	it("fences prompt startup after a signal-ignoring extension-bind barrier resolves post-abort", async () => {
