@@ -191,8 +191,8 @@ describe("readRecentTranscriptExcerpt", () => {
 			expect(excerpt.events).toHaveLength(2);
 			expect(excerpt.events.every((event) => event.length <= MAX_RECENT_TRANSCRIPT_EVENT_TEXT_LENGTH)).toBe(true);
 			expect(excerpt.events.every((event) => event.endsWith("…"))).toBe(true);
-			expect(excerpt.events.join("\n")).not.toContain("\"type\":\"message_end\"");
-			expect(excerpt.events.join("\n")).not.toContain("\"type\":\"tool_execution_end\"");
+			expect(excerpt.events.join("\n")).not.toContain('"type":"message_end"');
+			expect(excerpt.events.join("\n")).not.toContain('"type":"tool_execution_end"');
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

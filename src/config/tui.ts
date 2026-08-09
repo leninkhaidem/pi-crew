@@ -1,8 +1,8 @@
 // src/config/tui.ts
-import { type Api, type Model, supportsXhigh } from "@mariozechner/pi-ai";
-import type { ExtensionCommandContext, Theme } from "@mariozechner/pi-coding-agent";
-import { DynamicBorder } from "@mariozechner/pi-coding-agent";
-import { Container, Key, type SelectItem, SelectList, Text, matchesKey } from "@mariozechner/pi-tui";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
+import { Container, Key, type SelectItem, SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
 import { resolveThinkingLevel, supportsThinkingLevel } from "../thinking.js";
 import {
 	type AgentSlot,
@@ -26,6 +26,7 @@ export interface ConfigTuiArgs {
 	configPath: string;
 	currentConfig: PiCrewConfig;
 	availableModels: Model<Api>[];
+	scopedThinkingLevels?: ReadonlyArray<{ provider: string; modelId: string; thinkingLevel: ThinkingLevel }>;
 }
 
 export async function runConfigTui(ctx: ExtensionCommandContext, args: ConfigTuiArgs): Promise<{ saved: boolean }> {
@@ -49,10 +50,13 @@ export async function runConfigTui(ctx: ExtensionCommandContext, args: ConfigTui
 			const selectedModel = args.availableModels.find((model) => modelChoice(model) === choice);
 			if (!selectedModel) continue;
 			const originalConcrete = isInheritedAgentSlot(original) ? undefined : original;
+			const scopedPin = args.scopedThinkingLevels?.find(
+				(entry) => entry.provider === selectedModel.provider && entry.modelId === selectedModel.id,
+			)?.thinkingLevel;
 			const tentative: AgentSlot = {
 				provider: selectedModel.provider,
 				modelId: selectedModel.id,
-				thinking: originalConcrete?.thinking ?? defaultThinkingForAgent(slot),
+				thinking: originalConcrete?.thinking ?? scopedPin ?? defaultThinkingForAgent(slot),
 			};
 			const thinking = await selectThinking(
 				ctx,
@@ -166,7 +170,7 @@ async function selectThinking(
 	model: Model<Api>,
 	current: ThinkingLevel,
 ): Promise<ThinkingLevel | typeof BACK_CHOICE | null> {
-	const supported = THINKING_LEVELS.filter((level) => supportsThinkingLevel(model, level, () => supportsXhigh(model)));
+	const supported = THINKING_LEVELS.filter((level) => supportsThinkingLevel(model, level));
 	if (supported.length === 0) return selectNoThinkingLevel(ctx, slot, model);
 
 	const items: SelectItem[] = supported.map((level) => ({
@@ -197,9 +201,9 @@ async function selectThinking(
 }
 
 function pickerCurrentThinking(model: Model<Api>, current: ThinkingLevel): ThinkingLevel {
-	if (supportsThinkingLevel(model, current, () => supportsXhigh(model))) return current;
+	if (supportsThinkingLevel(model, current)) return current;
 	if (current === "max") {
-		const resolved = resolveThinkingLevel(model, current, () => supportsXhigh(model));
+		const resolved = resolveThinkingLevel(model, current);
 		if (resolved.ok) return resolved.effective;
 	}
 	return current;

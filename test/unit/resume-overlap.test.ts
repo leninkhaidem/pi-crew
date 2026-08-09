@@ -173,7 +173,11 @@ describe("resume overlap integration", () => {
 			cwd: tmp,
 			hasUI: false,
 			model: { provider: "mock", id: "model" },
-			modelRegistry: { find: vi.fn(() => ({ provider: "mock", id: "model" })), getAvailable: () => [] },
+			scopedModels: [],
+			modelRegistry: {
+				find: vi.fn(() => ({ provider: "mock", id: "model", reasoning: true })),
+				getAvailable: () => [{ provider: "mock", id: "model", reasoning: true }],
+			},
 			sessionManager: { getSessionFile: () => path.join(tmp, "sess.jsonl") },
 			ui: {
 				confirm: vi.fn(async () => true),

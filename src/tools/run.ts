@@ -1,5 +1,5 @@
 // src/tools/run.ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { discoverAgents } from "../agents/discovery.js";
 import type { DetachScope } from "../runtime/detach.js";
@@ -11,17 +11,36 @@ import type { SubagentState } from "../types.js";
 import { renderRunCall } from "../ui/render-call.js";
 import { renderDispatchResult } from "../ui/render-result.js";
 import { AliasSchema, ChainItemSchema, SlotOverrideProperties, TaskItemSchema } from "./shared.js";
-import { type SlotOverrides, resolveAgentSlot } from "./slot.js";
+import { type SlotOverrides, type SlotResolution, resolveAgentSlot } from "./slot.js";
 
 type RunOutcome = { kind: "completed"; state: SubagentState } | { kind: "backgrounded"; state: SubagentState };
 
 type BackgroundedOutcome = Extract<RunOutcome, { kind: "backgrounded" }>;
 
+interface ScopeErrorDetail {
+	index: number;
+	alias: string;
+	error: "model_out_of_scope";
+	provider: string;
+	model: string;
+	message: string;
+}
+
 interface BatchResultOpts {
 	partial?: boolean;
-	errors?: string[];
+	errors?: Array<string | ScopeErrorDetail>;
 	backgrounded?: BackgroundedOutcome[];
 	abandoned?: string[];
+}
+
+class ModelScopeAdmissionError extends Error {
+	constructor(
+		readonly provider: string,
+		readonly model: string,
+		message: string,
+	) {
+		super(message);
+	}
 }
 
 export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
@@ -47,6 +66,7 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const config = await rt.getConfig();
+			if (signal?.aborted) return dispatchFailure("Interrupted before sub-agent launch.", "aborted");
 			const discovered = discoverAgents({
 				cwd: ctx.cwd,
 				scope: config.global.agentScope,
@@ -75,35 +95,41 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 				scope?: DetachScope,
 			): Promise<RunOutcome> => {
 				if (signal?.aborted) throw new Error("Interrupted before sub-agent launch.");
+				const agent = discovered.agents.find((a) => a.name === agentName);
+				if (!agent) throw new Error(`Unknown agent "${agentName}".`);
+				let slotResolution = requireAcceptedSlot(resolveAgentSlot(agent.name, config, ctx, pi, overrides));
 				if (!rt.concurrency.active.tryAcquire()) {
 					throw new Error(`Active sub-agent limit reached (${rt.concurrency.active.current()}). Wait or kill some.`);
 				}
 				let wasDetached = false;
 				try {
-					const agent = discovered.agents.find((a) => a.name === agentName);
-					if (!agent) throw new Error(`Unknown agent "${agentName}".`);
-					const slotResolution = resolveAgentSlot(agent.name, config, ctx, pi, overrides);
-					if (!slotResolution.ok) throw new Error(slotResolution.message);
-					const slot = slotResolution.slot;
 					const approved = await rt.ensureProjectAgentApproved({
 						agentName: agent.name,
 						agentSource: agent.source,
 						ctx,
+						signal,
 					});
+					if (signal?.aborted) throw new Error("Interrupted before sub-agent launch.");
 					if (!approved)
 						throw new Error(
 							`Project agent "${agent.name}" not approved. Set confirmProjectAgents: false in /subagent-config to disable prompts.`,
 						);
+					slotResolution = requireAcceptedSlot(resolveAgentSlot(agent.name, config, ctx, pi, overrides));
+					if (signal?.aborted) throw new Error("Interrupted before sub-agent launch.");
 					const handle = await runDispatch(
 						{
 							agent,
-							model: slot,
+							model: slotResolution.slot,
 							thinkingAdjustment: slotResolution.thinkingAdjustment,
 							options: { agent: agentName, alias: alias.trim(), task, cwd },
 						},
-						rt.envFor(ctx),
+						{ ...rt.envFor(ctx), signal },
 						rt.lifecycleHooks(),
 					);
+					if (signal?.aborted) {
+						await handle.abort?.("Interrupted before sub-agent launch.");
+						throw new Error("Interrupted before sub-agent launch.");
+					}
 					rt.trackHandle(handle);
 					rt.trackParentAbort(signal, handle);
 					if (scope) {
@@ -185,11 +211,17 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 						);
 						const states: SubagentState[] = [];
 						const backgrounded: BackgroundedOutcome[] = [];
-						const errors: string[] = [];
-						for (const r of settled) {
-							if (r.status === "rejected") errors.push((r.reason as Error).message);
-							else if (r.value.kind === "completed") states.push(r.value.state);
-							else backgrounded.push(r.value);
+						const errors: Array<string | ScopeErrorDetail> = [];
+						for (const [index, result] of settled.entries()) {
+							if (result.status === "rejected") {
+								const reason = result.reason;
+								errors.push(
+									reason instanceof ModelScopeAdmissionError
+										? scopeErrorDetail(index, tasks[index]!.alias, reason)
+										: (reason as Error).message,
+								);
+							} else if (result.value.kind === "completed") states.push(result.value.state);
+							else backgrounded.push(result.value);
 						}
 						return toolResultBatch(states, { backgrounded, errors });
 					} finally {
@@ -204,18 +236,27 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 						for (let i = 0; i < chain.length; i++) {
 							const step = chain[i]!;
 							const taskText = step.task.replace(/\{previous\}/g, previous);
-							const outcome = await oneShot(
-								step.agent,
-								step.alias,
-								taskText,
-								step.cwd,
-								{
-									provider: step.provider,
-									model: step.model,
-									thinking: step.thinking,
-								},
-								chainScope,
-							);
+							let outcome: RunOutcome;
+							try {
+								outcome = await oneShot(
+									step.agent,
+									step.alias,
+									taskText,
+									step.cwd,
+									{
+										provider: step.provider,
+										model: step.model,
+										thinking: step.thinking,
+									},
+									chainScope,
+								);
+							} catch (error) {
+								if (!(error instanceof ModelScopeAdmissionError)) throw error;
+								return toolResultBatch(results, {
+									errors: [scopeErrorDetail(i, step.alias, error)],
+									abandoned: chain.slice(i + 1).map((later) => later.alias),
+								});
+							}
 							if (outcome.kind === "backgrounded") {
 								const abandoned = chain.slice(i + 1).map((s) => s.alias);
 								return toolResultBatch(results, { backgrounded: [outcome], abandoned });
@@ -230,10 +271,18 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 					return toolResultBatch(results);
 				}
 			} catch (err) {
-				return {
-					content: [{ type: "text" as const, text: (err as Error).message }],
-					details: { error: "dispatch_failed", message: (err as Error).message },
-				};
+				if (err instanceof ModelScopeAdmissionError) {
+					return {
+						content: [{ type: "text" as const, text: err.message }],
+						details: {
+							error: "model_out_of_scope",
+							provider: err.provider,
+							model: err.model,
+							message: err.message,
+						},
+					};
+				}
+				return dispatchFailure((err as Error).message);
 			}
 			return { content: [{ type: "text" as const, text: "(unreachable)" }], details: { error: "unreachable" } };
 		},
@@ -247,6 +296,32 @@ export function registerRunTool(pi: ExtensionAPI, rt: ExtensionRuntime): void {
 			return renderDispatchResult(result as Parameters<typeof renderDispatchResult>[0], options, theme);
 		},
 	});
+}
+
+function requireAcceptedSlot(resolution: SlotResolution): Extract<SlotResolution, { ok: true }> {
+	if (resolution.ok) return resolution;
+	if (resolution.error === "model_out_of_scope" && resolution.provider && resolution.model) {
+		throw new ModelScopeAdmissionError(resolution.provider, resolution.model, resolution.message);
+	}
+	throw new Error(resolution.message);
+}
+
+function dispatchFailure(message: string, error = "dispatch_failed") {
+	return {
+		content: [{ type: "text" as const, text: message }],
+		details: { error, message },
+	};
+}
+
+function scopeErrorDetail(index: number, alias: string, error: ModelScopeAdmissionError): ScopeErrorDetail {
+	return {
+		index,
+		alias,
+		error: "model_out_of_scope",
+		provider: error.provider,
+		model: error.model,
+		message: error.message,
+	};
 }
 
 function toolResult(state: SubagentState) {
@@ -308,7 +383,7 @@ function toolResultBatch(states: SubagentState[], opts: BatchResultOpts = {}) {
 		].join("\n");
 	});
 	const abLines = abandoned.map((a) => `[abandoned] ${a} — step was not started`);
-	const errLines = errors.map((e) => `[error] ${e}`);
+	const errLines = errors.map((error) => `[error] ${typeof error === "string" ? error : error.message}`);
 	const text = [...stateLines, ...bgLines, ...abLines, ...errLines].join("\n\n");
 	return {
 		content: [{ type: "text" as const, text }],

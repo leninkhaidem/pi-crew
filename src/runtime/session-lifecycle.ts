@@ -2,12 +2,12 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
-	DefaultResourceLoader,
+	type AgentSessionServices,
 	type ExtensionContext,
 	SessionManager,
-	SettingsManager,
-	createAgentSession,
-} from "@mariozechner/pi-coding-agent";
+	createAgentSessionFromServices,
+	createAgentSessionServices,
+} from "@earendil-works/pi-coding-agent";
 import { generateAgentId } from "../state/id.js";
 import { computePaths } from "../state/paths.js";
 import { readState, writeState } from "../state/store.js";
@@ -33,6 +33,7 @@ export async function dispatchSession(
 	env: LifecycleEnv & { ctx: ExtensionContext },
 	hooks: LifecycleHooks = {},
 ): Promise<DispatchHandle> {
+	throwIfAborted(env.signal);
 	const agentId = generateAgentId();
 	const sessionIdResolved = env.sessionId;
 	const paths = computePaths({ agentDir: env.agentDir, sessionId: sessionIdResolved, agentId });
@@ -78,12 +79,22 @@ export async function dispatchSession(
 		paths,
 	};
 
-	await fs.mkdir(path.dirname(paths.state), { recursive: true });
-	await fs.writeFile(paths.prompt, systemPrompt, { mode: 0o600 });
-	await fs.writeFile(paths.output, "", { mode: 0o600 });
-	await fs.writeFile(paths.stderr, "", { mode: 0o600 });
-	await writeState(initialState);
-	hooks.onStateUpdate?.(initialState);
+	try {
+		await fs.mkdir(path.dirname(paths.state), { recursive: true });
+		throwIfAborted(env.signal);
+		await fs.writeFile(paths.prompt, systemPrompt, { mode: 0o600 });
+		throwIfAborted(env.signal);
+		await fs.writeFile(paths.output, "", { mode: 0o600 });
+		throwIfAborted(env.signal);
+		await fs.writeFile(paths.stderr, "", { mode: 0o600 });
+		throwIfAborted(env.signal);
+		await writeState(initialState);
+		throwIfAborted(env.signal);
+		hooks.onStateUpdate?.(initialState);
+	} catch (error) {
+		if (!env.signal?.aborted) throw error;
+		return finalizeCancelledStartup(initialState, hooks);
+	}
 
 	let outputStream = fsSync.createWriteStream(paths.output, { flags: "a", mode: 0o600 });
 	let outputStreamClosed = false;
@@ -108,24 +119,10 @@ export async function dispatchSession(
 		}
 	};
 
-	const model = env.ctx.modelRegistry.find(plan.model.provider, plan.model.modelId);
-	if (!model) {
-		const failed: SubagentState = {
-			...initialState,
-			status: "failed",
-			errorMessage: `Model not available: ${plan.model.provider}/${plan.model.modelId}`,
-			finishedAt: Date.now(),
-			lastUpdate: Date.now(),
-			activity: "failed",
-		};
-		await writeState(failed);
-		await closeOutputStream();
-		hooks.onEnd?.(failed);
-		return { agentId, state: failed, donePromise: Promise.resolve(failed) };
-	}
-
 	let state: SubagentState = { ...initialState };
-	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | null = null;
+	let session: Awaited<ReturnType<typeof createAgentSessionFromServices>>["session"] | null = null;
+	let services: AgentSessionServices | null = null;
+	const runtimeOverride = { installed: false };
 	let unsubscribe: () => void = () => undefined;
 	let pendingUpdate: SubagentState | null = null;
 	let writeTimer: NodeJS.Timeout | null = null;
@@ -163,32 +160,41 @@ export async function dispatchSession(
 	};
 
 	try {
-		const loader = new DefaultResourceLoader({
+		throwIfAborted(env.signal);
+		services = await createAgentSessionServices({
 			cwd,
 			agentDir: env.agentDir,
-			settingsManager: SettingsManager.create(cwd, env.agentDir),
-			noPromptTemplates: true,
-			noThemes: true,
-			noContextFiles: true,
-			systemPromptOverride: () => systemPrompt,
-			appendSystemPromptOverride: () => [],
-			extensionsOverride: withoutPiCrewOrchestrationExtensions,
+			modelRuntimeSignal: env.signal,
+			resourceLoaderOptions: {
+				noPromptTemplates: true,
+				noThemes: true,
+				noContextFiles: true,
+				systemPromptOverride: () => systemPrompt,
+				appendSystemPromptOverride: () => [],
+				extensionsOverride: withoutPiCrewOrchestrationExtensions,
+			},
 		});
-		await loader.reload();
-		// @mariozechner 0.70.2 declarations predate `max`; runtime-compatible
-		// versions accept it. Keep the compatibility cast at this SDK boundary.
-		const sessionOptions = {
-			cwd,
-			agentDir: env.agentDir,
-			modelRegistry: env.ctx.modelRegistry,
+		throwIfAborted(env.signal);
+		const diagnostic = services.diagnostics.find((item) => item.type === "error");
+		if (diagnostic)
+			throw new Error("Child session service initialization failed; inspect provider/extension configuration.");
+		await reconcileRuntimeAuth(env.ctx, services, plan.model.provider, runtimeOverride, env.signal);
+		throwIfAborted(env.signal);
+		const model = services.modelRuntime.getModel(plan.model.provider, plan.model.modelId);
+		if (!model) throw new Error(`Model not available: ${plan.model.provider}/${plan.model.modelId}`);
+		const available = await getAvailableModels(services, plan.model.provider, plan.model.modelId, env.signal);
+		throwIfAborted(env.signal);
+		if (!available.some((candidate) => candidate.provider === model.provider && candidate.id === model.id)) {
+			throw new Error(`Model authentication unavailable: ${plan.model.provider}/${plan.model.modelId}`);
+		}
+		const created = await createAgentSessionFromServices({
+			services,
+			sessionManager: SessionManager.inMemory(cwd),
 			model,
 			thinkingLevel: thinking,
-			resourceLoader: loader,
-			sessionManager: SessionManager.inMemory(cwd),
-			settingsManager: SettingsManager.create(cwd, env.agentDir),
-		} as Parameters<typeof createAgentSession>[0];
-		const created = await createAgentSession(sessionOptions);
+		});
 		session = created.session;
+		throwIfAborted(env.signal);
 		suppressPiCrewOrchestrationTools(session);
 		await session.bindExtensions({
 			onError: (err) => {
@@ -197,17 +203,23 @@ export async function dispatchSession(
 					.catch(() => undefined);
 			},
 		});
+		throwIfAborted(env.signal);
 		suppressPiCrewOrchestrationTools(session);
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		await fs.appendFile(paths.stderr, `${message}\n`).catch(() => undefined);
+		try {
+			session?.dispose();
+		} catch {
+			// Best-effort cleanup must not replace the truthful startup failure.
+		}
+		const message = safeErrorMessage(err);
+		if (!env.signal?.aborted) await fs.appendFile(paths.stderr, `${message}\n`).catch(() => undefined);
 		const failed: SubagentState = {
 			...initialState,
-			status: "failed",
+			status: env.signal?.aborted ? "aborted" : "failed",
 			errorMessage: message,
 			finishedAt: Date.now(),
 			lastUpdate: Date.now(),
-			activity: "failed",
+			activity: env.signal?.aborted ? "aborted" : "failed",
 		};
 		await writeState(failed);
 		await closeOutputStream();
@@ -221,8 +233,32 @@ export async function dispatchSession(
 		lastUpdate: Date.now(),
 		activity: "thinking…",
 	};
-	await writeState(state);
-	hooks.onStateUpdate?.(state);
+	try {
+		throwIfAborted(env.signal);
+		await writeState(state);
+		throwIfAborted(env.signal);
+		hooks.onStateUpdate?.(state);
+	} catch (error) {
+		if (!env.signal?.aborted) throw error;
+		try {
+			session.dispose();
+		} catch {
+			// Best-effort cancellation cleanup.
+		}
+		const aborted: SubagentState = {
+			...state,
+			status: "aborted",
+			exitCode: -1,
+			errorMessage: "Interrupted before sub-agent launch.",
+			finishedAt: Date.now(),
+			lastUpdate: Date.now(),
+			activity: "aborted",
+		};
+		await closeOutputStream();
+		await writeState(aborted);
+		hooks.onEnd?.(aborted);
+		return { agentId, state: aborted, donePromise: Promise.resolve(aborted) };
+	}
 
 	const subscribeForRun = () => {
 		unsubscribe = session!.subscribe((event: unknown) => {
@@ -270,7 +306,7 @@ export async function dispatchSession(
 		await session.steer(message);
 	};
 
-	const markRunning = async (task: string) => {
+	const markRunning = async (task: string, signal?: AbortSignal) => {
 		activeTools.clear();
 		abortReason = undefined;
 		hardAborted = false;
@@ -283,7 +319,7 @@ export async function dispatchSession(
 			clearTimeout(writeTimer);
 			writeTimer = null;
 		}
-		state = {
+		const runningState: SubagentState = {
 			...state,
 			task,
 			status: "running",
@@ -296,19 +332,55 @@ export async function dispatchSession(
 			activity: "thinking…",
 			finalOutput: null,
 		};
-		await writeState(state);
+		throwIfAborted(signal);
+		await writeState(runningState);
+		throwIfAborted(signal);
+		state = runningState;
 		hooks.onStateUpdate?.(state);
 	};
 
-	const runPrompt = async (task: string): Promise<SubagentState> => {
+	const finalizeCancelledResume = async (task: string): Promise<SubagentState> => {
+		closing = true;
+		pendingUpdate = null;
+		if (writeTimer) {
+			clearTimeout(writeTimer);
+			writeTimer = null;
+		}
+		activeTools.clear();
+		const aborted: SubagentState = {
+			...state,
+			task,
+			status: "aborted",
+			exitCode: -1,
+			stopReason: null,
+			errorMessage: "Interrupted before sub-agent resume.",
+			finishedAt: Date.now(),
+			lastUpdate: Date.now(),
+			activeTools: [],
+			activity: "aborted",
+			finalOutput: null,
+		};
+		await closeOutputStream();
+		await writeState(aborted);
+		state = aborted;
+		hooks.onEnd?.(aborted);
+		return aborted;
+	};
+
+	const runPrompt = async (task: string, signal?: AbortSignal): Promise<SubagentState> => {
 		if (!session) throw new Error("session not available");
+		throwIfAborted(signal);
 		ensureOutputStream();
+		throwIfAborted(signal);
 		subscribeForRun();
 		let promptError: unknown;
 		try {
+			throwIfAborted(signal);
 			await session.prompt(`Task: ${task}`, { source: "extension" });
+			if (signal?.aborted) abortReason = "Interrupted before sub-agent request completed.";
 		} catch (err) {
 			promptError = err;
+			if (signal?.aborted) abortReason = "Interrupted before sub-agent request completed.";
 		}
 
 		const promptErrorMessage =
@@ -382,11 +454,46 @@ export async function dispatchSession(
 		return finalState;
 	};
 
-	const resume = (task: string): Promise<SubagentState> => {
-		if (!session) throw new Error("session not available");
-		if (state.status === "running" || state.status === "starting")
+	const prepareAndResume = async (
+		task: string,
+		signal: AbortSignal | undefined,
+		currentCtx: ExtensionContext,
+	): Promise<SubagentState> => {
+		if (!session || !services) throw new Error("session not available");
+		try {
+			throwIfAborted(signal);
+			await reconcileRuntimeAuth(currentCtx, services, state.provider, runtimeOverride, signal);
+			throwIfAborted(signal);
+			const model = services.modelRuntime.getModel(state.provider, state.model);
+			if (!model) throw new Error(`Model not available: ${state.provider}/${state.model}`);
+			const available = await getAvailableModels(services, state.provider, state.model, signal);
+			throwIfAborted(signal);
+			if (!available.some((candidate) => candidate.provider === state.provider && candidate.id === state.model)) {
+				throw new Error(`Model authentication unavailable: ${state.provider}/${state.model}`);
+			}
+			await markRunning(task, signal);
+			throwIfAborted(signal);
+		} catch (error) {
+			if (signal?.aborted) return finalizeCancelledResume(task);
+			throw error;
+		}
+		return runPrompt(task, signal);
+	};
+
+	let resumeAdmissionReserved = false;
+	const resume = (
+		task: string,
+		signal?: AbortSignal,
+		currentCtx: ExtensionContext = env.ctx,
+	): Promise<SubagentState> => {
+		if (!session || !services) throw new Error("session not available");
+		if (resumeAdmissionReserved || state.status === "running" || state.status === "starting") {
 			throw new Error(`sub-agent #${agentId} is already running`);
-		return markRunning(task).then(() => runPrompt(task));
+		}
+		resumeAdmissionReserved = true;
+		return prepareAndResume(task, signal, currentCtx).finally(() => {
+			resumeAdmissionReserved = false;
+		});
 	};
 
 	const dispose = async () => {
@@ -397,9 +504,106 @@ export async function dispatchSession(
 		session?.dispose();
 	};
 
-	const donePromise = runPrompt(plan.options.task);
+	const donePromise = runPrompt(plan.options.task, env.signal);
 
 	return { agentId, state, donePromise, abort, steer, resume, dispose };
+}
+
+async function finalizeCancelledStartup(initialState: SubagentState, hooks: LifecycleHooks): Promise<DispatchHandle> {
+	await Promise.all(
+		[initialState.paths.prompt, initialState.paths.output, initialState.paths.stderr].map((file) =>
+			fs.rm(file, { force: true }).catch(() => undefined),
+		),
+	);
+	const aborted: SubagentState = {
+		...initialState,
+		status: "aborted",
+		exitCode: -1,
+		errorMessage: "Interrupted before sub-agent launch.",
+		finishedAt: Date.now(),
+		lastUpdate: Date.now(),
+		activity: "aborted",
+	};
+	await writeState(aborted);
+	hooks.onEnd?.(aborted);
+	return { agentId: aborted.agentId, state: aborted, donePromise: Promise.resolve(aborted) };
+}
+
+async function getAvailableModels(
+	services: AgentSessionServices,
+	provider: string,
+	modelId: string,
+	signal?: AbortSignal,
+) {
+	throwIfAborted(signal);
+	try {
+		const available = await services.modelRuntime.getAvailable(provider, { signal });
+		throwIfAborted(signal);
+		return available;
+	} catch {
+		throw new Error(`Model authentication unavailable: ${provider}/${modelId}`);
+	}
+}
+
+interface RuntimeOverrideState {
+	installed: boolean;
+}
+
+async function reconcileRuntimeAuth(
+	parentCtx: ExtensionContext,
+	services: AgentSessionServices,
+	provider: string,
+	override: RuntimeOverrideState,
+	signal?: AbortSignal,
+): Promise<void> {
+	throwIfAborted(signal);
+	let source: string | undefined;
+	try {
+		source = parentCtx.modelRegistry.getProviderAuthStatus(provider).source;
+	} catch {
+		source = undefined;
+	}
+	if (source !== "runtime") {
+		if (override.installed) {
+			try {
+				throwIfAborted(signal);
+				await services.modelRuntime.removeRuntimeApiKey(provider, { signal });
+			} catch {
+				throw new Error(`Runtime authentication removal failed for ${provider}.`);
+			}
+			throwIfAborted(signal);
+			override.installed = false;
+		}
+		return;
+	}
+
+	let apiKey: string | undefined;
+	try {
+		throwIfAborted(signal);
+		apiKey = await parentCtx.modelRegistry.getApiKeyForProvider(provider);
+	} catch {
+		throw new Error(`Runtime authentication is unavailable for ${provider}.`);
+	}
+	throwIfAborted(signal);
+	if (!apiKey) throw new Error(`Runtime authentication is unavailable for ${provider}.`);
+	// The SDK may report synchronization failure after committing the key. Mark the
+	// possible mutation before awaiting so a later non-runtime turn always removes it.
+	override.installed = true;
+	try {
+		throwIfAborted(signal);
+		await services.modelRuntime.setRuntimeApiKey(provider, apiKey, { signal });
+	} catch {
+		throw new Error(`Runtime authentication reconciliation failed for ${provider}.`);
+	}
+	throwIfAborted(signal);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+	if (signal?.aborted) throw new Error("Interrupted before sub-agent launch.");
+}
+
+function safeErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : "Child session initialization failed.";
 }
 
 interface EventHandlerContext {

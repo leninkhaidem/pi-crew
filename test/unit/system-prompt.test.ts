@@ -11,8 +11,8 @@ import { buildSystemPromptBlock } from "../../src/system-prompt.js";
 
 const mockedPiCodingAgent = vi.hoisted(() => ({ agentDir: "" }));
 
-vi.mock("@mariozechner/pi-coding-agent", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@mariozechner/pi-coding-agent")>();
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
 	return { ...actual, getAgentDir: () => mockedPiCodingAgent.agentDir };
 });
 
@@ -198,6 +198,38 @@ describe("pi-crew extension startup", () => {
 		expect(prompt).toContain("## pi-crew sub-agents");
 	});
 
+	it("projects a non-empty scope only, with pins and case-sensitive provider/model identities", async () => {
+		const pi = createFakePi();
+		await loadPiCrewExtension(pi);
+		const allowed = { provider: "Provider", id: "same", name: "Allowed", reasoning: true, thinkingLevelMap: {} };
+		const catalogOnly = { provider: "Provider", id: "other", name: "Hidden", reasoning: true };
+		const collision = { provider: "provider", id: "same", name: "Hidden collision", reasoning: true };
+		const prompt = await runBeforeAgentStart(pi, tmp, "parent", {
+			modelRegistry: { getAvailable: () => [allowed, catalogOnly, collision] },
+			model: catalogOnly,
+			scopedModels: [{ model: allowed, thinkingLevel: "high" }],
+		});
+		expect(prompt).toContain("Available scoped models");
+		expect(prompt).toContain("provider: Provider, model: same");
+		expect(prompt).toContain("scoped thinking default: high");
+		expect(prompt).not.toContain("model: other");
+		expect(prompt).not.toContain("provider: provider, model: same");
+		const scopedModelLine = prompt.split("\n").find((line) => line.includes("provider: Provider, model: same"));
+		expect(scopedModelLine).not.toContain("current parent");
+	});
+
+	it("fails malformed non-empty scope closed instead of exposing the authenticated catalogue", async () => {
+		const pi = createFakePi();
+		await loadPiCrewExtension(pi);
+		const prompt = await runBeforeAgentStart(pi, tmp, "parent", {
+			modelRegistry: { getAvailable: () => [{ provider: "secret", id: "hidden", reasoning: true }] },
+			scopedModels: [{ malformed: true }],
+		});
+		expect(prompt).toContain("Available scoped models");
+		expect(prompt).not.toContain("secret");
+		expect(prompt).not.toContain("hidden");
+	});
+
 	it("omits sub-agent prompt guidance when the pi-crew suppress marker is present", async () => {
 		process.env[PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV] = PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE;
 		const pi = createFakePi();
@@ -233,7 +265,8 @@ interface PiContext {
 	cwd: string;
 	sessionManager: { getSessionFile(): string | undefined };
 	modelRegistry: { getAvailable(): unknown[] };
-	model: null;
+	model: unknown;
+	scopedModels: unknown;
 }
 
 type PiHandler = (event: PiEvent, ctx: PiContext) => unknown;
@@ -260,10 +293,15 @@ async function loadPiCrewExtension(pi: FakePi): Promise<void> {
 	piCrew(pi as never);
 }
 
-async function runBeforeAgentStart(pi: FakePi, cwd: string, systemPrompt: string): Promise<string> {
+async function runBeforeAgentStart(
+	pi: FakePi,
+	cwd: string,
+	systemPrompt: string,
+	overrides: Partial<PiContext> = {},
+): Promise<string> {
 	const handler = pi.handlers.get("before_agent_start")?.[0];
 	if (!handler) throw new Error("before_agent_start handler was not registered");
-	const result = await handler({ systemPrompt }, createFakeContext(cwd));
+	const result = await handler({ systemPrompt }, { ...createFakeContext(cwd), ...overrides });
 	return (result as { systemPrompt: string }).systemPrompt;
 }
 
@@ -273,6 +311,7 @@ function createFakeContext(cwd: string): PiContext {
 		sessionManager: { getSessionFile: () => path.join(cwd, "session.jsonl") },
 		modelRegistry: { getAvailable: () => [] },
 		model: null,
+		scopedModels: [],
 	};
 }
 

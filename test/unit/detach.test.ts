@@ -105,6 +105,16 @@ type ToolExecute = (
 	ctx?: unknown,
 ) => Promise<unknown>;
 
+function toolContext(cwd: string) {
+	return {
+		cwd,
+		scopedModels: [],
+		modelRegistry: {
+			getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.4-mini", reasoning: true, thinkingLevelMap: {} }],
+		},
+	};
+}
+
 function makeRuntime(userAgentsDir: string, bundledAgentsDir: string) {
 	const release = vi.fn();
 	const consumeCompletion = vi.fn();
@@ -397,13 +407,15 @@ describe("Concurrency tracking with detach", () => {
 
 		registerRunTool(pi as never, rt as never);
 
-		const toolPromise = tools.get("subagent_run")?.execute(
-			"call",
-			{ agent: "general-purpose", alias: "worker", task: "do work" },
-			undefined,
-			undefined,
-			{ cwd: tmp },
-		);
+		const toolPromise = tools
+			.get("subagent_run")
+			?.execute(
+				"call",
+				{ agent: "general-purpose", alias: "worker", task: "do work" },
+				undefined,
+				undefined,
+				toolContext(tmp),
+			);
 
 		await drain();
 		detach.detachAll();
@@ -456,10 +468,10 @@ describe("CompletionDispatcher with detach", () => {
 		dispatcher.push(finalState);
 		vi.runAllTimers();
 
-		expect(sendMessage).toHaveBeenCalledWith(
-			expect.objectContaining({ customType: "pi-crew", display: true }),
-			{ deliverAs: "steer", triggerTurn: true },
-		);
+		expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ customType: "pi-crew", display: true }), {
+			deliverAs: "steer",
+			triggerTurn: true,
+		});
 		expect(dispatcher.wasHandled("detached-agent-xyz")).toBe(true);
 	});
 
@@ -518,13 +530,15 @@ describe("subagent_run — detach across modes", () => {
 
 		registerRunTool(pi as never, rt as never);
 
-		const toolPromise = tools.get("subagent_run")?.execute(
-			"call",
-			{ agent: "general-purpose", alias: "worker", task: "do work" },
-			undefined,
-			undefined,
-			{ cwd: tmp },
-		);
+		const toolPromise = tools
+			.get("subagent_run")
+			?.execute(
+				"call",
+				{ agent: "general-purpose", alias: "worker", task: "do work" },
+				undefined,
+				undefined,
+				toolContext(tmp),
+			);
 
 		await drain();
 		detach.detachAll();
@@ -572,7 +586,7 @@ describe("subagent_run — detach across modes", () => {
 			},
 			undefined,
 			undefined,
-			{ cwd: tmp },
+			toolContext(tmp),
 		);
 
 		await drain();
@@ -633,7 +647,7 @@ describe("subagent_run — detach across modes", () => {
 			},
 			undefined,
 			undefined,
-			{ cwd: tmp },
+			toolContext(tmp),
 		);
 
 		// Wait for step-0 to complete and step-1 to start, then trigger detach

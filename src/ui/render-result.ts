@@ -1,7 +1,7 @@
 // src/ui/render-result.ts
-import { type Theme, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
-import type { AgentToolResult, ToolRenderResultOptions } from "@mariozechner/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
+import { type Theme, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { formatThinkingAdjustment } from "../thinking.js";
 import type { ThinkingAdjustment } from "../types.js";
 import { type UsageStatsLike, formatUsageStats } from "./format.js";

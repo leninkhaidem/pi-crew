@@ -72,7 +72,7 @@ describe("parsePiCrewConfig", () => {
 		}
 	});
 
-	it("fills per-slot thinking defaults when missing", () => {
+	it("preserves omitted concrete-slot thinking for runtime precedence", () => {
 		const r = parsePiCrewConfig({
 			version: 1,
 			agents: {
@@ -83,9 +83,9 @@ describe("parsePiCrewConfig", () => {
 		});
 		expect(r.ok).toBe(true);
 		if (r.ok) {
-			expect((r.value.agents.explore as { thinking?: string } | undefined)?.thinking).toBe("low");
-			expect((r.value.agents["general-purpose"] as { thinking?: string } | undefined)?.thinking).toBe("medium");
-			expect((r.value.agents.custom as { thinking?: string } | undefined)?.thinking).toBe("medium");
+			expect(r.value.agents.explore).not.toHaveProperty("thinking");
+			expect(r.value.agents["general-purpose"]).not.toHaveProperty("thinking");
+			expect(r.value.agents.custom).not.toHaveProperty("thinking");
 		}
 	});
 

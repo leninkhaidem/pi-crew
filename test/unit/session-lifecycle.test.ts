@@ -2,13 +2,23 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig } from "../../src/types.js";
+import type { AgentConfig, SubagentState } from "../../src/types.js";
 
 let tmp: string;
 let activeToolNames: string[];
 let createdResourceLoaderOptions: unknown;
 let createdSessionOptions: unknown;
+let createdServiceOptions: unknown;
+let childModelRuntime: {
+	getModel: ReturnType<typeof vi.fn>;
+	getAvailable: ReturnType<typeof vi.fn>;
+	setRuntimeApiKey: ReturnType<typeof vi.fn>;
+	removeRuntimeApiKey: ReturnType<typeof vi.fn>;
+};
 let setActiveToolsByNameMock: ReturnType<typeof vi.fn>;
+let writeStateInterceptor:
+	| ((state: SubagentState, write: (state: SubagentState) => Promise<void>) => Promise<void>)
+	| undefined;
 let fakeSession: {
 	messages: unknown[];
 	subscribe: ReturnType<typeof vi.fn>;
@@ -21,23 +31,53 @@ let fakeSession: {
 	dispose: ReturnType<typeof vi.fn>;
 };
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
-	DefaultResourceLoader: class {
-		constructor(options: unknown) {
-			createdResourceLoaderOptions = options;
-		}
-
-		async reload() {
-			return undefined;
-		}
-	},
+vi.mock("@earendil-works/pi-coding-agent", () => ({
 	SessionManager: { inMemory: vi.fn(() => ({})) },
-	SettingsManager: { create: vi.fn(() => ({})) },
-	createAgentSession: vi.fn(async (options: unknown) => {
+	createAgentSessionServices: vi.fn(async (options: { resourceLoaderOptions?: unknown }) => {
+		createdServiceOptions = options;
+		createdResourceLoaderOptions = options.resourceLoaderOptions;
+		return {
+			cwd: tmp,
+			agentDir: tmp,
+			diagnostics: [],
+			settingsManager: {},
+			resourceLoader: {},
+			modelRuntime: childModelRuntime,
+		};
+	}),
+	createAgentSessionFromServices: vi.fn(async (options: unknown) => {
 		createdSessionOptions = options;
 		return { session: fakeSession };
 	}),
 }));
+
+vi.mock("../../src/state/store.js", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../src/state/store.js")>();
+	return {
+		...actual,
+		writeState: (state: SubagentState) =>
+			writeStateInterceptor ? writeStateInterceptor(state, actual.writeState) : actual.writeState(state),
+	};
+});
+
+function deferred<T>() {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	const promise = new Promise<T>((res) => {
+		resolve = res;
+	});
+	return { promise, resolve };
+}
+
+function servicesValue() {
+	return {
+		cwd: tmp,
+		agentDir: tmp,
+		diagnostics: [],
+		settingsManager: {},
+		resourceLoader: {},
+		modelRuntime: childModelRuntime,
+	};
+}
 
 const fakeAgent: AgentConfig = {
 	name: "general-purpose",
@@ -71,10 +111,19 @@ describe("dispatchSession", () => {
 	});
 
 	beforeEach(() => {
+		vi.clearAllMocks();
 		tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-session-"));
 		subscriber = undefined;
 		createdResourceLoaderOptions = undefined;
 		createdSessionOptions = undefined;
+		createdServiceOptions = undefined;
+		writeStateInterceptor = undefined;
+		childModelRuntime = {
+			getModel: vi.fn((provider: string, id: string) => ({ provider, id, reasoning: true })),
+			getAvailable: vi.fn(async (provider: string) => [{ provider, id: "model", reasoning: true }]),
+			setRuntimeApiKey: vi.fn(async () => undefined),
+			removeRuntimeApiKey: vi.fn(async () => undefined),
+		};
 		activeToolNames = ["read", "subagent_resume", "subagent_dispatch", "get_subagent_result", "steer_subagent", "bash"];
 		setActiveToolsByNameMock = vi.fn((toolNames: string[]) => {
 			activeToolNames = [...toolNames];
@@ -832,6 +881,39 @@ describe("dispatchSession", () => {
 		expect(final.errorMessage).toBe("maxTurns exceeded (1)");
 	});
 
+	it("reserves resume admission before an asynchronous preflight can admit overlap", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const ctx = {
+			scopedModels: [],
+			modelRegistry: { getProviderAuthStatus: () => ({ configured: true, source: "stored" }) },
+		} as never;
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "preflight-overlap", task: "initial" },
+			},
+			{ agentDir: tmp, cwd: tmp, sessionId: "preflight-overlap", parentAgentId: null, ctx },
+		);
+		await handle.donePromise;
+
+		const preflight = deferred<Array<{ provider: string; id: string; reasoning: boolean }>>();
+		childModelRuntime.getAvailable.mockImplementationOnce(() => preflight.promise);
+		const accepted = handle.resume?.("accepted resume", undefined, ctx);
+		await vi.waitFor(() => expect(childModelRuntime.getAvailable).toHaveBeenCalledTimes(2));
+
+		let overlapError: unknown;
+		try {
+			handle.resume?.("overlapping resume", undefined, ctx);
+		} catch (error) {
+			overlapError = error;
+		}
+		expect(overlapError).toMatchObject({ message: expect.stringContaining("already running") });
+		preflight.resolve([{ provider: "mock", id: "model", reasoning: true }]);
+		await accepted;
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(2);
+	});
+
 	it("rejects an overlapping resume synchronously at the admission boundary", async () => {
 		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
 		const handle = await dispatchSession(
@@ -993,6 +1075,650 @@ describe("dispatchSession", () => {
 		expect((createdSessionOptions as { thinkingLevel?: string }).thinkingLevel).toBe("max");
 		expect(final.thinking).toBe("max");
 		expect(final.thinkingAdjustment).toBeUndefined();
+	});
+
+	it("keeps exported low-level session dispatch and resume caller-owned despite excluding scopes", async () => {
+		const [{ dispatch }, { dispatchSubagent }] = await Promise.all([
+			import("../../src/runtime/lifecycle.js"),
+			import("../../src/index.js"),
+		]);
+		expect(dispatchSubagent).toBe(dispatch);
+		const modelRegistry = {
+			getProviderAuthStatus: vi.fn(() => ({ configured: true, source: "stored" })),
+		};
+		const handle = await dispatchSubagent(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "low-level", task: "first" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "low-level",
+				parentAgentId: null,
+				executionMode: "session",
+				ctx: {
+					scopedModels: [{ model: { provider: "other", id: "model" } }],
+					modelRegistry,
+				} as never,
+			},
+		);
+		expect((await handle.donePromise).status).toBe("done");
+		const resumed = await handle.resume?.("second", undefined, {
+			scopedModels: [{ model: { provider: "another", id: "model" } }],
+			modelRegistry,
+		} as never);
+		expect(resumed?.status).toBe("done");
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(2);
+	});
+
+	it("uses public services/runtime auth APIs and forwards the current cancellation signal", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const controller = new AbortController();
+		const getApiKeyForProvider = vi.fn(async () => "RUNTIME_SENTINEL");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "runtime-auth", task: "say ok" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "runtime-auth",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: {
+						getProviderAuthStatus: vi.fn(() => ({ configured: true, source: "runtime" })),
+						getApiKeyForProvider,
+					},
+				} as never,
+			},
+		);
+		const final = await handle.donePromise;
+		expect((createdServiceOptions as { modelRuntimeSignal?: AbortSignal }).modelRuntimeSignal).toBe(controller.signal);
+		expect(getApiKeyForProvider).toHaveBeenCalledOnce();
+		expect(childModelRuntime.setRuntimeApiKey).toHaveBeenCalledWith("mock", "RUNTIME_SENTINEL", {
+			signal: controller.signal,
+		});
+		expect(JSON.stringify(final)).not.toContain("RUNTIME_SENTINEL");
+		expect(readFileSync(final.paths.output, "utf-8")).not.toContain("RUNTIME_SENTINEL");
+	});
+
+	it.each(["stored", "environment", "fallback", "models_json_key", "models_json_command", undefined])(
+		"never extracts or copies non-runtime auth source %s",
+		async (source) => {
+			const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+			const getApiKeyForProvider = vi.fn(async () => "DO_NOT_EXTRACT");
+			const handle = await dispatchSession(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "model", thinking: "low" },
+					options: { agent: "general-purpose", alias: `source-${source}`, task: "say ok" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: `source-${source}`,
+					parentAgentId: null,
+					ctx: {
+						scopedModels: [],
+						modelRegistry: {
+							getProviderAuthStatus: vi.fn(() => ({ configured: source !== undefined, source })),
+							getApiKeyForProvider,
+						},
+					} as never,
+				},
+			);
+			await handle.donePromise;
+			expect(getApiKeyForProvider).not.toHaveBeenCalled();
+			expect(childModelRuntime.setRuntimeApiKey).not.toHaveBeenCalled();
+		},
+	);
+
+	it.each(["stored", "environment", "fallback", "models_json_key", "models_json_command", undefined])(
+		"removes a prior runtime override before resume auth recheck for %s",
+		async (nextSource) => {
+			const ledger: string[] = [];
+			childModelRuntime.setRuntimeApiKey.mockImplementation(async () => {
+				ledger.push("set");
+			});
+			childModelRuntime.removeRuntimeApiKey.mockImplementation(async () => {
+				ledger.push("remove");
+			});
+			childModelRuntime.getAvailable.mockImplementation(async (provider: string) => {
+				ledger.push("available");
+				return [{ provider, id: "model", reasoning: true }];
+			});
+			let source: string | undefined = "runtime";
+			const getApiKeyForProvider = vi.fn(async () => "ROTATING_SENTINEL");
+			const ctx = {
+				scopedModels: [],
+				modelRegistry: {
+					getProviderAuthStatus: vi.fn(() => ({ configured: source !== undefined, source })),
+					getApiKeyForProvider,
+				},
+			} as never;
+			const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+			const handle = await dispatchSession(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "model", thinking: "low" },
+					options: { agent: "general-purpose", alias: "transition", task: "first" },
+				},
+				{ agentDir: tmp, cwd: tmp, sessionId: `transition-${nextSource}`, parentAgentId: null, ctx },
+			);
+			await handle.donePromise;
+			ledger.length = 0;
+			source = nextSource;
+			await handle.resume?.("next", undefined, ctx);
+			expect(ledger.slice(0, 2)).toEqual(["remove", "available"]);
+			expect(getApiKeyForProvider).toHaveBeenCalledTimes(1);
+		},
+	);
+
+	it("removes a possibly committed runtime key after synchronization reports failure", async () => {
+		const ledger: string[] = [];
+		let source: string | undefined = "stored";
+		const ctx = {
+			scopedModels: [],
+			modelRegistry: {
+				getProviderAuthStatus: () => ({ configured: true, source }),
+				getApiKeyForProvider: vi.fn(async () => "RUNTIME_SENTINEL"),
+			},
+		} as never;
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "partial-key-sync", task: "initial" },
+			},
+			{ agentDir: tmp, cwd: tmp, sessionId: "partial-key-sync", parentAgentId: null, ctx },
+		);
+		await handle.donePromise;
+
+		source = "runtime";
+		childModelRuntime.setRuntimeApiKey.mockImplementationOnce(async () => {
+			ledger.push("set:committed");
+			throw new Error("synchronization failed after commit");
+		});
+		await expect(handle.resume?.("failed rotation", undefined, ctx)).rejects.toThrow(
+			"Runtime authentication reconciliation failed",
+		);
+
+		source = "stored";
+		childModelRuntime.removeRuntimeApiKey.mockImplementationOnce(async () => {
+			ledger.push("remove");
+		});
+		childModelRuntime.getAvailable.mockImplementationOnce(async (provider: string) => {
+			ledger.push("available");
+			return [{ provider, id: "model", reasoning: true }];
+		});
+		await handle.resume?.("non-runtime retry", undefined, ctx);
+
+		expect(ledger).toEqual(["set:committed", "remove", "available"]);
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(2);
+	});
+
+	it("rotates runtime auth on every resume and blocks prompt when child auth becomes unavailable", async () => {
+		let key = "RUNTIME_ONE";
+		const getApiKeyForProvider = vi.fn(async () => key);
+		const ctx = {
+			scopedModels: [],
+			modelRegistry: {
+				getProviderAuthStatus: vi.fn(() => ({ configured: true, source: "runtime" })),
+				getApiKeyForProvider,
+			},
+		} as never;
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "rotate", task: "first" },
+			},
+			{ agentDir: tmp, cwd: tmp, sessionId: "rotate", parentAgentId: null, ctx },
+		);
+		await handle.donePromise;
+		key = "RUNTIME_TWO";
+		childModelRuntime.getAvailable.mockResolvedValueOnce([]);
+		await expect(handle.resume?.("blocked", undefined, ctx)).rejects.toThrow("authentication unavailable");
+		expect(childModelRuntime.setRuntimeApiKey).toHaveBeenLastCalledWith("mock", "RUNTIME_TWO", {
+			signal: undefined,
+		});
+		expect(getApiKeyForProvider).toHaveBeenCalledTimes(2);
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(1);
+	});
+
+	it("finalizes cancellation after resume running-state persistence resolves post-abort", async () => {
+		const ledger: string[] = [];
+		const ctx = {
+			scopedModels: [],
+			modelRegistry: { getProviderAuthStatus: () => ({ configured: true, source: "stored" }) },
+		} as never;
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-resume-write", task: "initial" },
+			},
+			{ agentDir: tmp, cwd: tmp, sessionId: "cancel-resume-write", parentAgentId: null, ctx },
+			{
+				onStateUpdate: (next) => ledger.push(`update:${next.status}`),
+				onEnd: (next) => ledger.push(`end:${next.status}`),
+			},
+		);
+		await handle.donePromise;
+		ledger.length = 0;
+
+		const runningWrite = deferred<void>();
+		writeStateInterceptor = async (next, write) => {
+			if (next.task === "cancel during persistence" && next.status === "running") {
+				ledger.push("write:running:start");
+				await runningWrite.promise;
+				await write(next);
+				ledger.push("write:running:end");
+				return;
+			}
+			if (next.task === "cancel during persistence" && next.status === "aborted") {
+				ledger.push("write:aborted");
+			}
+			await write(next);
+		};
+		const controller = new AbortController();
+		const resumed = handle.resume?.("cancel during persistence", controller.signal, ctx);
+		await vi.waitFor(() => expect(ledger).toContain("write:running:start"));
+		controller.abort();
+		ledger.push("abort");
+		runningWrite.resolve();
+
+		const result = await resumed;
+		expect(result?.status).toBe("aborted");
+		expect(result?.errorMessage).toBe("Interrupted before sub-agent resume.");
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(1);
+		expect(JSON.parse(readFileSync(result!.paths.state, "utf-8"))).toMatchObject({
+			status: "aborted",
+			task: "cancel during persistence",
+		});
+		expect(ledger).toEqual(["write:running:start", "abort", "write:running:end", "write:aborted", "end:aborted"]);
+	});
+
+	it("fences prompt startup after a signal-ignoring extension-bind barrier resolves post-abort", async () => {
+		const ledger: string[] = [];
+		let resolveBind!: () => void;
+		fakeSession.bindExtensions = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					ledger.push("bind:start");
+					resolveBind = resolve;
+				}),
+		);
+		fakeSession.dispose = vi.fn(() => ledger.push("cleanup:dispose"));
+		const controller = new AbortController();
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-bind", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-bind",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: { getProviderAuthStatus: () => ({ configured: true, source: "stored" }) },
+				} as never,
+			},
+		);
+		while (!ledger.includes("bind:start")) await new Promise((resolve) => setTimeout(resolve, 0));
+		controller.abort();
+		ledger.push("abort");
+		resolveBind();
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+		expect(ledger).toEqual(["bind:start", "abort", "cleanup:dispose"]);
+	});
+
+	it("fences session service creation when startup state persistence resolves after abort", async () => {
+		const ledger: string[] = [];
+		const persistenceDone = deferred<void>();
+		const controller = new AbortController();
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		writeStateInterceptor = async (next, write) => {
+			if (next.status === "starting") {
+				ledger.push("persist:start");
+				await persistenceDone.promise;
+				await write(next);
+				ledger.push("persist:end");
+				return;
+			}
+			if (next.status === "aborted") ledger.push("terminal:aborted");
+			await write(next);
+		};
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-persistence", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-persistence",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: { scopedModels: [], modelRegistry: {} } as never,
+			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("persist:start"));
+		controller.abort();
+		ledger.push("abort");
+		persistenceDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["persist:start", "abort", "persist:end", "terminal:aborted", "end:aborted"]);
+		expect(vi.mocked(sdk.createAgentSessionServices)).not.toHaveBeenCalled();
+		expect(vi.mocked(sdk.createAgentSessionFromServices)).not.toHaveBeenCalled();
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+		expect(JSON.parse(readFileSync(handle.state.paths.state, "utf-8"))).toMatchObject({ status: "aborted" });
+		expect(() => readFileSync(handle.state.paths.prompt)).toThrow();
+		expect(() => readFileSync(handle.state.paths.output)).toThrow();
+		expect(() => readFileSync(handle.state.paths.stderr)).toThrow();
+	});
+
+	it("fences post-service startup work when the atomic helper resolves after abort", async () => {
+		const ledger: string[] = [];
+		const servicesDone = deferred<void>();
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const controller = new AbortController();
+		const getProviderAuthStatus = vi.fn(() => {
+			ledger.push("forbidden:auth-source");
+			return { configured: true, source: "stored" };
+		});
+		vi.mocked(sdk.createAgentSessionServices).mockImplementationOnce(async (options) => {
+			ledger.push("helper:start");
+			expect(options.modelRuntimeSignal).toBe(controller.signal);
+			await servicesDone.promise;
+			ledger.push("helper:end");
+			return servicesValue() as never;
+		});
+		writeStateInterceptor = async (next, write) => {
+			if (next.status === "aborted") ledger.push("terminal:aborted");
+			await write(next);
+		};
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: { scopedModels: [], modelRegistry: { getProviderAuthStatus } } as never,
+			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("helper:start"));
+		controller.abort();
+		ledger.push("abort");
+		servicesDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["helper:start", "abort", "helper:end", "terminal:aborted", "end:aborted"]);
+		expect(getProviderAuthStatus).not.toHaveBeenCalled();
+		expect(childModelRuntime.setRuntimeApiKey).not.toHaveBeenCalled();
+		expect(childModelRuntime.getAvailable).not.toHaveBeenCalled();
+		expect(vi.mocked(sdk.createAgentSessionFromServices)).not.toHaveBeenCalled();
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+	});
+
+	it("fences runtime key extraction when the parent getter resolves after abort", async () => {
+		const ledger: string[] = [];
+		const keyDone = deferred<void>();
+		const controller = new AbortController();
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-key-get", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-key-get",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: {
+						getProviderAuthStatus: () => ({ configured: true, source: "runtime" }),
+						getApiKeyForProvider: async () => {
+							ledger.push("key:get:start");
+							await keyDone.promise;
+							ledger.push("key:get:end");
+							return "RUNTIME_SENTINEL";
+						},
+					},
+				} as never,
+			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("key:get:start"));
+		controller.abort();
+		ledger.push("abort");
+		keyDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["key:get:start", "abort", "key:get:end", "end:aborted"]);
+		expect(childModelRuntime.setRuntimeApiKey).not.toHaveBeenCalled();
+		expect(childModelRuntime.getAvailable).not.toHaveBeenCalled();
+		expect(vi.mocked(sdk.createAgentSessionFromServices)).not.toHaveBeenCalled();
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+	});
+
+	it("fences child runtime key installation when it resolves after abort", async () => {
+		const ledger: string[] = [];
+		const setDone = deferred<void>();
+		const controller = new AbortController();
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		childModelRuntime.setRuntimeApiKey.mockImplementationOnce(async (_provider, _key, options) => {
+			ledger.push("key:set:start");
+			expect(options.signal).toBe(controller.signal);
+			await setDone.promise;
+			ledger.push("key:set:end");
+		});
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-key-set", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-key-set",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: {
+						getProviderAuthStatus: () => ({ configured: true, source: "runtime" }),
+						getApiKeyForProvider: async () => "RUNTIME_SENTINEL",
+					},
+				} as never,
+			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("key:set:start"));
+		controller.abort();
+		ledger.push("abort");
+		setDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["key:set:start", "abort", "key:set:end", "end:aborted"]);
+		expect(childModelRuntime.getAvailable).not.toHaveBeenCalled();
+		expect(vi.mocked(sdk.createAgentSessionFromServices)).not.toHaveBeenCalled();
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+	});
+
+	it("fences child auth availability when its signal-ignoring check resolves after abort", async () => {
+		const ledger: string[] = [];
+		const availableDone = deferred<void>();
+		const controller = new AbortController();
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		childModelRuntime.getAvailable.mockImplementationOnce(async (provider, options) => {
+			ledger.push("available:start");
+			expect(options.signal).toBe(controller.signal);
+			await availableDone.promise;
+			ledger.push("available:end");
+			return [{ provider, id: "model", reasoning: true }];
+		});
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-available", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-available",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: { getProviderAuthStatus: () => ({ configured: true, source: "stored" }) },
+				} as never,
+			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("available:start"));
+		controller.abort();
+		ledger.push("abort");
+		availableDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["available:start", "abort", "available:end", "end:aborted"]);
+		expect(vi.mocked(sdk.createAgentSessionFromServices)).not.toHaveBeenCalled();
+		expect(fakeSession.bindExtensions).not.toHaveBeenCalled();
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+	});
+
+	it("cleans a child session once when creation resolves after abort", async () => {
+		const ledger: string[] = [];
+		const sessionDone = deferred<void>();
+		const controller = new AbortController();
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		fakeSession.dispose = vi.fn(() => ledger.push("cleanup:dispose"));
+		vi.mocked(sdk.createAgentSessionFromServices).mockImplementationOnce(async () => {
+			ledger.push("session:create:start");
+			await sessionDone.promise;
+			ledger.push("session:create:end");
+			return { session: fakeSession } as never;
+		});
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-session-create", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-session-create",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: { getProviderAuthStatus: () => ({ configured: true, source: "stored" }) },
+				} as never,
+			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("session:create:start"));
+		controller.abort();
+		ledger.push("abort");
+		sessionDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["session:create:start", "abort", "session:create:end", "cleanup:dispose", "end:aborted"]);
+		expect(fakeSession.dispose).toHaveBeenCalledOnce();
+		expect(fakeSession.bindExtensions).not.toHaveBeenCalled();
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+	});
+
+	it("fences child runtime key removal before resume availability and prompt", async () => {
+		const ledger: string[] = [];
+		const removeDone = deferred<void>();
+		let source = "runtime";
+		const ctx = {
+			scopedModels: [],
+			modelRegistry: {
+				getProviderAuthStatus: () => ({ configured: true, source }),
+				getApiKeyForProvider: async () => "RUNTIME_SENTINEL",
+			},
+		} as never;
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-key-remove", task: "initial" },
+			},
+			{ agentDir: tmp, cwd: tmp, sessionId: "cancel-key-remove", parentAgentId: null, ctx },
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await handle.donePromise;
+		ledger.length = 0;
+		const availableCount = childModelRuntime.getAvailable.mock.calls.length;
+		const promptCount = fakeSession.prompt.mock.calls.length;
+		source = "stored";
+		const controller = new AbortController();
+		childModelRuntime.removeRuntimeApiKey.mockImplementationOnce(async (_provider, options) => {
+			ledger.push("key:remove:start");
+			expect(options.signal).toBe(controller.signal);
+			await removeDone.promise;
+			ledger.push("key:remove:end");
+		});
+		const resumed = handle.resume?.("never prompt", controller.signal, ctx);
+		await vi.waitFor(() => expect(ledger).toContain("key:remove:start"));
+		controller.abort();
+		ledger.push("abort");
+		removeDone.resolve();
+
+		const result = await resumed;
+		expect(result?.status).toBe("aborted");
+		expect(ledger).toEqual(["key:remove:start", "abort", "key:remove:end", "end:aborted"]);
+		expect(childModelRuntime.getAvailable).toHaveBeenCalledTimes(availableCount);
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(promptCount);
 	});
 
 	it("persists session-mode child prompts without pi-crew delegation guidance", async () => {

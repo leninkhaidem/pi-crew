@@ -4,12 +4,12 @@ Sub-agent extension for the [pi coding assistant](https://github.com/badlogic/pi
 
 ## Features
 
-- **Claude-style tools.** `Agent`, `get_subagent_result`, and `steer_subagent` are available alongside the `subagent_*` tools.
+- **Delegation tools.** `subagent_dispatch`, `subagent_run`, `subagent_resume`, `get_subagent_result`, and `steer_subagent` cover background, blocking, continuation, recovery, and steering workflows.
 - **Background dispatch.** Sub-agents return an `agentId` immediately; the main agent stays interactive.
 - **Push notification on completion.** Each sub-agent's final summary is auto-injected into the main session — no polling.
 - **Live status.** Widget above the editor appears while sub-agents are active and shows status, model, and one-line current activity.
-- **Multi-provider.** Each agent slot's model is configured via TUI from your authenticated providers. No hardcoded model IDs.
-- **Per-call model overrides.** `Agent`, `subagent_dispatch`, and `subagent_run` accept optional `provider`, `model`, and `thinking` overrides; available models are injected into the prompt.
+- **Session-scoped multi-provider policy.** When Pi supplies a model scope, prompt guidance, `/subagent-config`, launches, and every resumed turn are limited to the exact case-sensitive provider/model pairs in that scope. An empty scope uses all authenticated models.
+- **Per-call model overrides.** `subagent_dispatch` and `subagent_run` accept optional `provider`, `model`, and `thinking` overrides; only currently permitted models are injected into the prompt.
 - **Per-slot thinking budget.** Reasoning effort (`off|minimal|low|medium|high|xhigh|max`) is configurable for `explore`; `general-purpose` inherits the parent model and thinking effort by default. Levels are filtered from each model's structural `reasoning` and `thinkingLevelMap` metadata.
 - **Two bundled defaults.** `general-purpose` and `explore`. Override by creating same-named `.md` in `~/.pi/agent/agents/`.
 - **Tmux integration.** Optional live view of sub-agents in tmux windows or a separate session.
@@ -28,19 +28,21 @@ After install:
 
 | Tool | Purpose |
 |---|---|
-| `Agent` | Claude-style foreground/background launch wrapper. Requires `alias`, a short instance/job name shown in UI. |
-| Example | `await Agent({ subagent_type: 'general-purpose', alias: 'pr-summary', prompt: 'Summarize this PR', provider: 'openai-codex', model: 'gpt-5.4-mini', thinking: 'low', run_in_background: true })` |
+| `subagent_dispatch` | Background dispatch. Requires `alias`, a short instance/job name shown in UI. |
+| `subagent_run` | Blocking single / parallel / chain execution with partial results preserved when a submitted model is outside the current session scope. |
 | `get_subagent_result` | Check or wait for a background result; optionally request bounded sanitized `recentEvents` or explicit verbose transcript JSONL. |
 | `steer_subagent` | Send a steering message to a running session-mode sub-agent. |
-| `subagent_dispatch` | Background dispatch. Returns agentId. |
-| `subagent_run` | Blocking single / parallel / chain modes. |
 | `subagent_resume` | Continue a session-mode sub-agent; press Ctrl+B to move a pending resumed turn to the background and receive its completion automatically. |
 | `subagent_status` | Default uncapped current active list (`starting`/`running`); `scope: 'stopped'` returns a capped problematic triage list; `agentId` does exact lookup. |
 | `subagent_kill` | Abort a running sub-agent. |
 
 ## Thinking capability behavior
 
-`max` is opt-in: a reasoning model supports it only when its own `thinkingLevelMap.max` value is a string. Model and provider names are never used as capability rules. When a normal launch requests unsupported `max`, pi-crew selects the first supported level in `xhigh`, `high`, `medium`, `low`, `minimal`, `off` order and reports both the requested and effective values. For example, a generic model advertising `high` but not `max` runs at `high` and emits a warning. Non-reasoning models use `off`. If no lower level is supported, launch fails before dispatch.
+`max` is opt-in: a reasoning model supports it only when its own `thinkingLevelMap.max` value is a string. Model and provider names are never used as capability rules. Thinking precedence is per-call choice, an explicitly saved slot choice, the selected scoped-model pin, then inherited/default behavior; capability clamping runs last. When `max` is unsupported, pi-crew selects the first supported level in `xhigh`, `high`, `medium`, `low`, `minimal`, `off` order and reports requested/effective values. Non-reasoning models use `off`. If no lower level is supported, launch fails before dispatch.
+
+## Compatibility and runtime
+
+Pi-crew is built and locally verified against the public `@earendil-works/*` 0.84.1 SDK on Node.js 22.19 or newer. Its peer range permits 0.84.1 and later, but that range is not a claim that future pre-1.0 releases have been verified. Session-mode children use Pi's public session-services and model-runtime APIs, preserve runtime-only parent authentication in memory, and re-check scope and authentication before every resume. Subprocess mode rejects runtime-only authentication before spawning and never transports the key.
 
 Configuration keeps the requested value; launch state and tool details show the effective value plus adjustment provenance when a downgrade occurred.
 

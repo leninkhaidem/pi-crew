@@ -1,6 +1,6 @@
 import path from "node:path";
-import type { Theme } from "@mariozechner/pi-coding-agent";
-import { type Component, Key, matchesKey } from "@mariozechner/pi-tui";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import { type Component, Key, matchesKey } from "@earendil-works/pi-tui";
 import { type TranscriptExcerpt, readRecentTranscriptExcerpt } from "../runtime/transcript.js";
 import type { SubagentState } from "../types.js";
 import { isActiveSubagentState, renderSubagentsPanel } from "./subagents-panel-render.js";

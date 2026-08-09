@@ -1,4 +1,4 @@
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 import type { SubagentState } from "../../src/types.js";
 import { mountWidget, renderActiveAgentsPanel } from "../../src/ui/widget.js";

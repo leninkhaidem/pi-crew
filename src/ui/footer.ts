@@ -1,5 +1,5 @@
 // src/ui/footer.ts
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentState } from "../types.js";
 import { isActiveSubagentState } from "./subagents-panel.js";
 

@@ -1,6 +1,6 @@
 // src/ui/widget.ts
-import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
-import { type Component, type TUI, truncateToWidth } from "@mariozechner/pi-tui";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import { formatThinkingAdjustment } from "../thinking.js";
 import type { SubagentState } from "../types.js";
 import { formatStateActivity } from "./activity.js";

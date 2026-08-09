@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_RECENT_TRANSCRIPT_EVENT_TEXT_LENGTH } from "../../src/runtime/transcript.js";
 import { writeState } from "../../src/state/store.js";

@@ -24,6 +24,7 @@ function deferred<T>() {
 }
 
 const drain = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+const unrestrictedContext = { scopedModels: [], modelRegistry: { getAvailable: () => [] } };
 
 function stateOf(overrides: Partial<SubagentState> = {}): SubagentState {
 	return {
@@ -75,22 +76,33 @@ function createRuntime(overrides: { tryAcquire?: boolean; resumeResult?: Subagen
 		resumeHandle.mockResolvedValue(resumeResult);
 	}
 	const consumeCompletion = vi.fn();
+	const getResumeIdentity = vi.fn((agentId: string) =>
+		agentId === "no-such-agent" ? null : { provider: "openai-codex", model: "gpt-5.4-mini" },
+	);
+	const tryAcquireActive = vi.fn(() => tryAcquire);
+	const currentActive = vi.fn(() => (tryAcquire ? 0 : 3));
 	const detach = createDetachController();
+	const createScope = vi.spyOn(detach, "createScope");
 	return {
 		rt: {
 			concurrency: {
 				active: {
-					tryAcquire: vi.fn(() => tryAcquire),
+					tryAcquire: tryAcquireActive,
 					release,
-					current: vi.fn(() => (tryAcquire ? 0 : 3)),
+					current: currentActive,
 				},
 			},
 			consumeCompletion,
+			getResumeIdentity,
 			resumeHandle,
 			detach,
 		},
+		tryAcquireActive,
+		currentActive,
+		createScope,
 		release,
 		consumeCompletion,
+		getResumeIdentity,
 		resumeHandle,
 		detach,
 	};
@@ -106,16 +118,70 @@ function registerAndGetTool(rt: ReturnType<typeof createRuntime>["rt"]) {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("subagent_resume tool", () => {
+	it.each([
+		["available", true],
+		["saturated", false],
+	])("returns aborted before %s-capacity admission work", async (_capacity, tryAcquire) => {
+		const { rt, tryAcquireActive, currentActive, createScope, release, getResumeIdentity, resumeHandle } =
+			createRuntime({ tryAcquire });
+		const tool = registerAndGetTool(rt);
+		const controller = new AbortController();
+		controller.abort();
+
+		const result = (await tool.execute(
+			"call-aborted",
+			{ agent_id: "resume-001", prompt: "must not run" },
+			controller.signal,
+			undefined,
+			unrestrictedContext,
+		)) as { content: Array<{ text: string }>; details: Record<string, unknown> };
+
+		expect(result.details).toEqual({ error: "aborted", message: "Interrupted before sub-agent resume." });
+		expect(tryAcquireActive).not.toHaveBeenCalled();
+		expect(currentActive).not.toHaveBeenCalled();
+		expect(createScope).not.toHaveBeenCalled();
+		expect(release).not.toHaveBeenCalled();
+		expect(getResumeIdentity).not.toHaveBeenCalled();
+		expect(resumeHandle).not.toHaveBeenCalled();
+	});
+
+	it("rejects a newly out-of-scope tracked model before low-level resume admission", async () => {
+		const { rt, resumeHandle, release, detach } = createRuntime();
+		const tool = registerAndGetTool(rt);
+		const allowed = { provider: "other", id: "gpt-5.4-mini", reasoning: true };
+		const result = (await tool.execute(
+			"call-scope",
+			{ agent_id: "resume-001", prompt: "must not run" },
+			undefined,
+			undefined,
+			{
+				scopedModels: [{ model: allowed }],
+				modelRegistry: { getAvailable: () => [allowed] },
+			},
+		)) as { content: Array<{ text: string }>; details: Record<string, unknown> };
+
+		expect(result.details).toMatchObject({ error: "model_out_of_scope", agentId: "resume-001" });
+		expect(result.content[0]?.text).toContain(
+			"Model openai-codex/gpt-5.4-mini is outside the current session model scope",
+		);
+		expect(resumeHandle).not.toHaveBeenCalled();
+		expect(detach.hasActiveScopes()).toBe(false);
+		expect(release).toHaveBeenCalledOnce();
+	});
+
 	it("registers a detach scope while resume is pending and returns promptly when backgrounded", async () => {
 		const pending = deferred<SubagentState>();
 		const { rt, release, consumeCompletion, detach } = createRuntime();
 		rt.resumeHandle.mockReturnValue(pending.promise);
 		const tool = registerAndGetTool(rt);
 
-		const toolPromise = tool.execute("call-detach", {
-			agent_id: "resume-001",
-			prompt: "continue in background",
-		});
+		const toolPromise = tool.execute(
+			"call-detach",
+			{ agent_id: "resume-001", prompt: "continue in background" },
+			undefined,
+			undefined,
+			unrestrictedContext,
+		);
 		await Promise.resolve();
 
 		expect(detach.hasActiveScopes()).toBe(true);
@@ -176,13 +242,19 @@ describe("subagent_resume tool", () => {
 		});
 		const tool = registerAndGetTool(rt);
 
-		const result = (await tool.execute("call-3", {
-			agent_id: "resume-001",
-			prompt: "follow-up task",
-			provider: "reserved-provider",
-			model: "reserved-model",
-			thinking: "max",
-		})) as { content: Array<{ text: string }>; details: Record<string, unknown> };
+		const result = (await tool.execute(
+			"call-3",
+			{
+				agent_id: "resume-001",
+				prompt: "follow-up task",
+				provider: "reserved-provider",
+				model: "reserved-model",
+				thinking: "max",
+			},
+			undefined,
+			undefined,
+			unrestrictedContext,
+		)) as { content: Array<{ text: string }>; details: Record<string, unknown> };
 
 		expect(result.details.agentId).toBe("resume-001");
 		expect(result.details.alias).toBe("my-session");
@@ -194,7 +266,7 @@ describe("subagent_resume tool", () => {
 		expect(result.details.thinkingAdjustment).toEqual({ requested: "max", effective: "high" });
 		expect(result.content[0]?.text).toContain('requested thinking level "max"');
 		expect(consumeCompletion).toHaveBeenCalledWith("resume-001");
-		expect(resumeHandle).toHaveBeenCalledWith("resume-001", "follow-up task", undefined);
+		expect(resumeHandle).toHaveBeenCalledWith("resume-001", "follow-up task", undefined, unrestrictedContext);
 		expect(detach.hasActiveScopes()).toBe(false);
 		expect(release).toHaveBeenCalledOnce();
 	});
@@ -205,14 +277,17 @@ describe("subagent_resume tool", () => {
 		rt.resumeHandle.mockRejectedValue(new Error("session expired"));
 		const tool = registerAndGetTool(rt);
 
-		const result = (await tool.execute("call-4", {
-			agent_id: "broken-agent",
-			prompt: "try again",
-		})) as { content: Array<{ text: string }>; details: Record<string, unknown> };
+		const result = (await tool.execute(
+			"call-4",
+			{ agent_id: "broken-agent", prompt: "try again" },
+			undefined,
+			undefined,
+			unrestrictedContext,
+		)) as { content: Array<{ text: string }>; details: Record<string, unknown> };
 
-		expect(result.details.error).toBe("resume_unavailable");
+		expect(result.details.error).toBe("resume_failed");
 		expect(result.details.agentId).toBe("broken-agent");
-		expect(result.content[0]?.text).toContain("Cannot resume");
+		expect(result.content[0]?.text).toContain("session expired");
 		expect(consumeCompletion).not.toHaveBeenCalled();
 		expect(detach.hasActiveScopes()).toBe(false);
 		expect(release).toHaveBeenCalledOnce();

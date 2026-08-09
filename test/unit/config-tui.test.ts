@@ -1,9 +1,10 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Api, Model } from "@mariozechner/pi-ai";
-import { Key, KeybindingsManager, TUI_KEYBINDINGS } from "@mariozechner/pi-tui";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { Key, KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { registerConfigCommand } from "../../src/commands/config.js";
 import { emptyConfig, parsePiCrewConfig } from "../../src/config/schema.js";
 import { runConfigTui } from "../../src/config/tui.js";
 
@@ -20,6 +21,47 @@ afterEach(() => {
 });
 
 describe("runConfigTui", () => {
+	it.each([
+		{ name: "a scoped pin", scopedThinkingLevel: "high" as const, expectedThinking: "high" },
+		{ name: "the unrestricted agent fallback", scopedThinkingLevel: undefined, expectedThinking: "low" },
+	])(
+		"runs empty persisted config through the registered command and saves $name",
+		async ({ scopedThinkingLevel, expectedThinking }) => {
+			const configPath = path.join(tmp, "pi-crew.json");
+			const selectedScreens: string[][] = [];
+			let calls = 0;
+			const custom = vi.fn(async (factory: CustomFactory) => {
+				calls += 1;
+				if (calls === 1) return "session";
+				if (calls === 2 || calls === 3) return selectCurrent(factory, selectedScreens);
+				return "__skip__";
+			});
+			let handler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
+			const pi = {
+				registerCommand: vi.fn((_name: string, command: { handler: typeof handler }) => {
+					handler = command.handler;
+				}),
+			};
+			registerConfigCommand(pi as never, { agentDir: tmp } as never);
+			const selected = model("example", "reasoner", true, { low: "low", high: "high" });
+			const ctx = {
+				ui: { custom, notify: vi.fn() },
+				modelRegistry: { getAvailable: () => [selected] },
+				scopedModels: scopedThinkingLevel ? [{ model: selected, thinkingLevel: scopedThinkingLevel }] : [],
+			};
+
+			await handler?.("", ctx);
+
+			expect(selectedLine(selectedScreens[0] ?? [])).toContain("example/reasoner");
+			expect(selectedLine(selectedScreens[1] ?? [])).toContain(expectedThinking);
+			expect(parseSavedConfig(configPath).agents.explore).toEqual({
+				provider: "example",
+				modelId: "reasoner",
+				thinking: expectedThinking,
+			});
+		},
+	);
+
 	it("shows inherit for every slot and recognizes inherited slots when reopened", async () => {
 		const configPath = path.join(tmp, "pi-crew.json");
 		const currentConfig = emptyConfig();
@@ -69,6 +111,28 @@ describe("runConfigTui", () => {
 			modelId: "reasoner",
 			thinking: "minimal",
 		});
+	});
+
+	it("uses the selected scoped-model thinking pin as the picker default", async () => {
+		const configPath = path.join(tmp, "pi-crew.json");
+		const screens: string[][] = [];
+		let calls = 0;
+		const custom = vi.fn(async (factory: CustomFactory) => {
+			calls += 1;
+			if (calls === 1) return "session";
+			if (calls === 2) return "example::reasoner";
+			if (calls === 3) return selectCurrent(factory, screens);
+			return "__skip__";
+		});
+		const result = await runConfigTui(mockContext(custom), {
+			configPath,
+			currentConfig: emptyConfig(),
+			availableModels: [model("example", "reasoner", true, { high: "high" })],
+			scopedThinkingLevels: [{ provider: "example", modelId: "reasoner", thinkingLevel: "high" }],
+		});
+		expect(result.saved).toBe(true);
+		expect(selectedLine(screens[0] ?? [])).toContain("high");
+		expect(parseSavedConfig(configPath).agents.explore).toMatchObject({ thinking: "high" });
 	});
 
 	it("filters standard and extended holes and preselects stale max's effective lower level", async () => {

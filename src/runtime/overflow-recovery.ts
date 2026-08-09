@@ -1,4 +1,4 @@
-import { isContextOverflow } from "@mariozechner/pi-ai";
+import { isContextOverflow } from "@earendil-works/pi-ai";
 
 export const OVERFLOW_RECOVERY_FAILED_STOP_REASON = "context_overflow_recovery_failed";
 export const OVERFLOW_RECOVERY_TIMEOUT_MS = 30 * 60 * 1000;

@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SubagentState } from "../types.js";
 import { formatBatchedMessage, formatCompletionMessage } from "./message.js";
 

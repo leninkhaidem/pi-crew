@@ -1,5 +1,5 @@
-import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { formatThinkingAdjustment } from "../thinking.js";
 import type { SubagentState } from "../types.js";
 import { formatUsageStats } from "../ui/format.js";

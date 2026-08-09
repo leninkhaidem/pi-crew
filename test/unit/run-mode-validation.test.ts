@@ -79,6 +79,68 @@ describe("subagent_run mode selection", () => {
 		expect(mocks.dispatch).toHaveBeenCalledOnce();
 	});
 
+	it("returns exact single/parallel/chain scope rejection schemas while preserving partial work", async () => {
+		const message =
+			"Model blocked/denied is outside the current session model scope. Choose an available scoped model or update the parent session scope.";
+		const single = await execute(
+			{
+				agent: "general-purpose",
+				alias: "denied-single",
+				task: "no",
+				provider: "blocked",
+				model: "denied",
+			},
+			true,
+		);
+		expect(single).toEqual({
+			content: [{ type: "text", text: message }],
+			details: { error: "model_out_of_scope", provider: "blocked", model: "denied", message },
+		});
+		expect(mocks.dispatch).not.toHaveBeenCalled();
+
+		const parallel = await execute(
+			{
+				tasks: [
+					{ agent: "general-purpose", alias: "allowed", task: "yes" },
+					{ agent: "general-purpose", alias: "denied", task: "no", provider: "blocked", model: "denied" },
+				],
+			},
+			true,
+		);
+		const parallelDetails = (parallel as { details: Record<string, unknown> }).details;
+		expect(parallelDetails).toMatchObject({
+			results: [expect.objectContaining({ status: "done" })],
+			partial: true,
+		});
+		expect(parallelDetails.errors).toEqual([
+			{ index: 1, alias: "denied", error: "model_out_of_scope", provider: "blocked", model: "denied", message },
+		]);
+		expect(mocks.dispatch).toHaveBeenCalledTimes(1);
+
+		mocks.dispatch.mockClear();
+		const chain = await execute(
+			{
+				chain: [
+					{ agent: "general-purpose", alias: "first", task: "yes" },
+					{ agent: "general-purpose", alias: "denied", task: "no", provider: "blocked", model: "denied" },
+					{ agent: "general-purpose", alias: "later-a", task: "never" },
+					{ agent: "general-purpose", alias: "later-b", task: "never" },
+				],
+			},
+			true,
+		);
+		const chainDetails = (chain as { details: Record<string, unknown> }).details;
+		expect(chainDetails).toMatchObject({
+			results: [expect.objectContaining({ status: "done" })],
+			partial: true,
+			abandoned: ["later-a", "later-b"],
+		});
+		expect(chainDetails.errors).toEqual([
+			{ index: 1, alias: "denied", error: "model_out_of_scope", provider: "blocked", model: "denied", message },
+		]);
+		expect(mocks.dispatch).toHaveBeenCalledTimes(1);
+	});
+
 	it.each([
 		["empty-only arrays", { tasks: [], chain: [] }],
 		["single and batch modes", { agent: "general-purpose", alias: "worker", task: "do work", tasks: [task()] }],
@@ -91,7 +153,7 @@ describe("subagent_run mode selection", () => {
 	});
 });
 
-async function execute(params: Record<string, unknown>) {
+async function execute(params: Record<string, unknown>, restricted = false) {
 	const tools = new Map<string, RunTool>();
 	const detach = createDetachController();
 	const pi = { registerTool: vi.fn((tool: RunTool & { name: string }) => tools.set(tool.name, tool)) };
@@ -113,7 +175,13 @@ async function execute(params: Record<string, unknown>) {
 	};
 
 	registerRunTool(pi as never, rt as never);
-	return tools.get("subagent_run")!.execute("call", params, undefined, undefined, { cwd: tmp });
+	const allowed = { provider: "openai-codex", id: "gpt-5.4-mini", reasoning: true, thinkingLevelMap: {} };
+	const blocked = { provider: "blocked", id: "denied", reasoning: true, thinkingLevelMap: {} };
+	return tools.get("subagent_run")!.execute("call", params, undefined, undefined, {
+		cwd: tmp,
+		scopedModels: restricted ? [{ model: allowed, thinkingLevel: "low" }] : [],
+		modelRegistry: { getAvailable: () => [allowed, blocked] },
+	});
 }
 
 function task() {

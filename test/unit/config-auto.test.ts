@@ -31,10 +31,11 @@ describe("agent slot config", () => {
 		expect(r.agents["general-purpose"]).toBeUndefined();
 	});
 
-	it("sets explore thinking default", () => {
+	it("leaves suggested explore thinking omitted so persisted and scoped choices retain provenance", () => {
 		const models = [M("anthropic", "claude-sonnet-4-5", true, 3)];
 		const r = suggestDefaults(models);
-		expect((r.agents.explore as { thinking?: string } | undefined)?.thinking).toBe("low");
+		expect(r.agents.explore).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+		expect(r.agents.explore).not.toHaveProperty("thinking");
 	});
 
 	it("returns empty agents when no models authenticated", () => {

@@ -123,6 +123,62 @@ describe("explore blocking coercion", () => {
 		rmSync(tmp, { recursive: true, force: true });
 	});
 
+	it("rejects an out-of-scope background dispatch before lifecycle execution", async () => {
+		const tools = new Map<string, { execute: ToolExecute }>();
+		const pi = { registerTool: vi.fn((tool) => tools.set(tool.name, tool)) };
+		const { rt } = runtime(userAgentsDir, bundledAgentsDir);
+		registerDispatchTool(pi as never, rt as never);
+		const allowed = { provider: "allowed", id: "model", reasoning: true };
+		const result = (await tools
+			.get("subagent_dispatch")
+			?.execute(
+				"call",
+				{ agent: "explore", alias: "denied", task: "never", provider: "blocked", model: "model" },
+				undefined,
+				undefined,
+				{
+					cwd: tmp,
+					scopedModels: [{ model: allowed }],
+					modelRegistry: { getAvailable: () => [allowed, { provider: "blocked", id: "model", reasoning: true }] },
+				},
+			)) as { details: Record<string, unknown> };
+		expect(result.details).toEqual({
+			error: "model_out_of_scope",
+			provider: "blocked",
+			model: "model",
+			message:
+				"Model blocked/model is outside the current session model scope. Choose an available scoped model or update the parent session scope.",
+		});
+		expect(mocks.dispatch).not.toHaveBeenCalled();
+	});
+
+	it("reports an immediate background startup failure instead of Started success", async () => {
+		const failed = stateOf({
+			agent: "general-purpose",
+			alias: "failed-start",
+			status: "failed",
+			errorMessage: "service unavailable",
+			finalOutput: null,
+		});
+		mocks.dispatch.mockResolvedValue({ agentId: failed.agentId, state: failed, donePromise: Promise.resolve(failed) });
+		const tools = new Map<string, { execute: ToolExecute }>();
+		const pi = { registerTool: vi.fn((tool) => tools.set(tool.name, tool)), getThinkingLevel: () => "low" };
+		const { rt } = runtime(userAgentsDir, bundledAgentsDir);
+		registerDispatchTool(pi as never, rt as never);
+		const current = { provider: "openai-codex", id: "gpt-5.4-mini", reasoning: true, thinkingLevelMap: {} };
+		const result = (await tools
+			.get("subagent_dispatch")
+			?.execute("call", { agent: "general-purpose", alias: "failed-start", task: "never" }, undefined, undefined, {
+				cwd: tmp,
+				model: current,
+				scopedModels: [],
+				modelRegistry: { getAvailable: () => [current] },
+			})) as { content: Array<{ text: string }>; details: Record<string, unknown> };
+		expect(result.details.status).toBe("failed");
+		expect(result.content[0]?.text).toContain("service unavailable");
+		expect(result.content[0]?.text).not.toContain("Started");
+	});
+
 	it("coerces explore in subagent_dispatch to a blocking result", async () => {
 		const final = stateOf();
 		mocks.dispatch.mockResolvedValue({ agentId: final.agentId, state: final, donePromise: Promise.resolve(final) });
@@ -135,6 +191,10 @@ describe("explore blocking coercion", () => {
 			.get("subagent_dispatch")
 			?.execute("call", { agent: "explore", alias: "repo-map", task: "map repo" }, undefined, undefined, {
 				cwd: tmp,
+				scopedModels: [],
+				modelRegistry: {
+					getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.4-mini", reasoning: true, thinkingLevelMap: {} }],
+				},
 			})) as { content: Array<{ text: string }>; details: { status: string } };
 
 		expect(result.content[0]?.text).toContain("EXPLORE_DONE");

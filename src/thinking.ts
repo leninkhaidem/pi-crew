@@ -29,23 +29,11 @@ const STANDARD_LEVELS: ReadonlySet<CapabilityThinkingLevel> = new Set(["off", "m
 const MAX_FALLBACK_LEVELS = ["xhigh", "high", "medium", "low", "minimal", "off"] as const;
 const hasOwn = (value: object, key: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value, key);
 
-/**
- * Evaluate a thinking level from structural model metadata.
- *
- * The xhigh compatibility callback is intentionally consulted only for a
- * reasoning model whose thinkingLevelMap property is absent.
- */
-export function supportsThinkingLevel(
-	model: ThinkingModelMetadata,
-	level: CapabilityThinkingLevel,
-	supportsLegacyXhigh: () => boolean,
-): boolean {
+/** Evaluate a thinking level solely from current structural model metadata. */
+export function supportsThinkingLevel(model: ThinkingModelMetadata, level: CapabilityThinkingLevel): boolean {
 	if (!model.reasoning) return level === "off";
 
-	if (!hasOwn(model, "thinkingLevelMap")) {
-		if (STANDARD_LEVELS.has(level)) return true;
-		return level === "xhigh" ? supportsLegacyXhigh() : false;
-	}
+	if (!hasOwn(model, "thinkingLevelMap")) return STANDARD_LEVELS.has(level);
 
 	const map = model.thinkingLevelMap;
 	if (!isRecord(map)) return STANDARD_LEVELS.has(level);
@@ -62,17 +50,16 @@ export function supportsThinkingLevel(
 export function resolveThinkingLevel(
 	model: ThinkingModelMetadata,
 	requested: CapabilityThinkingLevel,
-	supportsLegacyXhigh: () => boolean,
 ): ThinkingResolution {
 	if (!model.reasoning) {
 		return requested === "off" ? unchanged("off") : adjusted(requested, "off");
 	}
 
 	if (requested !== "max") return unchanged(requested);
-	if (supportsThinkingLevel(model, "max", supportsLegacyXhigh)) return unchanged("max");
+	if (supportsThinkingLevel(model, "max")) return unchanged("max");
 
 	for (const candidate of MAX_FALLBACK_LEVELS) {
-		if (supportsThinkingLevel(model, candidate, supportsLegacyXhigh)) return adjusted("max", candidate);
+		if (supportsThinkingLevel(model, candidate)) return adjusted("max", candidate);
 	}
 
 	return { ok: false, error: "no_supported_thinking_level", requested: "max" };

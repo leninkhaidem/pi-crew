@@ -6,7 +6,6 @@ import {
 	DEFAULT_TMUX_SETTINGS,
 	type PiCrewConfig,
 	THINKING_LEVELS,
-	defaultThinkingForAgent,
 	isInheritedAgentSlot,
 } from "../types.js";
 
@@ -68,10 +67,7 @@ export function parsePiCrewConfig(input: unknown): ParseResult {
 			agents[name] = { ...slot };
 			continue;
 		}
-		agents[name] = {
-			...slot,
-			thinking: slot.thinking ?? defaultThinkingForAgent(name),
-		};
+		agents[name] = { ...slot };
 	}
 	return {
 		ok: true,
