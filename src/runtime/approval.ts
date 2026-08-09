@@ -10,6 +10,7 @@ export interface ApprovalArgs {
 	agentSource: "user" | "project" | "bundled";
 	hasUI: boolean;
 	confirm: (title: string, message: string) => Promise<boolean>;
+	signal?: AbortSignal;
 }
 
 export interface ApprovalGate {
@@ -22,8 +23,10 @@ export function createApprovalGate(deps: ApprovalDeps): ApprovalGate {
 	const inflight = new Map<string, Promise<boolean>>();
 
 	const fn = async (args: ApprovalArgs): Promise<boolean> => {
+		if (args.signal?.aborted) return false;
 		if (args.agentSource !== "project") return true;
 		const enabled = await deps.isConfirmEnabled();
+		if (args.signal?.aborted) return false;
 		if (!enabled) return true;
 		if (approved.has(args.agentName)) return true;
 		if (!args.hasUI) return false;
@@ -40,6 +43,7 @@ export function createApprovalGate(deps: ApprovalDeps): ApprovalGate {
 					"files, run bash, etc. Only continue for repos you trust.",
 				].join("\n"),
 			);
+			if (args.signal?.aborted) return false;
 			if (ok) approved.add(args.agentName);
 			return ok;
 		})();

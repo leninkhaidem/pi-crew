@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { generateAgentId } from "../state/id.js";
 import { computePaths } from "../state/paths.js";
 import { readState, writeState } from "../state/store.js";
@@ -39,6 +39,7 @@ export interface LifecycleEnv {
 	branch?: string | null;
 	executionMode?: ExecutionMode;
 	ctx?: ExtensionContext;
+	signal?: AbortSignal;
 }
 
 export interface LifecycleHooks {
@@ -60,7 +61,7 @@ export interface DispatchHandle {
 	donePromise: Promise<SubagentState>;
 	abort?: (reason?: string) => Promise<void>;
 	steer?: (message: string) => Promise<void>;
-	resume?: (task: string, signal?: AbortSignal) => Promise<SubagentState>;
+	resume?: (task: string, signal?: AbortSignal, ctx?: ExtensionContext) => Promise<SubagentState>;
 	dispose?: () => Promise<void> | void;
 }
 
@@ -72,9 +73,15 @@ export async function dispatch(
 	env: LifecycleEnv,
 	hooks: LifecycleHooks = {},
 ): Promise<DispatchHandle> {
+	throwIfAborted(env.signal);
 	const actualExecutionMode = env.executionMode === "session" && env.ctx ? "session" : "subprocess";
 	if (actualExecutionMode === "session" && env.ctx) {
 		return dispatchSession(plan, env as LifecycleEnv & { ctx: ExtensionContext }, hooks);
+	}
+	if (parentAuthSource(env.ctx, plan.model.provider) === "runtime") {
+		throw new Error(
+			`Subprocess mode cannot use runtime-only authentication for ${plan.model.provider}/${plan.model.modelId}. Use session mode or configure non-runtime provider authentication.`,
+		);
 	}
 	const agentId = generateAgentId();
 	const sessionIdResolved = env.sessionId;
@@ -126,16 +133,28 @@ export async function dispatch(
 		paths,
 	};
 
-	await fs.mkdir(path.dirname(paths.state), { recursive: true });
-	await fs.writeFile(paths.prompt, systemPrompt, { mode: 0o600 });
-	// Pre-create empty output and stderr files so spawn fds open them with append mode.
-	await fs.writeFile(paths.output, "", { mode: 0o600 });
-	await fs.writeFile(paths.stderr, "", { mode: 0o600 });
-	await writeState(initialState);
-	hooks.onStateUpdate?.(initialState);
+	try {
+		throwIfAborted(env.signal);
+		await fs.mkdir(path.dirname(paths.state), { recursive: true });
+		throwIfAborted(env.signal);
+		await fs.writeFile(paths.prompt, systemPrompt, { mode: 0o600 });
+		throwIfAborted(env.signal);
+		// Pre-create empty output and stderr files so spawn fds open them with append mode.
+		await fs.writeFile(paths.output, "", { mode: 0o600 });
+		throwIfAborted(env.signal);
+		await fs.writeFile(paths.stderr, "", { mode: 0o600 });
+		throwIfAborted(env.signal);
+		await writeState(initialState);
+		throwIfAborted(env.signal);
+		hooks.onStateUpdate?.(initialState);
+	} catch (error) {
+		if (!env.signal?.aborted) throw error;
+		return finalizeCancelledStartup(initialState, hooks);
+	}
 
 	let spawned: SpawnedSubagent;
 	try {
+		throwIfAborted(env.signal);
 		spawned = spawnSubagent({
 			binary: env.binary,
 			model: `${plan.model.provider}/${plan.model.modelId}`,
@@ -167,8 +186,15 @@ export async function dispatch(
 	}
 
 	let state: SubagentState = { ...initialState, pid: spawned.pid, status: "running" };
-	await writeState(state);
-	hooks.onStateUpdate?.(state);
+	try {
+		throwIfAborted(env.signal);
+		await writeState(state);
+		throwIfAborted(env.signal);
+		hooks.onStateUpdate?.(state);
+	} catch (error) {
+		if (!env.signal?.aborted) throw error;
+		return cancelSpawnedStartup(spawned, state, hooks);
+	}
 
 	let pendingUpdate: SubagentState | null = null;
 	let writeTimer: NodeJS.Timeout | null = null;
@@ -459,6 +485,73 @@ function deleteOneTool(activeTools: Map<string, string>, toolName: string): void
 			return;
 		}
 	}
+}
+
+async function cancelSpawnedStartup(
+	spawned: SpawnedSubagent,
+	state: SubagentState,
+	hooks: LifecycleHooks,
+): Promise<DispatchHandle> {
+	const settled = new Promise<void>((resolve) => {
+		spawned.proc.once("close", () => resolve());
+		spawned.proc.once("error", () => resolve());
+	});
+	spawned.proc.stdout?.destroy();
+	spawned.proc.kill("SIGTERM");
+	await Promise.race([settled, delay(500)]);
+	if (spawned.proc.exitCode === null && spawned.proc.signalCode === null) {
+		spawned.proc.kill("SIGKILL");
+		await settled;
+	}
+	closeSpawnFds(spawned);
+	const aborted: SubagentState = {
+		...state,
+		status: "aborted",
+		exitCode: -1,
+		errorMessage: "Interrupted before sub-agent launch.",
+		finishedAt: Date.now(),
+		lastUpdate: Date.now(),
+		activity: "aborted",
+	};
+	await writeState(aborted);
+	hooks.onEnd?.(aborted);
+	return { agentId: aborted.agentId, state: aborted, donePromise: Promise.resolve(aborted) };
+}
+
+async function finalizeCancelledStartup(initialState: SubagentState, hooks: LifecycleHooks): Promise<DispatchHandle> {
+	await Promise.all(
+		[initialState.paths.prompt, initialState.paths.output, initialState.paths.stderr].map((file) =>
+			fs.rm(file, { force: true }).catch(() => undefined),
+		),
+	);
+	const aborted: SubagentState = {
+		...initialState,
+		status: "aborted",
+		exitCode: -1,
+		errorMessage: "Interrupted before sub-agent launch.",
+		finishedAt: Date.now(),
+		lastUpdate: Date.now(),
+		activity: "aborted",
+	};
+	await writeState(aborted);
+	hooks.onEnd?.(aborted);
+	return { agentId: aborted.agentId, state: aborted, donePromise: Promise.resolve(aborted) };
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parentAuthSource(ctx: ExtensionContext | undefined, provider: string): string | undefined {
+	try {
+		return ctx?.modelRegistry.getProviderAuthStatus?.(provider).source;
+	} catch {
+		return undefined;
+	}
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+	if (signal?.aborted) throw new Error("Interrupted before sub-agent launch.");
 }
 
 async function tryReadTail(p: string): Promise<string> {

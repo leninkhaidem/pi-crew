@@ -8,6 +8,13 @@ let tmp: string;
 let activeToolNames: string[];
 let createdResourceLoaderOptions: unknown;
 let createdSessionOptions: unknown;
+let createdServiceOptions: unknown;
+let childModelRuntime: {
+	getModel: ReturnType<typeof vi.fn>;
+	getAvailable: ReturnType<typeof vi.fn>;
+	setRuntimeApiKey: ReturnType<typeof vi.fn>;
+	removeRuntimeApiKey: ReturnType<typeof vi.fn>;
+};
 let setActiveToolsByNameMock: ReturnType<typeof vi.fn>;
 let fakeSession: {
 	messages: unknown[];
@@ -21,19 +28,21 @@ let fakeSession: {
 	dispose: ReturnType<typeof vi.fn>;
 };
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
-	DefaultResourceLoader: class {
-		constructor(options: unknown) {
-			createdResourceLoaderOptions = options;
-		}
-
-		async reload() {
-			return undefined;
-		}
-	},
+vi.mock("@earendil-works/pi-coding-agent", () => ({
 	SessionManager: { inMemory: vi.fn(() => ({})) },
-	SettingsManager: { create: vi.fn(() => ({})) },
-	createAgentSession: vi.fn(async (options: unknown) => {
+	createAgentSessionServices: vi.fn(async (options: { resourceLoaderOptions?: unknown }) => {
+		createdServiceOptions = options;
+		createdResourceLoaderOptions = options.resourceLoaderOptions;
+		return {
+			cwd: tmp,
+			agentDir: tmp,
+			diagnostics: [],
+			settingsManager: {},
+			resourceLoader: {},
+			modelRuntime: childModelRuntime,
+		};
+	}),
+	createAgentSessionFromServices: vi.fn(async (options: unknown) => {
 		createdSessionOptions = options;
 		return { session: fakeSession };
 	}),
@@ -75,6 +84,13 @@ describe("dispatchSession", () => {
 		subscriber = undefined;
 		createdResourceLoaderOptions = undefined;
 		createdSessionOptions = undefined;
+		createdServiceOptions = undefined;
+		childModelRuntime = {
+			getModel: vi.fn((provider: string, id: string) => ({ provider, id, reasoning: true })),
+			getAvailable: vi.fn(async (provider: string) => [{ provider, id: "model", reasoning: true }]),
+			setRuntimeApiKey: vi.fn(async () => undefined),
+			removeRuntimeApiKey: vi.fn(async () => undefined),
+		};
 		activeToolNames = ["read", "subagent_resume", "subagent_dispatch", "get_subagent_result", "steer_subagent", "bash"];
 		setActiveToolsByNameMock = vi.fn((toolNames: string[]) => {
 			activeToolNames = [...toolNames];
@@ -993,6 +1009,284 @@ describe("dispatchSession", () => {
 		expect((createdSessionOptions as { thinkingLevel?: string }).thinkingLevel).toBe("max");
 		expect(final.thinking).toBe("max");
 		expect(final.thinkingAdjustment).toBeUndefined();
+	});
+
+	it("rejects scope before creating services or recreating extension providers", async () => {
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const serviceCount = vi.mocked(sdk.createAgentSessionServices).mock.calls.length;
+		await expect(
+			dispatchSession(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "model", thinking: "low" },
+					options: { agent: "general-purpose", alias: "denied", task: "never" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "denied",
+					parentAgentId: null,
+					ctx: {
+						scopedModels: [{ model: { provider: "other", id: "model" } }],
+						modelRegistry: {},
+					} as never,
+				},
+			),
+		).rejects.toThrow("outside the current session model scope");
+		expect(vi.mocked(sdk.createAgentSessionServices).mock.calls).toHaveLength(serviceCount);
+	});
+
+	it("uses public services/runtime auth APIs and forwards the current cancellation signal", async () => {
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const controller = new AbortController();
+		const getApiKeyForProvider = vi.fn(async () => "RUNTIME_SENTINEL");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "runtime-auth", task: "say ok" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "runtime-auth",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: {
+						getProviderAuthStatus: vi.fn(() => ({ configured: true, source: "runtime" })),
+						getApiKeyForProvider,
+					},
+				} as never,
+			},
+		);
+		const final = await handle.donePromise;
+		expect((createdServiceOptions as { modelRuntimeSignal?: AbortSignal }).modelRuntimeSignal).toBe(controller.signal);
+		expect(getApiKeyForProvider).toHaveBeenCalledOnce();
+		expect(childModelRuntime.setRuntimeApiKey).toHaveBeenCalledWith("mock", "RUNTIME_SENTINEL", {
+			signal: controller.signal,
+		});
+		expect(JSON.stringify(final)).not.toContain("RUNTIME_SENTINEL");
+		expect(readFileSync(final.paths.output, "utf-8")).not.toContain("RUNTIME_SENTINEL");
+	});
+
+	it.each(["stored", "environment", "fallback", "models_json_key", "models_json_command", undefined])(
+		"never extracts or copies non-runtime auth source %s",
+		async (source) => {
+			const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+			const getApiKeyForProvider = vi.fn(async () => "DO_NOT_EXTRACT");
+			const handle = await dispatchSession(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "model", thinking: "low" },
+					options: { agent: "general-purpose", alias: `source-${source}`, task: "say ok" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: `source-${source}`,
+					parentAgentId: null,
+					ctx: {
+						scopedModels: [],
+						modelRegistry: {
+							getProviderAuthStatus: vi.fn(() => ({ configured: source !== undefined, source })),
+							getApiKeyForProvider,
+						},
+					} as never,
+				},
+			);
+			await handle.donePromise;
+			expect(getApiKeyForProvider).not.toHaveBeenCalled();
+			expect(childModelRuntime.setRuntimeApiKey).not.toHaveBeenCalled();
+		},
+	);
+
+	it.each(["stored", "environment", "fallback", "models_json_key", "models_json_command", undefined])(
+		"removes a prior runtime override before resume auth recheck for %s",
+		async (nextSource) => {
+			const ledger: string[] = [];
+			childModelRuntime.setRuntimeApiKey.mockImplementation(async () => {
+				ledger.push("set");
+			});
+			childModelRuntime.removeRuntimeApiKey.mockImplementation(async () => {
+				ledger.push("remove");
+			});
+			childModelRuntime.getAvailable.mockImplementation(async (provider: string) => {
+				ledger.push("available");
+				return [{ provider, id: "model", reasoning: true }];
+			});
+			let source: string | undefined = "runtime";
+			const getApiKeyForProvider = vi.fn(async () => "ROTATING_SENTINEL");
+			const ctx = {
+				scopedModels: [],
+				modelRegistry: {
+					getProviderAuthStatus: vi.fn(() => ({ configured: source !== undefined, source })),
+					getApiKeyForProvider,
+				},
+			} as never;
+			const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+			const handle = await dispatchSession(
+				{
+					agent: fakeAgent,
+					model: { provider: "mock", modelId: "model", thinking: "low" },
+					options: { agent: "general-purpose", alias: "transition", task: "first" },
+				},
+				{ agentDir: tmp, cwd: tmp, sessionId: `transition-${nextSource}`, parentAgentId: null, ctx },
+			);
+			await handle.donePromise;
+			ledger.length = 0;
+			source = nextSource;
+			await handle.resume?.("next", undefined, ctx);
+			expect(ledger.slice(0, 2)).toEqual(["remove", "available"]);
+			expect(getApiKeyForProvider).toHaveBeenCalledTimes(1);
+		},
+	);
+
+	it("revalidates current scope before every resume without affecting the completed active turn", async () => {
+		const selected = { provider: "mock", id: "model", reasoning: true };
+		const modelRegistry = { getProviderAuthStatus: vi.fn(() => ({ configured: true, source: "stored" })) };
+		const initialCtx = {
+			scopedModels: [{ model: selected }],
+			modelRegistry,
+		} as never;
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "scope-resume", task: "first" },
+			},
+			{ agentDir: tmp, cwd: tmp, sessionId: "scope-resume", parentAgentId: null, ctx: initialCtx },
+		);
+		expect((await handle.donePromise).status).toBe("done");
+		const narrowed = {
+			scopedModels: [{ model: { provider: "mock", id: "other", reasoning: true } }],
+			modelRegistry,
+		} as never;
+		await expect(handle.resume?.("denied", undefined, narrowed)).rejects.toThrow(
+			"outside the current session model scope",
+		);
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(1);
+	});
+
+	it("rotates runtime auth on every resume and blocks prompt when child auth becomes unavailable", async () => {
+		let key = "RUNTIME_ONE";
+		const getApiKeyForProvider = vi.fn(async () => key);
+		const ctx = {
+			scopedModels: [],
+			modelRegistry: {
+				getProviderAuthStatus: vi.fn(() => ({ configured: true, source: "runtime" })),
+				getApiKeyForProvider,
+			},
+		} as never;
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "rotate", task: "first" },
+			},
+			{ agentDir: tmp, cwd: tmp, sessionId: "rotate", parentAgentId: null, ctx },
+		);
+		await handle.donePromise;
+		key = "RUNTIME_TWO";
+		childModelRuntime.getAvailable.mockResolvedValueOnce([]);
+		await expect(handle.resume?.("blocked", undefined, ctx)).rejects.toThrow("authentication unavailable");
+		expect(childModelRuntime.setRuntimeApiKey).toHaveBeenLastCalledWith("mock", "RUNTIME_TWO", {
+			signal: undefined,
+		});
+		expect(getApiKeyForProvider).toHaveBeenCalledTimes(2);
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(1);
+	});
+
+	it("fences prompt startup after a signal-ignoring extension-bind barrier resolves post-abort", async () => {
+		const ledger: string[] = [];
+		let resolveBind!: () => void;
+		fakeSession.bindExtensions = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					ledger.push("bind:start");
+					resolveBind = resolve;
+				}),
+		);
+		fakeSession.dispose = vi.fn(() => ledger.push("cleanup:dispose"));
+		const controller = new AbortController();
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-bind", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-bind",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: { getProviderAuthStatus: () => ({ configured: true, source: "stored" }) },
+				} as never,
+			},
+		);
+		while (!ledger.includes("bind:start")) await new Promise((resolve) => setTimeout(resolve, 0));
+		controller.abort();
+		ledger.push("abort");
+		resolveBind();
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+		expect(ledger).toEqual(["bind:start", "abort", "cleanup:dispose"]);
+	});
+
+	it("fences post-service startup work when an ignoring deferred service resolves after abort", async () => {
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		let resolveServices!: (value: unknown) => void;
+		const deferredServices = new Promise((resolve) => {
+			resolveServices = resolve;
+		});
+		const serviceMock = vi.mocked(sdk.createAgentSessionServices);
+		const serviceCallCount = serviceMock.mock.calls.length;
+		serviceMock.mockImplementationOnce(async () => (await deferredServices) as never);
+		const createSessionCount = vi.mocked(sdk.createAgentSessionFromServices).mock.calls.length;
+		const controller = new AbortController();
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: { scopedModels: [], modelRegistry: {} } as never,
+			},
+		);
+		while (serviceMock.mock.calls.length === serviceCallCount) {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		}
+		controller.abort();
+		resolveServices({
+			cwd: tmp,
+			agentDir: tmp,
+			diagnostics: [],
+			settingsManager: {},
+			resourceLoader: {},
+			modelRuntime: childModelRuntime,
+		});
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(childModelRuntime.setRuntimeApiKey).not.toHaveBeenCalled();
+		expect(childModelRuntime.getAvailable).not.toHaveBeenCalled();
+		expect(vi.mocked(sdk.createAgentSessionFromServices).mock.calls).toHaveLength(createSessionCount);
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
 	});
 
 	it("persists session-mode child prompts without pi-crew delegation guidance", async () => {

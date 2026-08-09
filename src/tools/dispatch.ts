@@ -1,5 +1,5 @@
 // src/tools/dispatch.ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { discoverAgents } from "../agents/discovery.js";
 import { dispatch as runDispatch } from "../runtime/lifecycle.js";
@@ -37,6 +37,7 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const config = await rt.getConfig();
+			if (signal?.aborted) return interruptedResult();
 			const discovered = discoverAgents({
 				cwd: ctx.cwd,
 				scope: config.global.agentScope,
@@ -52,23 +53,16 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 				};
 			}
 			const forceBlocking = isExploreAgent(agent.name);
-			const slotResolution = resolveAgentSlot(agent.name, config, ctx, pi, {
-				provider: params.provider,
-				model: params.model,
-				thinking: params.thinking,
-			});
-			if (!slotResolution.ok) {
-				return {
-					content: [{ type: "text" as const, text: slotResolution.message }],
-					details: { error: slotResolution.error },
-				};
-			}
-			const slot = slotResolution.slot;
+			const overrides = { provider: params.provider, model: params.model, thinking: params.thinking };
+			let slotResolution = resolveAgentSlot(agent.name, config, ctx, pi, overrides);
+			if (!slotResolution.ok) return slotFailureResult(slotResolution);
 			const approved = await rt.ensureProjectAgentApproved({
 				agentName: agent.name,
 				agentSource: agent.source,
 				ctx,
+				signal,
 			});
+			if (signal?.aborted) return interruptedResult();
 			if (!approved) {
 				return {
 					content: [
@@ -80,6 +74,9 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 					details: { error: "project_agent_declined" },
 				};
 			}
+			slotResolution = resolveAgentSlot(agent.name, config, ctx, pi, overrides);
+			if (!slotResolution.ok) return slotFailureResult(slotResolution);
+			if (signal?.aborted) return interruptedResult();
 			if (!rt.concurrency.active.tryAcquire()) {
 				return {
 					content: [
@@ -96,7 +93,7 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 				handle = await runDispatch(
 					{
 						agent,
-						model: slot,
+						model: slotResolution.slot,
 						thinkingAdjustment: slotResolution.thinkingAdjustment,
 						options: {
 							agent: params.agent,
@@ -105,12 +102,17 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 							cwd: params.cwd,
 						},
 					},
-					rt.envFor(ctx),
+					{ ...rt.envFor(ctx), signal },
 					rt.lifecycleHooks(),
 				);
 			} catch (err) {
 				rt.concurrency.active.release();
 				throw err;
+			}
+			if (signal?.aborted) {
+				await handle.abort?.("Interrupted before sub-agent launch.");
+				rt.concurrency.active.release();
+				return interruptedResult();
 			}
 			rt.trackHandle(handle);
 			rt.trackParentAbort(signal, handle);
@@ -124,6 +126,7 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 				}
 			}
 			void handle.donePromise.finally(() => rt.concurrency.active.release());
+			if (handle.state.status === "failed" || handle.state.status === "aborted") return stateResult(handle.state);
 			const warning = formatThinkingAdjustment(handle.state.thinkingAdjustment);
 			return {
 				content: [
@@ -162,6 +165,26 @@ export function registerDispatchTool(pi: ExtensionAPI, rt: ExtensionRuntime): vo
 			return renderDispatchResult(result as Parameters<typeof renderDispatchResult>[0], options, theme);
 		},
 	});
+}
+
+function slotFailureResult(resolution: Extract<ReturnType<typeof resolveAgentSlot>, { ok: false }>) {
+	return {
+		content: [{ type: "text" as const, text: resolution.message }],
+		details: {
+			error: resolution.error,
+			...(resolution.provider ? { provider: resolution.provider } : {}),
+			...(resolution.model ? { model: resolution.model } : {}),
+			message: resolution.message,
+		},
+	};
+}
+
+function interruptedResult() {
+	const message = "Interrupted before sub-agent launch.";
+	return {
+		content: [{ type: "text" as const, text: message }],
+		details: { error: "aborted", message },
+	};
 }
 
 function isExploreAgent(agentName: string): boolean {

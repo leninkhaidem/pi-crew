@@ -1,7 +1,7 @@
 // src/commands/install-defaults.ts
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ExtensionRuntime } from "../runtime/types.js";
 
 const BUNDLED_NAMES = ["general-purpose", "explore"];

@@ -1,6 +1,6 @@
 // src/ui/overlay.ts
 import path from "node:path";
-import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { abortSubagentByStatePath } from "../runtime/kill.js";
 import { getRoot } from "../state/paths.js";
 import { listStates } from "../state/store.js";

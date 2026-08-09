@@ -25,6 +25,6 @@
 		}
 	},
 	"files": {
-		"ignore": ["node_modules", "dist", "coverage", ".pi"]
+		"ignore": ["node_modules", "dist", "coverage", ".pi", ".tasks"]
 	}
 }

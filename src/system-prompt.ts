@@ -10,7 +10,9 @@ export interface SystemPromptArgs {
 		name?: string;
 		reasoning?: boolean;
 		thinkingLevelMap?: unknown;
+		scopedThinkingLevel?: string;
 	}>;
+	modelScopeRestricted?: boolean;
 	currentModel?: { provider: string; id: string } | null;
 }
 
@@ -99,7 +101,7 @@ function formatModelLines(args: SystemPromptArgs): string[] {
 	const maxCapable = remaining.filter(isMaxCapable).sort(compareModels);
 	const others = remaining.filter((model) => !isMaxCapable(model)).sort(compareModels);
 	const models = [...(current ? [current] : []), ...maxCapable, ...others];
-	const lines = ["  - Available authenticated models:"];
+	const lines = [args.modelScopeRestricted ? "  - Available scoped models:" : "  - Available authenticated models:"];
 	if (models.length === 0) {
 		lines.push("    (none reported; use /model or /login in Pi to configure models)");
 		return lines;
@@ -110,7 +112,10 @@ function formatModelLines(args: SystemPromptArgs): string[] {
 		const currentLabel = isSameModel(model, args.currentModel) ? " current parent" : "";
 		const maxLabel = isMaxCapable(model) ? " max-capable" : "";
 		const reasoning = model.reasoning ? "reasoning" : "non-reasoning";
-		lines.push(`    - provider: ${model.provider}, model: ${model.id} — ${reasoning}${maxLabel}${currentLabel}`);
+		const scopedDefault = model.scopedThinkingLevel ? ` scoped thinking default: ${model.scopedThinkingLevel}` : "";
+		lines.push(
+			`    - provider: ${model.provider}, model: ${model.id} — ${reasoning}${maxLabel}${currentLabel}${scopedDefault}`,
+		);
 	}
 	if (models.length > maxModels) {
 		const omitted = models.slice(maxModels);
@@ -138,5 +143,5 @@ function isSameModel(
 }
 
 function isMaxCapable(model: { reasoning?: boolean; thinkingLevelMap?: unknown }): boolean {
-	return supportsThinkingLevel(model as { reasoning: boolean; thinkingLevelMap?: unknown }, "max", () => false);
+	return supportsThinkingLevel(model as { reasoning: boolean; thinkingLevelMap?: unknown }, "max");
 }

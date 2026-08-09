@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -80,6 +80,69 @@ describe("spawnSubagent", () => {
 		expect(recordedEnv[PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV]).toBe(PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE);
 		expect(recordedEnv.PI_SUBAGENT_PARENT_ID).toBe("parent");
 		expect(recordedEnv.PI_SUBAGENT_SESSION_ID).toBe("session");
+	});
+
+	it("rejects an already-aborted subprocess launch before files or spawn", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		await expect(
+			dispatch(
+				{
+					agent: {
+						name: "general-purpose",
+						description: "test",
+						tools: null,
+						systemPrompt: "be brief",
+						source: "bundled",
+						filePath: "/fake.md",
+					},
+					model: { provider: "mock", modelId: "model", thinking: "low" },
+					options: { agent: "general-purpose", alias: "aborted", task: "never" },
+				},
+				{
+					agentDir: tmp,
+					cwd: tmp,
+					sessionId: "aborted",
+					parentAgentId: null,
+					executionMode: "subprocess",
+					signal: controller.signal,
+				},
+			),
+		).rejects.toThrow("Interrupted before sub-agent launch");
+		expect(existsSync(path.join(tmp, "subagents"))).toBe(false);
+	});
+
+	it("rejects runtime-only parent auth before subprocess files or spawn", async () => {
+		const runDir = path.join(tmp, "runtime-only");
+		mkdirSync(runDir, { recursive: true });
+		await expect(
+			dispatch(
+				{
+					agent: {
+						name: "general-purpose",
+						description: "test",
+						tools: null,
+						systemPrompt: "be brief",
+						source: "bundled",
+						filePath: "/fake.md",
+					},
+					model: { provider: "mock", modelId: "model", thinking: "low" },
+					options: { agent: "general-purpose", alias: "runtime-only", task: "never" },
+				},
+				{
+					agentDir: tmp,
+					cwd: runDir,
+					sessionId: "runtime-only",
+					parentAgentId: null,
+					executionMode: "subprocess",
+					binary: "/definitely/not/spawned",
+					ctx: {
+						modelRegistry: { getProviderAuthStatus: () => ({ configured: true, source: "runtime" }) },
+					} as never,
+				},
+			),
+		).rejects.toThrow("cannot use runtime-only authentication");
+		expect(existsSync(path.join(tmp, "subagents"))).toBe(false);
 	});
 
 	it("persists subprocess child prompts without pi-crew delegation guidance", async () => {

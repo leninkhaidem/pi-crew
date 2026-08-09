@@ -194,7 +194,7 @@ describe("subagent_resume tool", () => {
 		expect(result.details.thinkingAdjustment).toEqual({ requested: "max", effective: "high" });
 		expect(result.content[0]?.text).toContain('requested thinking level "max"');
 		expect(consumeCompletion).toHaveBeenCalledWith("resume-001");
-		expect(resumeHandle).toHaveBeenCalledWith("resume-001", "follow-up task", undefined);
+		expect(resumeHandle).toHaveBeenCalledWith("resume-001", "follow-up task", undefined, undefined);
 		expect(detach.hasActiveScopes()).toBe(false);
 		expect(release).toHaveBeenCalledOnce();
 	});
@@ -210,9 +210,9 @@ describe("subagent_resume tool", () => {
 			prompt: "try again",
 		})) as { content: Array<{ text: string }>; details: Record<string, unknown> };
 
-		expect(result.details.error).toBe("resume_unavailable");
+		expect(result.details.error).toBe("resume_failed");
 		expect(result.details.agentId).toBe("broken-agent");
-		expect(result.content[0]?.text).toContain("Cannot resume");
+		expect(result.content[0]?.text).toContain("session expired");
 		expect(consumeCompletion).not.toHaveBeenCalled();
 		expect(detach.hasActiveScopes()).toBe(false);
 		expect(release).toHaveBeenCalledOnce();

@@ -2,355 +2,190 @@ import { describe, expect, it, vi } from "vitest";
 import { emptyConfig } from "../../src/config/schema.js";
 import { resolveAgentSlot } from "../../src/tools/slot.js";
 
-describe("resolveAgentSlot", () => {
-	it("general-purpose honors an explicit configured slot", () => {
-		const cfg = emptyConfig();
-		cfg.agents["general-purpose"] = { provider: "configured", modelId: "configured-model", thinking: "low" };
-		const ctx = { model: { provider: "parent", id: "parent-model" } } as never;
-		const pi = { getThinkingLevel: () => "xhigh" } as never;
+const pi = (thinking = "high") => ({ getThinkingLevel: () => thinking }) as never;
 
-		const result = resolveAgentSlot("general-purpose", cfg, ctx, pi);
-
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.inherited).toBe(false);
-			expect(result.slot).toEqual({ provider: "configured", modelId: "configured-model", thinking: "low" });
-		}
-	});
-
-	it("explicit inherited slots use parent model and thinking", () => {
-		const cfg = emptyConfig();
-		cfg.agents.explore = { mode: "inherit" };
-		const ctx = { model: { provider: "parent", id: "parent-model" } } as never;
-		const pi = { getThinkingLevel: () => "xhigh" } as never;
-
-		const result = resolveAgentSlot("explore", cfg, ctx, pi);
-
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.inherited).toBe(true);
-			expect(result.slot).toEqual({ provider: "parent", modelId: "parent-model", thinking: "xhigh" });
-		}
-	});
-
-	it("general-purpose inherits parent model and thinking when unset", () => {
-		const ctx = { model: { provider: "parent", id: "model-id" } } as never;
-		const pi = { getThinkingLevel: () => "xhigh" } as never;
-
-		const result = resolveAgentSlot("general-purpose", emptyConfig(), ctx, pi);
-
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.inherited).toBe(true);
-			expect(result.slot).toEqual({ provider: "parent", modelId: "model-id", thinking: "xhigh" });
-		}
-	});
-
-	it("returns no-parent-model for explicit inherit without a parent model", () => {
-		const cfg = emptyConfig();
-		cfg.agents.explore = { mode: "inherit" };
-
-		const result = resolveAgentSlot("explore", cfg, { model: undefined } as never, {} as never);
-
-		expect(result.ok).toBe(false);
-		if (!result.ok) expect(result.error).toBe("no_parent_model");
-	});
-
-	it("explore inherits parent model when unconfigured and parent model available", () => {
-		const ctx = { model: { provider: "parent", id: "parent-model" } } as never;
-		const pi = { getThinkingLevel: () => "high" } as never;
-
-		const result = resolveAgentSlot("explore", emptyConfig(), ctx, pi);
-
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.inherited).toBe(true);
-			expect(result.slot).toEqual({ provider: "parent", modelId: "parent-model", thinking: "high" });
-		}
-	});
-
-	it("returns no_parent_model for unconfigured agent without a parent model", () => {
-		const result = resolveAgentSlot("explore", emptyConfig(), { model: undefined } as never, {} as never);
-		expect(result.ok).toBe(false);
-		if (!result.ok) expect(result.error).toBe("no_parent_model");
-	});
-
-	it("per-call overrides take precedence over inherited slots", () => {
-		const cfg = emptyConfig();
-		cfg.agents.explore = { mode: "inherit" };
-		const ctx = { model: { provider: "parent", id: "parent-model" } } as never;
-		const pi = { getThinkingLevel: () => "high" } as never;
-
-		const result = resolveAgentSlot("explore", cfg, ctx, pi, {
-			provider: "override-provider",
-			model: "override-model",
-			thinking: "minimal",
-		});
-
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.slot).toEqual({
-				provider: "override-provider",
-				modelId: "override-model",
-				thinking: "minimal",
-			});
-		}
-	});
-
-	it("uses configured provider when only model override is provided", () => {
-		const cfg = emptyConfig();
-		cfg.agents.explore = { provider: "configured-provider", modelId: "configured-model", thinking: "low" };
-
-		const result = resolveAgentSlot("explore", cfg, { model: undefined } as never, {} as never, {
-			model: "gpt-5.4-mini",
-		});
-
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.slot).toEqual({ provider: "configured-provider", modelId: "gpt-5.4-mini", thinking: "low" });
-		}
-	});
-
-	it("per-call overrides take precedence over concrete slots", () => {
-		const cfg = emptyConfig();
-		cfg.agents.explore = { provider: "configured-provider", modelId: "configured-model", thinking: "low" };
-
-		const result = resolveAgentSlot("explore", cfg, { model: undefined } as never, {} as never, {
-			provider: "override-provider",
-			model: "override-model",
-			thinking: "high",
-		});
-
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.slot).toEqual({
-				provider: "override-provider",
-				modelId: "override-model",
-				thinking: "high",
-			});
-		}
-	});
-
-	it("uses parent provider when only model override is provided and the agent has no configured slot", () => {
-		const result = resolveAgentSlot(
-			"explore",
-			emptyConfig(),
-			{ model: { provider: "parent-provider", id: "parent-model" } } as never,
-			{} as never,
-			{ model: "gpt-5.4-mini" },
-		);
-
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.slot).toEqual({ provider: "parent-provider", modelId: "gpt-5.4-mini", thinking: undefined });
-		}
-	});
-
-	it("allows fully specified model/provider overrides without parent or config", () => {
-		const result = resolveAgentSlot("explore", emptyConfig(), { model: undefined } as never, {} as never, {
-			provider: "openai-codex",
-			model: "gpt-5.4-mini",
-			thinking: "minimal",
-		});
-
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.slot).toEqual({ provider: "openai-codex", modelId: "gpt-5.4-mini", thinking: "minimal" });
-		}
-	});
-
-	it("requires provider when model override cannot infer one", () => {
-		const result = resolveAgentSlot("explore", emptyConfig(), { model: undefined } as never, {} as never, {
-			model: "gpt-5.4-mini",
-		});
-
-		expect(result.ok).toBe(false);
-		if (!result.ok) expect(result.error).toBe("provider_required");
-	});
-
-	it("rejects unavailable provider/model overrides when the registry can validate them", () => {
-		const result = resolveAgentSlot(
-			"explore",
-			emptyConfig(),
-			{ model: undefined, modelRegistry: { find: () => undefined } } as never,
-			{} as never,
-			{ provider: "openai-codex", model: "missing-model" },
-		);
-
-		expect(result.ok).toBe(false);
-		if (!result.ok) expect(result.error).toBe("model_not_found");
-	});
-
-	it.each([
-		["configured", false, {}],
-		["implicit inheritance", true, {}],
-		["explicit inheritance", true, {}],
-		["thinking-only override", false, { thinking: "max" }],
-		["model-only override", false, { model: "selected" }],
-		["full override", false, { provider: "example", model: "selected", thinking: "max" }],
-	] as const)("resolves supported max after %s precedence", (_name, inherited, overrides) => {
-		const cfg = emptyConfig();
-		if (_name === "configured" || _name.includes("override")) {
-			cfg.agents.explore = { provider: "example", modelId: "selected", thinking: "max" };
-		} else if (_name === "explicit inheritance") cfg.agents.explore = { mode: "inherit" };
-		const model = registryModel({ thinkingLevelMap: { max: "provider-max" } });
-		const find = vi.fn(() => model);
-		const result = resolveAgentSlot(
-			"explore",
-			cfg,
-			{ model: { provider: "example", id: "selected" }, modelRegistry: { find } } as never,
-			{ getThinkingLevel: () => "max" } as never,
-			overrides as never,
-		);
-		expect(result).toMatchObject({
-			ok: true,
-			inherited,
-			slot: { provider: "example", modelId: "selected", thinking: "max" },
-		});
-		if (result.ok) expect(result.thinkingAdjustment).toBeUndefined();
-		expect(find).toHaveBeenCalledWith("example", "selected");
-	});
-
-	it.each([
-		["configured", false, {}],
-		["implicit inheritance", true, {}],
-		["explicit inheritance", true, {}],
-		["thinking-only override", false, { thinking: "max" }],
-		["model-only override", false, { model: "missing" }],
-		["full override", false, { provider: "example", model: "missing", thinking: "max" }],
-	] as const)("fails missing registry lookup before dispatch for max via %s", (name, _inherited, overrides) => {
-		const cfg = emptyConfig();
-		if (name === "configured" || name.includes("override")) {
-			cfg.agents.explore = { provider: "example", modelId: "missing", thinking: "max" };
-		} else if (name === "explicit inheritance") cfg.agents.explore = { mode: "inherit" };
-		const result = resolveAgentSlot(
-			"explore",
-			cfg,
-			{ model: { provider: "example", id: "missing" }, modelRegistry: { find: () => undefined } } as never,
-			{ getThinkingLevel: () => "max" } as never,
-			overrides as never,
-		);
-		expect(result).toMatchObject({ ok: false, error: "model_not_found" });
-	});
-
-	it("uses a found absent-map model distinctly from a missing max model", () => {
-		const cfg = emptyConfig();
-		cfg.agents.explore = { provider: "example", modelId: "legacy", thinking: "max" };
-		const found = resolveAgentSlot(
-			"explore",
-			cfg,
-			{ modelRegistry: { find: () => registryModel({ id: "legacy" }) } } as never,
-			{} as never,
-		);
-		expect(found).toMatchObject({
-			ok: true,
-			slot: { thinking: expect.stringMatching(/^(xhigh|high)$/) },
-			thinkingAdjustment: { requested: "max" },
-		});
-
-		const missing = resolveAgentSlot(
-			"explore",
-			cfg,
-			{ modelRegistry: { find: () => undefined } } as never,
-			{} as never,
-		);
-		expect(missing).toMatchObject({ ok: false, error: "model_not_found" });
-		if (!missing.ok) expect(missing.message).toContain("example/legacy");
-	});
-
-	it("applies representative max holes, non-reasoning coercion, and explicit no-lower failure", () => {
-		const cfg = emptyConfig();
-		cfg.agents.explore = { provider: "example", modelId: "selected", thinking: "max" };
-		const fallback = resolveAgentSlot(
-			"explore",
-			cfg,
-			{
-				modelRegistry: {
-					find: () => registryModel({ thinkingLevelMap: { xhigh: null, high: null, medium: "m" } }),
-				},
-			} as never,
-			{} as never,
-		);
-		expect(fallback).toMatchObject({
-			ok: true,
-			slot: { thinking: "medium" },
-			thinkingAdjustment: { requested: "max", effective: "medium" },
-		});
-
-		cfg.agents.explore = { provider: "example", modelId: "selected", thinking: "high" };
-		const nonReasoning = resolveAgentSlot(
-			"explore",
-			cfg,
-			{ modelRegistry: { find: () => registryModel({ reasoning: false }) } } as never,
-			{} as never,
-		);
-		expect(nonReasoning).toMatchObject({
-			ok: true,
-			slot: { thinking: "off" },
-			thinkingAdjustment: { requested: "high", effective: "off" },
-		});
-
-		cfg.agents.explore = { provider: "example", modelId: "selected", thinking: "max" };
-		const unsupported = resolveAgentSlot(
-			"explore",
-			cfg,
-			{
-				modelRegistry: {
-					find: () =>
-						registryModel({
-							thinkingLevelMap: {
-								off: null,
-								minimal: null,
-								low: null,
-								medium: null,
-								high: null,
-								xhigh: null,
-								max: null,
-							},
-						}),
-				},
-			} as never,
-			{} as never,
-		);
-		expect(unsupported).toMatchObject({ ok: false, error: "no_supported_thinking_level" });
-	});
-
-	it("leaves lower-level baseline behavior unchanged when registry lookup is unavailable or metadata has a hole", () => {
-		const cfg = emptyConfig();
-		cfg.agents.explore = { provider: "example", modelId: "selected", thinking: "high" };
-		const missing = resolveAgentSlot(
-			"explore",
-			cfg,
-			{ modelRegistry: { find: () => undefined } } as never,
-			{} as never,
-		);
-		expect(missing).toMatchObject({ ok: true, slot: { thinking: "high" } });
-
-		const hole = resolveAgentSlot(
-			"explore",
-			cfg,
-			{ modelRegistry: { find: () => registryModel({ thinkingLevelMap: { high: null } }) } } as never,
-			{} as never,
-		);
-		expect(hole).toMatchObject({ ok: true, slot: { thinking: "high" } });
-	});
-});
-
-function registryModel(overrides: { id?: string; reasoning?: boolean; thinkingLevelMap?: unknown } = {}) {
-	const model: Record<string, unknown> = {
-		provider: "example",
-		id: overrides.id ?? "selected",
-		name: "Selected",
+function model(provider: string, id: string, overrides: Record<string, unknown> = {}) {
+	return {
+		provider,
+		id,
+		name: id,
 		api: "example",
 		baseUrl: "https://invalid.example",
-		reasoning: overrides.reasoning ?? true,
+		reasoning: true,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 1,
 		maxTokens: 1,
+		...overrides,
 	};
-	if (Object.prototype.hasOwnProperty.call(overrides, "thinkingLevelMap")) {
-		model.thinkingLevelMap = overrides.thinkingLevelMap;
-	}
-	return model;
 }
+
+function context(
+	available: Array<ReturnType<typeof model>>,
+	current?: ReturnType<typeof model>,
+	scopedModels: unknown = [],
+) {
+	return {
+		model: current,
+		scopedModels,
+		modelRegistry: {
+			getAvailable: vi.fn(() => available),
+			find: vi.fn((provider: string, id: string) =>
+				available.find((candidate) => candidate.provider === provider && candidate.id === id),
+			),
+		},
+	} as never;
+}
+
+describe("resolveAgentSlot", () => {
+	it("resolves configured and inherited slots against current availability", () => {
+		const configured = model("configured", "chosen");
+		const parent = model("parent", "current");
+		const cfg = emptyConfig();
+		cfg.agents.explore = { provider: configured.provider, modelId: configured.id, thinking: "low" };
+		expect(resolveAgentSlot("explore", cfg, context([configured, parent], parent), pi())).toMatchObject({
+			ok: true,
+			inherited: false,
+			slot: { provider: "configured", modelId: "chosen", thinking: "low" },
+		});
+
+		cfg.agents.explore = { mode: "inherit" };
+		expect(resolveAgentSlot("explore", cfg, context([parent], parent), pi("xhigh"))).toMatchObject({
+			ok: true,
+			inherited: true,
+			slot: { provider: "parent", modelId: "current", thinking: "xhigh" },
+		});
+	});
+
+	it("reports no parent model and incomplete override identities explicitly", () => {
+		expect(resolveAgentSlot("explore", emptyConfig(), context([]), pi())).toMatchObject({
+			ok: false,
+			error: "no_parent_model",
+		});
+		expect(resolveAgentSlot("explore", emptyConfig(), context([]), pi(), { model: "id" })).toMatchObject({
+			ok: false,
+			error: "provider_required",
+		});
+		expect(resolveAgentSlot("explore", emptyConfig(), context([]), pi(), { provider: "p" })).toMatchObject({
+			ok: false,
+			error: "model_required",
+		});
+	});
+
+	it("uses explicit overrides over a concrete slot without weakening availability", () => {
+		const selected = model("override", "selected");
+		const cfg = emptyConfig();
+		cfg.agents.explore = { provider: "configured", modelId: "old", thinking: "low" };
+		expect(
+			resolveAgentSlot("explore", cfg, context([selected]), pi(), {
+				provider: "override",
+				model: "selected",
+				thinking: "minimal",
+			}),
+		).toMatchObject({
+			ok: true,
+			slot: { provider: "override", modelId: "selected", thinking: "minimal" },
+		});
+		expect(
+			resolveAgentSlot("explore", cfg, context([]), pi(), { provider: "override", model: "selected" }),
+		).toMatchObject({ ok: false, error: "model_not_found" });
+	});
+
+	it("fails stale configured, inherited, and override models outside a non-empty scope", () => {
+		const parent = model("p", "same");
+		const scopedCollision = model("other", "same");
+		const scoped = [{ model: scopedCollision, thinkingLevel: "medium" }];
+		const cfg = emptyConfig();
+		cfg.agents.explore = { provider: "p", modelId: "same", thinking: "low" };
+		for (const [config, overrides] of [
+			[cfg, {}],
+			[emptyConfig(), {}],
+			[emptyConfig(), { provider: "p", model: "same" }],
+		] as const) {
+			const result = resolveAgentSlot(
+				"explore",
+				config,
+				context([parent, scopedCollision], parent, scoped),
+				pi(),
+				overrides,
+			);
+			expect(result).toEqual({
+				ok: false,
+				error: "model_out_of_scope",
+				provider: "p",
+				model: "same",
+				message:
+					"Model p/same is outside the current session model scope. Choose an available scoped model or update the parent session scope.",
+			});
+		}
+	});
+
+	it("compares provider/model pairs case-sensitively and fails malformed non-empty scope closed", () => {
+		const selected = model("Provider", "Model");
+		for (const scopedModels of [
+			[{ model: model("provider", "Model") }],
+			[{ model: model("Provider", "model") }],
+			[{ broken: true }],
+			{ malformed: true },
+		]) {
+			expect(
+				resolveAgentSlot("explore", emptyConfig(), context([selected], undefined, scopedModels), pi(), {
+					provider: "Provider",
+					model: "Model",
+				}),
+			).toMatchObject({ ok: false, error: "model_out_of_scope" });
+		}
+	});
+
+	it("applies thinking precedence: call, present slot, scoped pin, then inherited/default", () => {
+		const selected = model("p", "m", { thinkingLevelMap: { max: "max" } });
+		const scoped = [{ model: selected, thinkingLevel: "medium" }];
+		const cfg = emptyConfig();
+		cfg.agents.explore = { provider: "p", modelId: "m" };
+		const ctx = context([selected], selected, scoped);
+		expect(resolveAgentSlot("explore", cfg, ctx, pi("high"))).toMatchObject({ slot: { thinking: "medium" } });
+		cfg.agents.explore = { provider: "p", modelId: "m", thinking: "low" };
+		expect(resolveAgentSlot("explore", cfg, ctx, pi("high"))).toMatchObject({ slot: { thinking: "low" } });
+		expect(resolveAgentSlot("explore", cfg, ctx, pi("high"), { thinking: "max" })).toMatchObject({
+			slot: { thinking: "max" },
+		});
+	});
+
+	it("uses the selected model pin for a model-only override", () => {
+		const parent = model("p", "parent");
+		const selected = model("p", "selected");
+		const scoped = [
+			{ model: parent, thinkingLevel: "low" },
+			{ model: selected, thinkingLevel: "xhigh" },
+		];
+		expect(
+			resolveAgentSlot("explore", emptyConfig(), context([parent, selected], parent, scoped), pi("medium"), {
+				model: "selected",
+			}),
+		).toMatchObject({ slot: { provider: "p", modelId: "selected", thinking: "xhigh" } });
+	});
+
+	it("clamps structurally unsupported max and non-reasoning requests", () => {
+		const fallback = model("p", "fallback", {
+			thinkingLevelMap: { max: null, xhigh: null, high: null, medium: "medium" },
+		});
+		expect(
+			resolveAgentSlot("explore", emptyConfig(), context([fallback]), pi(), {
+				provider: "p",
+				model: "fallback",
+				thinking: "max",
+			}),
+		).toMatchObject({
+			slot: { thinking: "medium" },
+			thinkingAdjustment: { requested: "max", effective: "medium" },
+		});
+		const plain = model("p", "plain", { reasoning: false });
+		expect(
+			resolveAgentSlot("explore", emptyConfig(), context([plain]), pi(), {
+				provider: "p",
+				model: "plain",
+				thinking: "high",
+			}),
+		).toMatchObject({ slot: { thinking: "off" } });
+	});
+});

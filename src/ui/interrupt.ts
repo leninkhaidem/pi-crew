@@ -1,5 +1,5 @@
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Key, matchesKey } from "@mariozechner/pi-tui";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey } from "@earendil-works/pi-tui";
 import type { DetachController } from "../runtime/detach.js";
 import type { SubagentState } from "../types.js";
 import { isSubagentsOverlayActive } from "./overlay.js";
@@ -134,7 +134,8 @@ async function abortFresh(
 	}
 	const targetBatchId = batchId === undefined ? args.getBatchId() : batchId;
 	const batchTargets = strictCurrentBatchActiveStates(states, targetBatchId);
-	const targets = batchTargets.length > 0 ? batchTargets : warnedScope === "current-session" ? activeStates(states) : [];
+	const targets =
+		batchTargets.length > 0 ? batchTargets : warnedScope === "current-session" ? activeStates(states) : [];
 	if (targets.length > 0) await args.abortStates(targets, reason);
 }
 

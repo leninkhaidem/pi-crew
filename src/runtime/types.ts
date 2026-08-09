@@ -1,5 +1,5 @@
 // src/runtime/types.ts
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { PiCrewConfig, SubagentState } from "../types.js";
 import type { ActiveCounter, PoolLimiter } from "./concurrency.js";
 import type { DetachController } from "./detach.js";
@@ -15,7 +15,12 @@ export interface ExtensionRuntime {
 	trackParentAbort(signal: AbortSignal | undefined, handle: DispatchHandle): void;
 	abortActiveHandle(agentId: string, reason?: string): Promise<boolean>;
 	steerHandle(agentId: string, message: string): Promise<"ok" | "not_found" | "unsupported">;
-	resumeHandle(agentId: string, task: string, signal?: AbortSignal): Promise<SubagentState> | null;
+	resumeHandle(
+		agentId: string,
+		task: string,
+		signal: AbortSignal | undefined,
+		ctx: ExtensionContext,
+	): Promise<SubagentState> | null;
 	consumeCompletion(agentId: string): void;
 	completionHandled(agentId: string): boolean;
 	getCurrentBatchId(ctx: ExtensionContext): string | null;
@@ -36,5 +41,6 @@ export interface ExtensionRuntime {
 		agentName: string;
 		agentSource: "user" | "project" | "bundled";
 		ctx: ExtensionContext;
+		signal?: AbortSignal;
 	}): Promise<boolean>;
 }

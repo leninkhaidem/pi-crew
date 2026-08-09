@@ -1,5 +1,5 @@
 // src/commands/tree.ts
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { abortSubagentByStatePath } from "../runtime/kill.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import type { SubagentState } from "../types.js";

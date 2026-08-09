@@ -1,11 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
 import type { ThinkingLevel } from "../types.js";
-import {
-	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV,
-	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE,
-} from "./tool-suppression.js";
 import { resolvePiInvocation } from "./invocation.js";
+import { PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV, PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE } from "./tool-suppression.js";
 
 export interface SpawnArgs {
 	binary?: string;

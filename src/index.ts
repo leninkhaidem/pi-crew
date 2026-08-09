@@ -1,13 +1,14 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { getAgentDir } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { discoverAgents } from "./agents/discovery.js";
 import { registerAgentsCommand } from "./commands/agents.js";
 import { registerConfigCommand } from "./commands/config.js";
 import { registerInstallDefaultsCommand } from "./commands/install-defaults.js";
 import { registerTreeCommand } from "./commands/tree.js";
 import { getGlobalConfigPath, loadConfig } from "./config/store.js";
+import { modelScopeSnapshot } from "./model-scope.js";
 import { createCompletionDispatcher } from "./notify/batcher.js";
 import { createEmitter } from "./notify/events.js";
 import { registerNotificationRenderer } from "./notify/renderer.js";
@@ -171,12 +172,12 @@ export default function (pi: ExtensionAPI) {
 			await handle.steer(message);
 			return "ok";
 		},
-		resumeHandle: (agentId, task, signal) => {
+		resumeHandle: (agentId, task, signal, ctx) => {
 			const handle = handles.get(agentId);
 			if (!handle?.resume) return null;
 			let resumePromise: Promise<SubagentState>;
 			try {
-				resumePromise = handle.resume(task, signal);
+				resumePromise = handle.resume(task, signal, ctx);
 			} catch {
 				return null;
 			}
@@ -197,6 +198,7 @@ export default function (pi: ExtensionAPI) {
 				agentSource: args.agentSource,
 				hasUI: args.ctx.hasUI,
 				confirm: (title, message) => args.ctx.ui.confirm(title, message),
+				signal: args.signal,
 			}),
 		concurrency: {
 			pool,
@@ -320,7 +322,10 @@ export default function (pi: ExtensionAPI) {
 			bundledDir: BUNDLED_AGENTS_DIR,
 		});
 		const configuredSlots = new Set(discovered.agents.map((a) => a.name));
-		const availableModels = safeAvailableModels(ctx);
+		const scope = modelScopeSnapshot(ctx);
+		const promptModels = scope.restricted
+			? scope.entries.map((entry) => projectPromptModel(entry.model, entry.thinkingLevel))
+			: safeAvailableModels(ctx).map((model) => projectPromptModel(model));
 		const block = buildSystemPromptBlock({
 			agents: discovered.agents.map((a) => ({
 				name: a.name,
@@ -329,7 +334,8 @@ export default function (pi: ExtensionAPI) {
 			})),
 			configuredSlots,
 			stateDirRoot: path.join(agentDir, "subagents"),
-			models: availableModels.map(projectPromptModel),
+			models: promptModels,
+			modelScopeRestricted: scope.restricted,
 			currentModel: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : null,
 		});
 		return {
@@ -346,7 +352,7 @@ function safeAvailableModels(ctx: ExtensionContext) {
 	}
 }
 
-function projectPromptModel(model: ReturnType<typeof safeAvailableModels>[number]) {
+function projectPromptModel(model: ReturnType<typeof safeAvailableModels>[number], scopedThinkingLevel?: string) {
 	const metadata = thinkingLevelMapOf(model);
 	return {
 		provider: model.provider,
@@ -354,6 +360,7 @@ function projectPromptModel(model: ReturnType<typeof safeAvailableModels>[number
 		name: model.name,
 		reasoning: model.reasoning,
 		...(metadata.present ? { thinkingLevelMap: metadata.value } : {}),
+		...(scopedThinkingLevel ? { scopedThinkingLevel } : {}),
 	};
 }
 

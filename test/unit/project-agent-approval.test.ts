@@ -50,6 +50,35 @@ describe("project-agent approval gate", () => {
 		expect(prompts).toBe(2);
 	});
 
+	it("fences approval side effects after a signal-ignoring config barrier resolves post-abort", async () => {
+		const ledger: string[] = [];
+		let resolveEnabled!: (value: boolean) => void;
+		const gate = createApprovalGate({
+			isConfirmEnabled: () =>
+				new Promise<boolean>((resolve) => {
+					ledger.push("config:start");
+					resolveEnabled = resolve;
+				}),
+		});
+		const controller = new AbortController();
+		const pending = gate({
+			agentName: "x",
+			agentSource: "project",
+			hasUI: true,
+			signal: controller.signal,
+			confirm: async () => {
+				ledger.push("confirm");
+				return true;
+			},
+		});
+		await Promise.resolve();
+		controller.abort();
+		ledger.push("abort");
+		resolveEnabled(true);
+		expect(await pending).toBe(false);
+		expect(ledger).toEqual(["config:start", "abort"]);
+	});
+
 	it("dedupes concurrent prompts for the same agent", async () => {
 		let prompts = 0;
 		let resolveFirst: ((v: boolean) => void) | null = null;

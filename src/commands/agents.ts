@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { discoverAgents } from "../agents/discovery.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import type { AgentConfig } from "../types.js";

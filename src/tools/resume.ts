@@ -1,5 +1,5 @@
 // src/tools/resume.ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import { formatParentSummary } from "../summary.js";
@@ -23,18 +23,22 @@ export function registerResumeTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 			prompt: Type.String({ description: "New task or follow-up instruction." }),
 			...SlotOverrideProperties,
 		}),
-		async execute(_id, params, signal) {
+		async execute(_id, params, signal, _onUpdate, ctx) {
 			if (!rt.concurrency.active.tryAcquire()) {
 				return activeLimitResult(rt.concurrency.active.current());
 			}
 			const scope = rt.detach.createScope();
 			let releaseOnSettlement = false;
 			try {
-				const acceptedResume = rt.resumeHandle(params.agent_id, params.prompt, signal);
+				if (signal?.aborted) return abortedResult();
+				const acceptedResume = rt.resumeHandle(params.agent_id, params.prompt, signal, ctx);
 				if (!acceptedResume) return notFoundResult(params.agent_id);
-				const resumePromise = acceptedResume.catch(() => null);
+				const resumePromise = acceptedResume.then(
+					(state) => ({ state, error: null as Error | null }),
+					(error) => ({ state: null, error: error instanceof Error ? error : new Error(String(error)) }),
+				);
 				const outcome = await Promise.race([
-					resumePromise.then((state) => ({ kind: "settled" as const, state })),
+					resumePromise.then((result) => ({ kind: "settled" as const, ...result })),
 					scope.detached.then(() => ({ kind: "backgrounded" as const })),
 				]);
 				if (outcome.kind === "backgrounded") {
@@ -45,6 +49,7 @@ export function registerResumeTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 					);
 					return backgroundedResult(params.agent_id);
 				}
+				if (outcome.error) return resumeFailureResult(params.agent_id, outcome.error.message);
 				if (!outcome.state) return notFoundResult(params.agent_id);
 				rt.consumeCompletion(params.agent_id);
 				return successResult(outcome.state);
@@ -57,6 +62,17 @@ export function registerResumeTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 			return renderDispatchResult(result as Parameters<typeof renderDispatchResult>[0], options, theme);
 		},
 	});
+}
+
+function abortedResult() {
+	return resumeFailureResult("", "Interrupted before sub-agent resume.", "aborted");
+}
+
+function resumeFailureResult(agentId: string, message: string, error = "resume_failed") {
+	return {
+		content: [{ type: "text" as const, text: message }],
+		details: { error, ...(agentId ? { agentId } : {}), message } as Record<string, unknown>,
+	};
 }
 
 function activeLimitResult(current: number) {

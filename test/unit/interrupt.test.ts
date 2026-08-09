@@ -4,8 +4,8 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { listStates, writeState } from "../../src/state/store.js";
 import type { SubagentState } from "../../src/types.js";
-import { openSubagentsOverlay } from "../../src/ui/overlay.js";
 import { mountInterruptHandler } from "../../src/ui/interrupt.js";
+import { openSubagentsOverlay } from "../../src/ui/overlay.js";
 import type { SubagentsPanel } from "../../src/ui/subagents-panel.js";
 
 type TerminalHandler = (data: string) => { consume?: boolean } | undefined;
@@ -425,10 +425,7 @@ describe("mountInterruptHandler", () => {
 			const tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-interrupt-empty-"));
 			try {
 				if (setupTerminalState) {
-					await writeSessionState(
-						tmp,
-						stateOf({ agentId: "done", status: "done", finishedAt: 2, exitCode: 0 }),
-					);
+					await writeSessionState(tmp, stateOf({ agentId: "done", status: "done", finishedAt: 2, exitCode: 0 }));
 				}
 				let handler: TerminalHandler | undefined;
 				const notify = vi.fn();
@@ -539,10 +536,7 @@ describe("mountInterruptHandler", () => {
 			await Promise.resolve();
 			await Promise.resolve();
 			expect(loadStates).toHaveBeenCalledTimes(3);
-			expect(abortStates, testCase.name).toHaveBeenCalledWith(
-				testCase.expectedAbortTargets,
-				"killed by double Escape",
-			);
+			expect(abortStates, testCase.name).toHaveBeenCalledWith(testCase.expectedAbortTargets, "killed by double Escape");
 			controller.stop();
 		}
 	});
@@ -688,10 +682,7 @@ describe("mountInterruptHandler", () => {
 
 		expect(handler?.("\x02")).toEqual({ consume: true });
 		expect(detachAll).toHaveBeenCalledOnce();
-		expect(notify).toHaveBeenCalledWith(
-			"Sub-agents backgrounded — results will arrive via notification.",
-			"info",
-		);
+		expect(notify).toHaveBeenCalledWith("Sub-agents backgrounded — results will arrive via notification.", "info");
 	});
 
 	it("clears an ambient Escape warning when Escape closes the subagents overlay", async () => {
