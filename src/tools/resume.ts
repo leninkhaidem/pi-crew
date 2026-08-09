@@ -1,6 +1,7 @@
 // src/tools/resume.ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { isModelInScope, modelOutOfScopeMessage, modelScopeSnapshot } from "../model-scope.js";
 import type { ExtensionRuntime } from "../runtime/types.js";
 import { formatParentSummary } from "../summary.js";
 import type { SubagentState } from "../types.js";
@@ -31,6 +32,13 @@ export function registerResumeTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 			let releaseOnSettlement = false;
 			try {
 				if (signal?.aborted) return abortedResult();
+				const identity = rt.getResumeIdentity(params.agent_id);
+				if (identity) {
+					const currentScope = modelScopeSnapshot(ctx);
+					if (!isModelInScope(currentScope, identity.provider, identity.model)) {
+						return scopeFailureResult(params.agent_id, identity.provider, identity.model);
+					}
+				}
 				const acceptedResume = rt.resumeHandle(params.agent_id, params.prompt, signal, ctx);
 				if (!acceptedResume) return notFoundResult(params.agent_id);
 				const resumePromise = acceptedResume.then(
@@ -66,6 +74,14 @@ export function registerResumeTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 
 function abortedResult() {
 	return resumeFailureResult("", "Interrupted before sub-agent resume.", "aborted");
+}
+
+function scopeFailureResult(agentId: string, provider: string, model: string) {
+	const message = modelOutOfScopeMessage(provider, model);
+	return {
+		content: [{ type: "text" as const, text: message }],
+		details: { error: "model_out_of_scope", agentId, provider, model, message } as Record<string, unknown>,
+	};
 }
 
 function resumeFailureResult(agentId: string, message: string, error = "resume_failed") {

@@ -15,6 +15,7 @@ export interface ExtensionRuntime {
 	trackParentAbort(signal: AbortSignal | undefined, handle: DispatchHandle): void;
 	abortActiveHandle(agentId: string, reason?: string): Promise<boolean>;
 	steerHandle(agentId: string, message: string): Promise<"ok" | "not_found" | "unsupported">;
+	getResumeIdentity(agentId: string): { provider: string; model: string } | null;
 	resumeHandle(
 		agentId: string,
 		task: string,

@@ -8,7 +8,6 @@ import {
 	createAgentSessionFromServices,
 	createAgentSessionServices,
 } from "@earendil-works/pi-coding-agent";
-import { isModelInScope, modelOutOfScopeMessage, modelScopeSnapshot } from "../model-scope.js";
 import { generateAgentId } from "../state/id.js";
 import { computePaths } from "../state/paths.js";
 import { readState, writeState } from "../state/store.js";
@@ -35,10 +34,6 @@ export async function dispatchSession(
 	hooks: LifecycleHooks = {},
 ): Promise<DispatchHandle> {
 	throwIfAborted(env.signal);
-	const initialScope = modelScopeSnapshot(env.ctx);
-	if (!isModelInScope(initialScope, plan.model.provider, plan.model.modelId)) {
-		throw new Error(modelOutOfScopeMessage(plan.model.provider, plan.model.modelId));
-	}
 	const agentId = generateAgentId();
 	const sessionIdResolved = env.sessionId;
 	const paths = computePaths({ agentDir: env.agentDir, sessionId: sessionIdResolved, agentId });
@@ -467,10 +462,6 @@ export async function dispatchSession(
 		if (!session || !services) throw new Error("session not available");
 		try {
 			throwIfAborted(signal);
-			const scope = modelScopeSnapshot(currentCtx);
-			if (!isModelInScope(scope, state.provider, state.model)) {
-				throw new Error(modelOutOfScopeMessage(state.provider, state.model));
-			}
 			await reconcileRuntimeAuth(currentCtx, services, state.provider, runtimeOverride, signal);
 			throwIfAborted(signal);
 			const model = services.modelRuntime.getModel(state.provider, state.model);

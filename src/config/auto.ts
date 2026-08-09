@@ -1,5 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { type PiCrewConfig, defaultThinkingForAgent } from "../types.js";
+import type { PiCrewConfig } from "../types.js";
 import { emptyConfig } from "./schema.js";
 
 const AGENTS = ["explore", "general-purpose"] as const;
@@ -19,7 +19,7 @@ export function suggestDefaults(models: Model<Api>[]): PiCrewConfig {
 
 	const set = (slot: string, m: Model<Api> | null) => {
 		if (!m) return;
-		cfg.agents[slot] = { provider: m.provider, modelId: m.id, thinking: defaultThinkingForAgent(slot) };
+		cfg.agents[slot] = { provider: m.provider, modelId: m.id };
 	};
 	set("explore", explore);
 	return cfg;

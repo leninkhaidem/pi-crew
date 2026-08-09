@@ -1065,30 +1065,40 @@ describe("dispatchSession", () => {
 		expect(final.thinkingAdjustment).toBeUndefined();
 	});
 
-	it("rejects scope before creating services or recreating extension providers", async () => {
-		const sdk = await import("@earendil-works/pi-coding-agent");
-		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
-		const serviceCount = vi.mocked(sdk.createAgentSessionServices).mock.calls.length;
-		await expect(
-			dispatchSession(
-				{
-					agent: fakeAgent,
-					model: { provider: "mock", modelId: "model", thinking: "low" },
-					options: { agent: "general-purpose", alias: "denied", task: "never" },
-				},
-				{
-					agentDir: tmp,
-					cwd: tmp,
-					sessionId: "denied",
-					parentAgentId: null,
-					ctx: {
-						scopedModels: [{ model: { provider: "other", id: "model" } }],
-						modelRegistry: {},
-					} as never,
-				},
-			),
-		).rejects.toThrow("outside the current session model scope");
-		expect(vi.mocked(sdk.createAgentSessionServices).mock.calls).toHaveLength(serviceCount);
+	it("keeps exported low-level session dispatch and resume caller-owned despite excluding scopes", async () => {
+		const [{ dispatch }, { dispatchSubagent }] = await Promise.all([
+			import("../../src/runtime/lifecycle.js"),
+			import("../../src/index.js"),
+		]);
+		expect(dispatchSubagent).toBe(dispatch);
+		const modelRegistry = {
+			getProviderAuthStatus: vi.fn(() => ({ configured: true, source: "stored" })),
+		};
+		const handle = await dispatchSubagent(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "low-level", task: "first" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "low-level",
+				parentAgentId: null,
+				executionMode: "session",
+				ctx: {
+					scopedModels: [{ model: { provider: "other", id: "model" } }],
+					modelRegistry,
+				} as never,
+			},
+		);
+		expect((await handle.donePromise).status).toBe("done");
+		const resumed = await handle.resume?.("second", undefined, {
+			scopedModels: [{ model: { provider: "another", id: "model" } }],
+			modelRegistry,
+		} as never);
+		expect(resumed?.status).toBe("done");
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(2);
 	});
 
 	it("uses public services/runtime auth APIs and forwards the current cancellation signal", async () => {
@@ -1197,33 +1207,6 @@ describe("dispatchSession", () => {
 			expect(getApiKeyForProvider).toHaveBeenCalledTimes(1);
 		},
 	);
-
-	it("revalidates current scope before every resume without affecting the completed active turn", async () => {
-		const selected = { provider: "mock", id: "model", reasoning: true };
-		const modelRegistry = { getProviderAuthStatus: vi.fn(() => ({ configured: true, source: "stored" })) };
-		const initialCtx = {
-			scopedModels: [{ model: selected }],
-			modelRegistry,
-		} as never;
-		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
-		const handle = await dispatchSession(
-			{
-				agent: fakeAgent,
-				model: { provider: "mock", modelId: "model", thinking: "low" },
-				options: { agent: "general-purpose", alias: "scope-resume", task: "first" },
-			},
-			{ agentDir: tmp, cwd: tmp, sessionId: "scope-resume", parentAgentId: null, ctx: initialCtx },
-		);
-		expect((await handle.donePromise).status).toBe("done");
-		const narrowed = {
-			scopedModels: [{ model: { provider: "mock", id: "other", reasoning: true } }],
-			modelRegistry,
-		} as never;
-		await expect(handle.resume?.("denied", undefined, narrowed)).rejects.toThrow(
-			"outside the current session model scope",
-		);
-		expect(fakeSession.prompt).toHaveBeenCalledTimes(1);
-	});
 
 	it("removes a possibly committed runtime key after synchronization reports failure", async () => {
 		const ledger: string[] = [];

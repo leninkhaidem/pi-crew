@@ -172,6 +172,10 @@ export default function (pi: ExtensionAPI) {
 			await handle.steer(message);
 			return "ok";
 		},
+		getResumeIdentity: (agentId) => {
+			const handle = handles.get(agentId);
+			return handle?.resume ? { provider: handle.state.provider, model: handle.state.model } : null;
+		},
 		resumeHandle: (agentId, task, signal, ctx) => {
 			const handle = handles.get(agentId);
 			if (!handle?.resume) return null;
