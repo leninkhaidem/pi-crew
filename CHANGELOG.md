@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.8.0 — 2026-08-09
+
+### Breaking Changes
+
+- **Current Pi compatibility baseline.** pi-crew now requires Node.js 22.19 or newer and the `@earendil-works` Pi packages at version 0.84.1 or newer; legacy `@mariozechner` Pi packages are no longer supported.
+
+### Added
+
+- **Session-scoped model enforcement.** Non-empty Pi model scopes now act as hard allowlists across agent guidance, configuration, registered dispatch tools, parallel and chained runs, and resumed turns. Empty scopes remain unrestricted.
+- **Actionable partial scope failures.** Parallel and chained runs preserve completed work while returning structured provider/model diagnostics for rejected or abandoned items.
+
+### Changed
+
+- **Current public session runtime integration.** Session-mode sub-agents now use Pi's public session-services and model-runtime APIs, including source-aware runtime credential reconciliation without copying stored or environment credentials.
+- **Pi-aligned thinking selection.** Per-call choices, saved slot values, scoped model pins, and inherited defaults now follow Pi's precedence and structural capability metadata before unsupported levels are clamped.
+- **Scoped configuration and guidance.** Model pickers and generated agent guidance expose only models available to the current session while retaining deterministic ordering and bounded output.
+
+### Fixed
+
+- **Cancellation-safe startup and resume.** Aborted launches and resumed turns now stop at Pi Crew-owned async boundaries before later session, credential, model, file, spawn, prompt, or request work begins, while preserving required cleanup and truthful terminal state.
+- **Fresh resume authorization.** Registered resume calls re-check the current session scope and runtime authentication before prompting, without retroactively interrupting an already-running turn.
+- **Accurate public documentation.** Installation and tool guidance now reflect the Pi 0.84.1 baseline and the current orchestration tool surface.
+
 ## v0.7.4 — 2026-08-06
 
 ### Fixed
