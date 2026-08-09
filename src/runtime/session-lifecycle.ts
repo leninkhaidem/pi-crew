@@ -535,8 +535,11 @@ async function getAvailableModels(
 	modelId: string,
 	signal?: AbortSignal,
 ) {
+	throwIfAborted(signal);
 	try {
-		return await services.modelRuntime.getAvailable(provider, { signal });
+		const available = await services.modelRuntime.getAvailable(provider, { signal });
+		throwIfAborted(signal);
+		return available;
 	} catch {
 		throw new Error(`Model authentication unavailable: ${provider}/${modelId}`);
 	}
@@ -563,6 +566,7 @@ async function reconcileRuntimeAuth(
 	if (source !== "runtime") {
 		if (override.installed) {
 			try {
+				throwIfAborted(signal);
 				await services.modelRuntime.removeRuntimeApiKey(provider, { signal });
 			} catch {
 				throw new Error(`Runtime authentication removal failed for ${provider}.`);
@@ -575,6 +579,7 @@ async function reconcileRuntimeAuth(
 
 	let apiKey: string | undefined;
 	try {
+		throwIfAborted(signal);
 		apiKey = await parentCtx.modelRegistry.getApiKeyForProvider(provider);
 	} catch {
 		throw new Error(`Runtime authentication is unavailable for ${provider}.`);
@@ -585,6 +590,7 @@ async function reconcileRuntimeAuth(
 	// possible mutation before awaiting so a later non-runtime turn always removes it.
 	override.installed = true;
 	try {
+		throwIfAborted(signal);
 		await services.modelRuntime.setRuntimeApiKey(provider, apiKey, { signal });
 	} catch {
 		throw new Error(`Runtime authentication reconciliation failed for ${provider}.`);

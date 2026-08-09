@@ -79,14 +79,17 @@ function createRuntime(overrides: { tryAcquire?: boolean; resumeResult?: Subagen
 	const getResumeIdentity = vi.fn((agentId: string) =>
 		agentId === "no-such-agent" ? null : { provider: "openai-codex", model: "gpt-5.4-mini" },
 	);
+	const tryAcquireActive = vi.fn(() => tryAcquire);
+	const currentActive = vi.fn(() => (tryAcquire ? 0 : 3));
 	const detach = createDetachController();
+	const createScope = vi.spyOn(detach, "createScope");
 	return {
 		rt: {
 			concurrency: {
 				active: {
-					tryAcquire: vi.fn(() => tryAcquire),
+					tryAcquire: tryAcquireActive,
 					release,
-					current: vi.fn(() => (tryAcquire ? 0 : 3)),
+					current: currentActive,
 				},
 			},
 			consumeCompletion,
@@ -94,6 +97,9 @@ function createRuntime(overrides: { tryAcquire?: boolean; resumeResult?: Subagen
 			resumeHandle,
 			detach,
 		},
+		tryAcquireActive,
+		currentActive,
+		createScope,
 		release,
 		consumeCompletion,
 		getResumeIdentity,
@@ -112,6 +118,33 @@ function registerAndGetTool(rt: ReturnType<typeof createRuntime>["rt"]) {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("subagent_resume tool", () => {
+	it.each([
+		["available", true],
+		["saturated", false],
+	])("returns aborted before %s-capacity admission work", async (_capacity, tryAcquire) => {
+		const { rt, tryAcquireActive, currentActive, createScope, release, getResumeIdentity, resumeHandle } =
+			createRuntime({ tryAcquire });
+		const tool = registerAndGetTool(rt);
+		const controller = new AbortController();
+		controller.abort();
+
+		const result = (await tool.execute(
+			"call-aborted",
+			{ agent_id: "resume-001", prompt: "must not run" },
+			controller.signal,
+			undefined,
+			unrestrictedContext,
+		)) as { content: Array<{ text: string }>; details: Record<string, unknown> };
+
+		expect(result.details).toEqual({ error: "aborted", message: "Interrupted before sub-agent resume." });
+		expect(tryAcquireActive).not.toHaveBeenCalled();
+		expect(currentActive).not.toHaveBeenCalled();
+		expect(createScope).not.toHaveBeenCalled();
+		expect(release).not.toHaveBeenCalled();
+		expect(getResumeIdentity).not.toHaveBeenCalled();
+		expect(resumeHandle).not.toHaveBeenCalled();
+	});
+
 	it("rejects a newly out-of-scope tracked model before low-level resume admission", async () => {
 		const { rt, resumeHandle, release, detach } = createRuntime();
 		const tool = registerAndGetTool(rt);

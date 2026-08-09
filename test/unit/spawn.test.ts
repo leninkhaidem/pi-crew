@@ -2,17 +2,40 @@ import { once } from "node:events";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatch } from "../../src/runtime/lifecycle.js";
 import { closeSpawnFds, spawnSubagent } from "../../src/runtime/spawn.js";
 import {
 	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV,
 	PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE,
 } from "../../src/runtime/tool-suppression.js";
+import type { SubagentState } from "../../src/types.js";
 import { prepareMockPi } from "../fixtures/mock-runner.js";
+
+let writeStateInterceptor:
+	| ((state: SubagentState, write: (state: SubagentState) => Promise<void>) => Promise<void>)
+	| undefined;
+
+vi.mock("../../src/state/store.js", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../src/state/store.js")>();
+	return {
+		...actual,
+		writeState: (state: SubagentState) =>
+			writeStateInterceptor ? writeStateInterceptor(state, actual.writeState) : actual.writeState(state),
+	};
+});
+
+function deferred<T>() {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	const promise = new Promise<T>((res) => {
+		resolve = res;
+	});
+	return { promise, resolve };
+}
 
 let tmp: string;
 beforeEach(() => {
+	writeStateInterceptor = undefined;
 	tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-spawn-"));
 });
 afterEach(() => {
@@ -80,6 +103,59 @@ describe("spawnSubagent", () => {
 		expect(recordedEnv[PI_CREW_SUPPRESS_SUBAGENT_TOOLS_ENV]).toBe(PI_CREW_SUPPRESS_SUBAGENT_TOOLS_VALUE);
 		expect(recordedEnv.PI_SUBAGENT_PARENT_ID).toBe("parent");
 		expect(recordedEnv.PI_SUBAGENT_SESSION_ID).toBe("session");
+	});
+
+	it("fences subprocess spawn when pre-spawn state persistence resolves after abort", async () => {
+		const ledger: string[] = [];
+		const persistenceDone = deferred<void>();
+		writeStateInterceptor = async (state, write) => {
+			if (state.status === "starting") {
+				ledger.push("persist:start");
+				await persistenceDone.promise;
+				await write(state);
+				ledger.push("persist:end");
+				return;
+			}
+			if (state.status === "aborted") ledger.push("terminal:aborted");
+			await write(state);
+		};
+		const controller = new AbortController();
+		const pending = dispatch(
+			{
+				agent: {
+					name: "general-purpose",
+					description: "test",
+					tools: null,
+					systemPrompt: "be brief",
+					source: "bundled",
+					filePath: "/fake.md",
+				},
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "deferred-persistence", task: "never" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "deferred-persistence",
+				parentAgentId: null,
+				executionMode: "subprocess",
+				binary: "/definitely/not/spawned",
+				signal: controller.signal,
+			},
+			{ onEnd: (state) => ledger.push(`end:${state.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("persist:start"));
+		controller.abort();
+		ledger.push("abort");
+		persistenceDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(handle.state.pid).toBeNull();
+		expect(ledger).toEqual(["persist:start", "abort", "persist:end", "terminal:aborted", "end:aborted"]);
+		expect(existsSync(handle.state.paths.prompt)).toBe(false);
+		expect(existsSync(handle.state.paths.output)).toBe(false);
+		expect(existsSync(handle.state.paths.stderr)).toBe(false);
 	});
 
 	it("rejects an already-aborted subprocess launch before files or spawn", async () => {

@@ -25,13 +25,13 @@ export function registerResumeTool(pi: ExtensionAPI, rt: ExtensionRuntime): void
 			...SlotOverrideProperties,
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
+			if (signal?.aborted) return abortedResult();
 			if (!rt.concurrency.active.tryAcquire()) {
 				return activeLimitResult(rt.concurrency.active.current());
 			}
 			const scope = rt.detach.createScope();
 			let releaseOnSettlement = false;
 			try {
-				if (signal?.aborted) return abortedResult();
 				const identity = rt.getResumeIdentity(params.agent_id);
 				if (identity) {
 					const currentScope = modelScopeSnapshot(ctx);

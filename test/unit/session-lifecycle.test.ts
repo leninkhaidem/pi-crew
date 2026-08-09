@@ -68,6 +68,17 @@ function deferred<T>() {
 	return { promise, resolve };
 }
 
+function servicesValue() {
+	return {
+		cwd: tmp,
+		agentDir: tmp,
+		diagnostics: [],
+		settingsManager: {},
+		resourceLoader: {},
+		modelRuntime: childModelRuntime,
+	};
+}
+
 const fakeAgent: AgentConfig = {
 	name: "general-purpose",
 	description: "test",
@@ -100,6 +111,7 @@ describe("dispatchSession", () => {
 	});
 
 	beforeEach(() => {
+		vi.clearAllMocks();
 		tmp = mkdtempSync(path.join(tmpdir(), "pi-crew-session-"));
 		subscriber = undefined;
 		createdResourceLoaderOptions = undefined;
@@ -1377,18 +1389,77 @@ describe("dispatchSession", () => {
 		expect(ledger).toEqual(["bind:start", "abort", "cleanup:dispose"]);
 	});
 
-	it("fences post-service startup work when an ignoring deferred service resolves after abort", async () => {
+	it("fences session service creation when startup state persistence resolves after abort", async () => {
+		const ledger: string[] = [];
+		const persistenceDone = deferred<void>();
+		const controller = new AbortController();
 		const sdk = await import("@earendil-works/pi-coding-agent");
 		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
-		let resolveServices!: (value: unknown) => void;
-		const deferredServices = new Promise((resolve) => {
-			resolveServices = resolve;
-		});
-		const serviceMock = vi.mocked(sdk.createAgentSessionServices);
-		const serviceCallCount = serviceMock.mock.calls.length;
-		serviceMock.mockImplementationOnce(async () => (await deferredServices) as never);
-		const createSessionCount = vi.mocked(sdk.createAgentSessionFromServices).mock.calls.length;
+		writeStateInterceptor = async (next, write) => {
+			if (next.status === "starting") {
+				ledger.push("persist:start");
+				await persistenceDone.promise;
+				await write(next);
+				ledger.push("persist:end");
+				return;
+			}
+			if (next.status === "aborted") ledger.push("terminal:aborted");
+			await write(next);
+		};
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-persistence", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-persistence",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: { scopedModels: [], modelRegistry: {} } as never,
+			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("persist:start"));
+		controller.abort();
+		ledger.push("abort");
+		persistenceDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["persist:start", "abort", "persist:end", "terminal:aborted", "end:aborted"]);
+		expect(vi.mocked(sdk.createAgentSessionServices)).not.toHaveBeenCalled();
+		expect(vi.mocked(sdk.createAgentSessionFromServices)).not.toHaveBeenCalled();
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+		expect(JSON.parse(readFileSync(handle.state.paths.state, "utf-8"))).toMatchObject({ status: "aborted" });
+		expect(() => readFileSync(handle.state.paths.prompt)).toThrow();
+		expect(() => readFileSync(handle.state.paths.output)).toThrow();
+		expect(() => readFileSync(handle.state.paths.stderr)).toThrow();
+	});
+
+	it("fences post-service startup work when the atomic helper resolves after abort", async () => {
+		const ledger: string[] = [];
+		const servicesDone = deferred<void>();
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
 		const controller = new AbortController();
+		const getProviderAuthStatus = vi.fn(() => {
+			ledger.push("forbidden:auth-source");
+			return { configured: true, source: "stored" };
+		});
+		vi.mocked(sdk.createAgentSessionServices).mockImplementationOnce(async (options) => {
+			ledger.push("helper:start");
+			expect(options.modelRuntimeSignal).toBe(controller.signal);
+			await servicesDone.promise;
+			ledger.push("helper:end");
+			return servicesValue() as never;
+		});
+		writeStateInterceptor = async (next, write) => {
+			if (next.status === "aborted") ledger.push("terminal:aborted");
+			await write(next);
+		};
 		const pending = dispatchSession(
 			{
 				agent: fakeAgent,
@@ -1401,27 +1472,253 @@ describe("dispatchSession", () => {
 				sessionId: "cancel",
 				parentAgentId: null,
 				signal: controller.signal,
-				ctx: { scopedModels: [], modelRegistry: {} } as never,
+				ctx: { scopedModels: [], modelRegistry: { getProviderAuthStatus } } as never,
 			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
 		);
-		while (serviceMock.mock.calls.length === serviceCallCount) {
-			await new Promise((resolve) => setTimeout(resolve, 0));
-		}
+		await vi.waitFor(() => expect(ledger).toContain("helper:start"));
 		controller.abort();
-		resolveServices({
-			cwd: tmp,
-			agentDir: tmp,
-			diagnostics: [],
-			settingsManager: {},
-			resourceLoader: {},
-			modelRuntime: childModelRuntime,
-		});
+		ledger.push("abort");
+		servicesDone.resolve();
+
 		const handle = await pending;
 		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["helper:start", "abort", "helper:end", "terminal:aborted", "end:aborted"]);
+		expect(getProviderAuthStatus).not.toHaveBeenCalled();
 		expect(childModelRuntime.setRuntimeApiKey).not.toHaveBeenCalled();
 		expect(childModelRuntime.getAvailable).not.toHaveBeenCalled();
-		expect(vi.mocked(sdk.createAgentSessionFromServices).mock.calls).toHaveLength(createSessionCount);
+		expect(vi.mocked(sdk.createAgentSessionFromServices)).not.toHaveBeenCalled();
 		expect(fakeSession.prompt).not.toHaveBeenCalled();
+	});
+
+	it("fences runtime key extraction when the parent getter resolves after abort", async () => {
+		const ledger: string[] = [];
+		const keyDone = deferred<void>();
+		const controller = new AbortController();
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-key-get", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-key-get",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: {
+						getProviderAuthStatus: () => ({ configured: true, source: "runtime" }),
+						getApiKeyForProvider: async () => {
+							ledger.push("key:get:start");
+							await keyDone.promise;
+							ledger.push("key:get:end");
+							return "RUNTIME_SENTINEL";
+						},
+					},
+				} as never,
+			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("key:get:start"));
+		controller.abort();
+		ledger.push("abort");
+		keyDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["key:get:start", "abort", "key:get:end", "end:aborted"]);
+		expect(childModelRuntime.setRuntimeApiKey).not.toHaveBeenCalled();
+		expect(childModelRuntime.getAvailable).not.toHaveBeenCalled();
+		expect(vi.mocked(sdk.createAgentSessionFromServices)).not.toHaveBeenCalled();
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+	});
+
+	it("fences child runtime key installation when it resolves after abort", async () => {
+		const ledger: string[] = [];
+		const setDone = deferred<void>();
+		const controller = new AbortController();
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		childModelRuntime.setRuntimeApiKey.mockImplementationOnce(async (_provider, _key, options) => {
+			ledger.push("key:set:start");
+			expect(options.signal).toBe(controller.signal);
+			await setDone.promise;
+			ledger.push("key:set:end");
+		});
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-key-set", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-key-set",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: {
+						getProviderAuthStatus: () => ({ configured: true, source: "runtime" }),
+						getApiKeyForProvider: async () => "RUNTIME_SENTINEL",
+					},
+				} as never,
+			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("key:set:start"));
+		controller.abort();
+		ledger.push("abort");
+		setDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["key:set:start", "abort", "key:set:end", "end:aborted"]);
+		expect(childModelRuntime.getAvailable).not.toHaveBeenCalled();
+		expect(vi.mocked(sdk.createAgentSessionFromServices)).not.toHaveBeenCalled();
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+	});
+
+	it("fences child auth availability when its signal-ignoring check resolves after abort", async () => {
+		const ledger: string[] = [];
+		const availableDone = deferred<void>();
+		const controller = new AbortController();
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		childModelRuntime.getAvailable.mockImplementationOnce(async (provider, options) => {
+			ledger.push("available:start");
+			expect(options.signal).toBe(controller.signal);
+			await availableDone.promise;
+			ledger.push("available:end");
+			return [{ provider, id: "model", reasoning: true }];
+		});
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-available", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-available",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: { getProviderAuthStatus: () => ({ configured: true, source: "stored" }) },
+				} as never,
+			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("available:start"));
+		controller.abort();
+		ledger.push("abort");
+		availableDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["available:start", "abort", "available:end", "end:aborted"]);
+		expect(vi.mocked(sdk.createAgentSessionFromServices)).not.toHaveBeenCalled();
+		expect(fakeSession.bindExtensions).not.toHaveBeenCalled();
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+	});
+
+	it("cleans a child session once when creation resolves after abort", async () => {
+		const ledger: string[] = [];
+		const sessionDone = deferred<void>();
+		const controller = new AbortController();
+		const sdk = await import("@earendil-works/pi-coding-agent");
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		fakeSession.dispose = vi.fn(() => ledger.push("cleanup:dispose"));
+		vi.mocked(sdk.createAgentSessionFromServices).mockImplementationOnce(async () => {
+			ledger.push("session:create:start");
+			await sessionDone.promise;
+			ledger.push("session:create:end");
+			return { session: fakeSession } as never;
+		});
+		const pending = dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-session-create", task: "never prompt" },
+			},
+			{
+				agentDir: tmp,
+				cwd: tmp,
+				sessionId: "cancel-session-create",
+				parentAgentId: null,
+				signal: controller.signal,
+				ctx: {
+					scopedModels: [],
+					modelRegistry: { getProviderAuthStatus: () => ({ configured: true, source: "stored" }) },
+				} as never,
+			},
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await vi.waitFor(() => expect(ledger).toContain("session:create:start"));
+		controller.abort();
+		ledger.push("abort");
+		sessionDone.resolve();
+
+		const handle = await pending;
+		expect(handle.state.status).toBe("aborted");
+		expect(ledger).toEqual(["session:create:start", "abort", "session:create:end", "cleanup:dispose", "end:aborted"]);
+		expect(fakeSession.dispose).toHaveBeenCalledOnce();
+		expect(fakeSession.bindExtensions).not.toHaveBeenCalled();
+		expect(fakeSession.prompt).not.toHaveBeenCalled();
+	});
+
+	it("fences child runtime key removal before resume availability and prompt", async () => {
+		const ledger: string[] = [];
+		const removeDone = deferred<void>();
+		let source = "runtime";
+		const ctx = {
+			scopedModels: [],
+			modelRegistry: {
+				getProviderAuthStatus: () => ({ configured: true, source }),
+				getApiKeyForProvider: async () => "RUNTIME_SENTINEL",
+			},
+		} as never;
+		const { dispatchSession } = await import("../../src/runtime/session-lifecycle.js");
+		const handle = await dispatchSession(
+			{
+				agent: fakeAgent,
+				model: { provider: "mock", modelId: "model", thinking: "low" },
+				options: { agent: "general-purpose", alias: "cancel-key-remove", task: "initial" },
+			},
+			{ agentDir: tmp, cwd: tmp, sessionId: "cancel-key-remove", parentAgentId: null, ctx },
+			{ onEnd: (next) => ledger.push(`end:${next.status}`) },
+		);
+		await handle.donePromise;
+		ledger.length = 0;
+		const availableCount = childModelRuntime.getAvailable.mock.calls.length;
+		const promptCount = fakeSession.prompt.mock.calls.length;
+		source = "stored";
+		const controller = new AbortController();
+		childModelRuntime.removeRuntimeApiKey.mockImplementationOnce(async (_provider, options) => {
+			ledger.push("key:remove:start");
+			expect(options.signal).toBe(controller.signal);
+			await removeDone.promise;
+			ledger.push("key:remove:end");
+		});
+		const resumed = handle.resume?.("never prompt", controller.signal, ctx);
+		await vi.waitFor(() => expect(ledger).toContain("key:remove:start"));
+		controller.abort();
+		ledger.push("abort");
+		removeDone.resolve();
+
+		const result = await resumed;
+		expect(result?.status).toBe("aborted");
+		expect(ledger).toEqual(["key:remove:start", "abort", "key:remove:end", "end:aborted"]);
+		expect(childModelRuntime.getAvailable).toHaveBeenCalledTimes(availableCount);
+		expect(fakeSession.prompt).toHaveBeenCalledTimes(promptCount);
 	});
 
 	it("persists session-mode child prompts without pi-crew delegation guidance", async () => {
